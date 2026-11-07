@@ -45,6 +45,7 @@ export default function Accounts() {
   const [newAmount, setNewAmount] = useState('')
   const [newDate, setNewDate] = useState(todayDate)
   const [kind, setKind] = useState('expense')
+  const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false)
 
   const account = accounts.find(item => item.id === selectedAccount)
 
@@ -152,6 +153,7 @@ export default function Accounts() {
 
     setNewName('')
     setNewAmount('')
+    setIsAddTransactionOpen(false)
   }
 
   const card = {
@@ -740,52 +742,156 @@ export default function Accounts() {
         ))}
       </section>
 
-      <section style={card}>
-        <h2>Add Transaction</h2>
-        <form onSubmit={addTransaction} style={{ display: 'grid', gap: 10 }}>
-          <select value={kind} onChange={event => setKind(event.target.value)} style={field}>
-            <option value="expense">Expense</option>
-            <option value="income">Income</option>
-          </select>
-          <input
-            placeholder="Payee or description"
-            aria-label="Payee or description"
-            value={newName}
-            onChange={event => setNewName(event.target.value)}
-            style={field}
-          />
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Amount"
-            aria-label="Amount"
-            value={newAmount}
-            onChange={event => setNewAmount(event.target.value)}
-            style={field}
-          />
-          <input
-            type="date"
-            aria-label="Transaction date"
-            value={newDate}
-            onChange={event => setNewDate(event.target.value)}
-            style={field}
-          />
-          <button type="submit" style={{
-            background: '#B87522',
-            color: 'white',
-            border: 'none',
-            borderRadius: 12,
-            padding: 14,
-            fontWeight: 'bold',
-            cursor: 'pointer'
-          }}>
-            + Add Transaction
-          </button>
-        </form>
-      </section>
       <p style={{ textAlign: 'center', fontSize: 12 }}>
         Demo data only. Changes are not saved after a refresh.
       </p>
+
+      <button
+        type="button"
+        aria-label="Add transaction"
+        title="Add Transaction"
+        onClick={() => setIsAddTransactionOpen(true)}
+        style={{
+          position: 'fixed',
+          right: 'max(20px, calc((100vw - 460px) / 2))',
+          bottom: 'calc(24px + env(safe-area-inset-bottom))',
+          zIndex: 20,
+          width: 58,
+          height: 58,
+          display: 'grid',
+          placeItems: 'center',
+          border: 'none',
+          borderRadius: '50%',
+          background: '#B87522',
+          color: '#FFFFFF',
+          boxShadow: '0 4px 14px #76552255',
+          fontSize: 32,
+          lineHeight: 1,
+          cursor: 'pointer'
+        }}
+      >
+        +
+      </button>
+
+      {isAddTransactionOpen && (
+        <div
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) setIsAddTransactionOpen(false)
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 30,
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'center',
+            padding: '16px 16px env(safe-area-inset-bottom)',
+            background: '#33231266'
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-transaction-title"
+            style={{
+              boxSizing: 'border-box',
+              width: '100%',
+              maxWidth: 460,
+              padding: 20,
+              borderRadius: '20px 20px 16px 16px',
+              background: '#FFF8ED',
+              boxShadow: '0 8px 30px #33231233'
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 14
+            }}>
+              <h2 id="add-transaction-title" style={{ margin: 0, color: '#79502A' }}>
+                Add Transaction
+              </h2>
+              <button
+                type="button"
+                aria-label="Close add transaction"
+                onClick={() => setIsAddTransactionOpen(false)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: '#79502A',
+                  fontSize: 24,
+                  cursor: 'pointer'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={addTransaction} style={{ display: 'grid', gap: 10 }}>
+              <select
+                aria-label="Transaction type"
+                value={kind}
+                onChange={event => setKind(event.target.value)}
+                style={field}
+              >
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+              <input
+                placeholder="Payee or description"
+                aria-label="Payee or description"
+                value={newName}
+                onChange={event => setNewName(event.target.value)}
+                style={field}
+              />
+              <input
+                type="number"
+                step="0.01"
+                placeholder="Amount"
+                aria-label="Amount"
+                value={newAmount}
+                onChange={event => setNewAmount(event.target.value)}
+                style={field}
+              />
+              <input
+                type="date"
+                aria-label="Transaction date"
+                value={newDate}
+                onChange={event => setNewDate(event.target.value)}
+                style={field}
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddTransactionOpen(false)}
+                  style={{
+                    background: '#FFFFFF',
+                    color: '#79502A',
+                    border: '1px solid #E9D6B7',
+                    borderRadius: 12,
+                    padding: 12,
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" style={{
+                  background: '#B87522',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 12,
+                  padding: 12,
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}>
+                  Add Transaction
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
