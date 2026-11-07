@@ -1,5 +1,6 @@
 
 import { useState } from 'react'
+import Accounts from './Accounts'
 
 const initialBills = [
   { name: 'Mortgage', amount: 1250, paid: true },
@@ -119,6 +120,9 @@ function App() {
         </p>
       </main>
 
+
+) : activePage === 'Accounts' ? (
+  <Accounts />
 ) : (
   <main style={{
     maxWidth: 460,
@@ -138,6 +142,7 @@ function App() {
     </p>
   </main>
 )}
+
 
 
 <nav style={{
