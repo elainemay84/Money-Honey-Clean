@@ -2,26 +2,28 @@
 import { useState } from 'react'
 import {
   calculateAccountBalances,
-  normalizeTransactionAmount
+  moveTransactionToDate,
+  normalizeTransactionAmount,
+  reorderTransactionWithinDate
 } from './accountBalances.js'
 
 const startingAccounts = [
-  { id: 1, name: 'Everyday Checking', type: 'Checking', openingBalance: 1500 },
-  { id: 2, name: 'Savings', type: 'Savings', openingBalance: 500 },
+  { id: 1, name: 'Everyday Checking', type: 'Checking', openingBalance: 1500, openingDate: '2026-11-06' },
+  { id: 2, name: 'Savings', type: 'Savings', openingBalance: 500, openingDate: '2026-11-06' },
 ]
 
 const startingTransactions = [
-  { id: 1, accountId: 1, name: 'Paycheck', amount: 1500, date: '2026-11-06', cleared: true },
-  { id: 2, accountId: 1, name: 'Groceries', amount: -125, date: '2026-11-06', cleared: true },
-  { id: 3, accountId: 1, name: 'Electric Bill', amount: -128, date: '2026-11-07', cleared: false },
-  { id: 4, accountId: 1, name: 'Gas', amount: -60, date: '2026-11-08', cleared: false },
+  { id: 1, order: 1, accountId: 1, name: 'Paycheck', amount: 1500, date: '2026-11-06', cleared: true },
+  { id: 2, order: 2, accountId: 1, name: 'Groceries', amount: -125, date: '2026-11-06', cleared: true },
+  { id: 3, order: 3, accountId: 1, name: 'Electric Bill', amount: -128, date: '2026-11-07', cleared: false },
+  { id: 4, order: 4, accountId: 1, name: 'Gas', amount: -60, date: '2026-11-08', cleared: false },
 ]
 
 const money = amount =>
   amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
 export default function Accounts() {
-  const [accounts] = useState(startingAccounts)
+  const [accounts, setAccounts] = useState(startingAccounts)
   const [transactions, setTransactions] = useState(startingTransactions)
   const [selectedAccount, setSelectedAccount] = useState(1)
   const [transactionSort, setTransactionSort] = useState(() =>
@@ -35,11 +37,33 @@ export default function Accounts() {
   const account = accounts.find(item => item.id === selectedAccount)
 
   const accountTransactions = transactions.filter(item => item.accountId === selectedAccount)
-  const { rows, clearedBalance, projectedBalance } = calculateAccountBalances(
+  const {
+    rows,
+    balance,
+    available,
+    unclearedBalance
+  } = calculateAccountBalances(
     account.openingBalance,
     accountTransactions,
-    transactionSort
+    transactionSort,
+    account.openingDate
   )
+
+  function updateOpeningBalance(value) {
+    const openingBalance = value === '' ? 0 : Number(value)
+    if (!Number.isFinite(openingBalance)) return
+
+    setAccounts(current => current.map(item =>
+      item.id === selectedAccount ? { ...item, openingBalance } : item
+    ))
+  }
+
+  function updateOpeningDate(openingDate) {
+    if (!openingDate) return
+    setAccounts(current => current.map(item =>
+      item.id === selectedAccount ? { ...item, openingDate } : item
+    ))
+  }
 
   function updateTransactionSort(sort) {
     setTransactionSort(sort)
@@ -54,9 +78,11 @@ export default function Accounts() {
 
   function updateDate(id, date) {
     if (!date) return
-    setTransactions(current => current.map(item =>
-      item.id === id ? { ...item, date } : item
-    ))
+    setTransactions(current => moveTransactionToDate(current, id, date))
+  }
+
+  function reorderTransaction(id, direction) {
+    setTransactions(current => reorderTransactionWithinDate(current, id, direction))
   }
 
   function addTransaction(event) {
@@ -66,7 +92,8 @@ export default function Accounts() {
     if (!newName.trim() || !newDate || !Number.isFinite(amount) || amount === 0) return
 
     setTransactions(current => [...current, {
-      id: Date.now(),
+      id: current.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1,
+      order: current.reduce((maxOrder, item) => Math.max(maxOrder, item.order ?? item.id), 0) + 1,
       accountId: selectedAccount,
       name: newName.trim(),
       amount: normalizeTransactionAmount(amount, kind),
@@ -118,12 +145,126 @@ export default function Accounts() {
         </select>
       </section>
 
-      <section style={{ ...card, background: '#F5D6A5' }}>
-        <p style={{ margin: 0 }}>CLEARED BALANCE</p>
-        <h2 style={{ fontSize: 34, margin: '8px 0' }}>
-          {money(clearedBalance)}
-        </h2>
-        <p>Projected balance: <strong>{money(projectedBalance)}</strong></p>
+      <section style={{ ...card, background: '#F5D6A5', padding: 14 }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          alignItems: 'start'
+        }}>
+          <div style={{ minWidth: 0, paddingRight: 7 }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>
+              BALANCE
+            </p>
+            <strong style={{
+              display: 'block',
+              marginTop: 4,
+              fontSize: 16,
+              whiteSpace: 'nowrap',
+              fontVariantNumeric: 'tabular-nums'
+            }}>
+              {money(balance)}
+            </strong>
+            <label htmlFor="opening-balance" style={{
+              display: 'block',
+              marginTop: 7,
+              color: '#79502A',
+              fontSize: 10
+            }}>
+              Opening balance
+            </label>
+            <input
+              id="opening-balance"
+              type="number"
+              step="0.01"
+              aria-label="Opening balance"
+              value={account.openingBalance}
+              onChange={event => updateOpeningBalance(event.target.value)}
+              style={{
+                boxSizing: 'border-box',
+                display: 'block',
+                width: '100%',
+                maxWidth: 96,
+                marginTop: 2,
+                padding: '3px 4px',
+                border: '1px solid #D7B57E',
+                borderRadius: 6,
+                background: '#FFF9EF',
+                color: '#573B20',
+                fontSize: 11
+              }}
+            />
+            <label htmlFor="opening-reference-date" style={{
+              display: 'block',
+              marginTop: 4,
+              color: '#79502A',
+              fontSize: 10
+            }}>
+              Reference date
+            </label>
+            <input
+              id="opening-reference-date"
+              type="date"
+              aria-label="Opening balance reference date"
+              value={account.openingDate}
+              onChange={event => updateOpeningDate(event.target.value)}
+              style={{
+                boxSizing: 'border-box',
+                display: 'block',
+                width: '100%',
+                maxWidth: 120,
+                marginTop: 2,
+                padding: '2px',
+                border: '1px solid #D7B57E',
+                borderRadius: 6,
+                background: '#FFF9EF',
+                color: '#573B20',
+                fontSize: 10
+              }}
+            />
+          </div>
+          <div style={{
+            minWidth: 0,
+            padding: '0 7px',
+            borderLeft: '1px solid #D8B87F',
+            borderRight: '1px solid #D8B87F'
+          }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>
+              AVAILABLE
+            </p>
+            <strong style={{
+              display: 'block',
+              marginTop: 4,
+              fontSize: 16,
+              whiteSpace: 'nowrap',
+              fontVariantNumeric: 'tabular-nums'
+            }}>
+              {money(available)}
+            </strong>
+          </div>
+          <div style={{ minWidth: 0, paddingLeft: 7, textAlign: 'right' }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>
+              UNCLEARED
+            </p>
+            <strong style={{
+              display: 'block',
+              marginTop: 4,
+              fontSize: 16,
+              whiteSpace: 'nowrap',
+              fontVariantNumeric: 'tabular-nums',
+              color: unclearedBalance > 0 ? '#21834B' : unclearedBalance < 0 ? '#9B463E' : '#573B20'
+            }}>
+              {money(Math.abs(unclearedBalance))}
+            </strong>
+            <span style={{
+              display: 'block',
+              marginTop: 3,
+              color: '#79502A',
+              fontSize: 10
+            }}>
+              {unclearedBalance > 0 ? 'Coming in' : unclearedBalance < 0 ? 'Going out' : 'No net amount'}
+            </span>
+          </div>
+        </div>
       </section>
 
       <section style={card}>
@@ -157,15 +298,26 @@ export default function Accounts() {
           Change dates directly without opening Edit.
         </p>
 
-        {rows.map(item => (
-          <div key={item.id} style={{
-            display: 'grid',
-            gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
-            alignItems: 'center',
-            columnGap: 8,
-            padding: '5px 0',
-            borderBottom: '1px solid #EEE5D9'
-          }}>
+        {rows.map(item => {
+          const sameDateRows = [...accountTransactions]
+            .filter(transaction => transaction.date === item.date)
+            .sort((a, b) => (a.order ?? a.id) - (b.order ?? b.id) || a.id - b.id)
+          const sameDateIndex = sameDateRows.findIndex(transaction => transaction.id === item.id)
+
+          return (
+          <div
+            key={item.id}
+            data-transaction-id={item.id}
+            data-transaction-order={item.order}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
+              alignItems: 'center',
+              columnGap: 8,
+              padding: '5px 0',
+              borderBottom: '1px solid #EEE5D9'
+            }}
+          >
             <button
               type="button"
               aria-label={item.cleared ? 'Mark pending' : 'Mark cleared'}
@@ -205,27 +357,71 @@ export default function Accounts() {
               }}>
                 {item.name}
               </strong>
-              <input
-                type="date"
-                aria-label={`Date for ${item.name}`}
-                value={item.date}
-                onChange={event => updateDate(item.id, event.target.value)}
-                style={{
-                  display: 'block',
-                  boxSizing: 'border-box',
-                  width: 120,
-                  maxWidth: '100%',
-                  height: 18,
-                  marginTop: 1,
-                  padding: 0,
-                  border: 'none',
-                  borderRadius: 0,
-                  background: 'transparent',
-                  fontSize: 11,
-                  color: '#79502A',
-                  textAlign: 'left'
-                }}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 1 }}>
+                <input
+                  type="date"
+                  aria-label={`Date for ${item.name}`}
+                  value={item.date}
+                  onChange={event => updateDate(item.id, event.target.value)}
+                  style={{
+                    display: 'block',
+                    boxSizing: 'border-box',
+                    width: 112,
+                    maxWidth: '100%',
+                    height: 18,
+                    marginTop: 0,
+                    padding: 0,
+                    border: 'none',
+                    borderRadius: 0,
+                    background: 'transparent',
+                    fontSize: 11,
+                    color: '#79502A',
+                    textAlign: 'left'
+                  }}
+                />
+                {sameDateRows.length > 1 && (
+                  <span style={{ display: 'flex', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      aria-label={`Move ${item.name} earlier on this date`}
+                      title="Move earlier on this date"
+                      disabled={sameDateIndex === 0}
+                      onClick={() => reorderTransaction(item.id, 'up')}
+                      style={{
+                        border: 'none',
+                        padding: '0 2px',
+                        background: 'transparent',
+                        color: '#B87522',
+                        cursor: sameDateIndex === 0 ? 'default' : 'pointer',
+                        opacity: sameDateIndex === 0 ? 0.35 : 1,
+                        fontSize: 12,
+                        lineHeight: 1
+                      }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${item.name} later on this date`}
+                      title="Move later on this date"
+                      disabled={sameDateIndex === sameDateRows.length - 1}
+                      onClick={() => reorderTransaction(item.id, 'down')}
+                      style={{
+                        border: 'none',
+                        padding: '0 2px',
+                        background: 'transparent',
+                        color: '#B87522',
+                        cursor: sameDateIndex === sameDateRows.length - 1 ? 'default' : 'pointer',
+                        opacity: sameDateIndex === sameDateRows.length - 1 ? 0.35 : 1,
+                        fontSize: 12,
+                        lineHeight: 1
+                      }}
+                    >
+                      ↓
+                    </button>
+                  </span>
+                )}
+              </div>
             </div>
 
             <div style={{
@@ -257,7 +453,8 @@ export default function Accounts() {
               </span>
             </div>
           </div>
-        ))}
+          )
+        })}
       </section>
 
       <section style={card}>
