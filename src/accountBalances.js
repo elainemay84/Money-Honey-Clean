@@ -1,44 +1,27 @@
 function compareTransactions(a, b) {
   return a.date.localeCompare(b.date)
-    || (a.order ?? a.id) - (b.order ?? b.id)
+    || (a.sequence ?? a.id) - (b.sequence ?? b.id)
     || a.id - b.id
 }
 
-function nextTransactionOrder(transactions) {
+function nextTransactionSequence(transactions) {
   return transactions.reduce(
-    (nextOrder, transaction) => Math.max(nextOrder, transaction.order ?? transaction.id),
+    (nextSequence, transaction) => Math.max(nextSequence, transaction.sequence ?? transaction.id),
     0
   ) + 1
 }
 
-export function moveTransactionToDate(transactions, id, date) {
+export function getNextTransactionSequence(transactions, lastSequence = 0) {
+  return Math.max(lastSequence, nextTransactionSequence(transactions) - 1) + 1
+}
+
+export function moveTransactionToDate(transactions, id, date, sequence = nextTransactionSequence(transactions)) {
   const transaction = transactions.find(item => item.id === id)
   if (!transaction || transaction.date === date) return transactions
 
-  const order = nextTransactionOrder(transactions)
   return transactions.map(item =>
-    item.id === id ? { ...item, date, order } : item
+    item.id === id ? { ...item, date, sequence } : item
   )
-}
-
-export function reorderTransactionWithinDate(transactions, id, direction) {
-  const transaction = transactions.find(item => item.id === id)
-  if (!transaction) return transactions
-
-  const sameDate = transactions
-    .filter(item => item.date === transaction.date)
-    .sort(compareTransactions)
-  const index = sameDate.findIndex(item => item.id === id)
-  const neighbor = sameDate[index + (direction === 'up' ? -1 : 1)]
-  if (!neighbor) return transactions
-
-  const currentOrder = transaction.order ?? transaction.id
-  const neighborOrder = neighbor.order ?? neighbor.id
-  return transactions.map(item => {
-    if (item.id === id) return { ...item, order: neighborOrder }
-    if (item.id === neighbor.id) return { ...item, order: currentOrder }
-    return item
-  })
 }
 
 export function normalizeTransactionAmount(amount, kind) {

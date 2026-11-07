@@ -5,9 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 import {
   calculateAccountBalances,
+  getNextTransactionSequence,
   moveTransactionToDate,
-  normalizeTransactionAmount,
-  reorderTransactionWithinDate
+  normalizeTransactionAmount
 } from './accountBalances.js'
 
 const transactions = [
@@ -302,9 +302,13 @@ test('each displayed demo row retains its post-transaction running balance in ei
   )
 })
 
-test('same-date transactions use a stable ID order in either display direction', () => {
-  const ascending = calculateAccountBalances(100, transactions.slice(0, 2), 'asc')
-  const descending = calculateAccountBalances(100, transactions.slice(0, 2), 'desc')
+test('same-date sequence order takes precedence over transaction ID in either display direction', () => {
+  const sameDateTransactions = [
+    { id: 2, sequence: 20, date: '2026-11-06', amount: -125, cleared: true },
+    { id: 1, sequence: 10, date: '2026-11-06', amount: 1500, cleared: true },
+  ]
+  const ascending = calculateAccountBalances(100, sameDateTransactions, 'asc')
+  const descending = calculateAccountBalances(100, sameDateTransactions, 'desc')
 
   assert.deepEqual(ascending.rows.map(row => row.id), [1, 2])
   assert.deepEqual(descending.rows.map(row => row.id), [2, 1])
@@ -346,10 +350,10 @@ test('moving a transaction onto a date with multiple transactions preserves stab
 
 test('moving Gas onto Nov 6 inserts it after existing entries and preserves each transaction balance', () => {
   const startingTransactions = [
-    { id: 1, order: 1, name: 'Paycheck', date: '2026-11-06', amount: 1500, cleared: true },
-    { id: 2, order: 2, name: 'Groceries', date: '2026-11-06', amount: -125, cleared: true },
-    { id: 3, order: 3, name: 'Electric', date: '2026-11-07', amount: -128, cleared: false },
-    { id: 4, order: 4, name: 'Gas', date: '2026-11-08', amount: -60, cleared: false },
+    { id: 1, sequence: 1, name: 'Paycheck', date: '2026-11-06', amount: 1500, cleared: true },
+    { id: 2, sequence: 2, name: 'Groceries', date: '2026-11-06', amount: -125, cleared: true },
+    { id: 3, sequence: 3, name: 'Electric', date: '2026-11-07', amount: -128, cleared: false },
+    { id: 4, sequence: 4, name: 'Gas', date: '2026-11-08', amount: -60, cleared: false },
   ]
   const afterMove = moveTransactionToDate(startingTransactions, 4, '2026-11-06')
   const ascending = calculateAccountBalances(0, afterMove, 'asc', '2026-11-06')
@@ -366,7 +370,7 @@ test('moving Gas onto Nov 6 inserts it after existing entries and preserves each
   for (const row of [...ascending.rows, ...descending.rows]) {
     assert.equal(row.runningBalance, expectedBalances.get(row.id))
   }
-  assert.equal(afterMove.find(transaction => transaction.id === 4).order, 5)
+  assert.equal(afterMove.find(transaction => transaction.id === 4).sequence, 5)
 
   const movedBack = moveTransactionToDate(afterMove, 4, '2026-11-08')
   const movedAgain = moveTransactionToDate(movedBack, 4, '2026-11-06')
@@ -379,29 +383,54 @@ test('moving Gas onto Nov 6 inserts it after existing entries and preserves each
     repeatedResult.rows.map(row => row.runningBalance),
     [1500, 1375, 1315, 1187]
   )
-  assert.equal(new Set(finalMoveToNov6.map(transaction => transaction.order)).size, 4)
+  assert.equal(new Set(finalMoveToNov6.map(transaction => transaction.sequence)).size, 4)
 })
 
-test('same-day reorder controls swap persistent order without changing other entries', () => {
-  const sameDayTransactions = [
-    { id: 1, order: 1, date: '2026-11-06', amount: 1500, cleared: true },
-    { id: 2, order: 2, date: '2026-11-06', amount: -125, cleared: true },
-    { id: 4, order: 5, date: '2026-11-06', amount: -60, cleared: false },
-    { id: 5, order: 6, date: '2026-11-06', amount: 25, cleared: false },
+test('new same-day transactions receive a later sequence and appear first in Newest First', () => {
+  const existing = [
+    { id: 1, sequence: 1, name: 'Paycheck', date: '2026-11-06', amount: 1500, cleared: true },
+    { id: 2, sequence: 2, name: 'Groceries', date: '2026-11-06', amount: -125, cleared: true },
   ]
-  const reordered = reorderTransactionWithinDate(sameDayTransactions, 4, 'up')
-  const result = calculateAccountBalances(0, reordered, 'asc', '2026-11-06')
+  const newExpense = {
+    id: 3,
+    sequence: getNextTransactionSequence(existing, 2),
+    name: 'New expense',
+    date: '2026-11-06',
+    amount: -20,
+    cleared: false
+  }
+  const ledger = [...existing, newExpense]
+  const ascending = calculateAccountBalances(0, ledger, 'asc', '2026-11-06')
+  const descending = calculateAccountBalances(0, ledger, 'desc', '2026-11-06')
 
-  assert.deepEqual(result.rows.map(row => row.id), [1, 4, 2, 5])
-  assert.deepEqual(result.rows.map(row => row.runningBalance), [1500, 1440, 1315, 1340])
   assert.deepEqual(
-    sameDayTransactions.map(transaction => transaction.id),
-    [1, 2, 4, 5]
+    ascending.rows.map(({ name, runningBalance }) => [name, runningBalance]),
+    [['Paycheck', 1500], ['Groceries', 1375], ['New expense', 1355]]
   )
   assert.deepEqual(
-    reordered.map(transaction => transaction.id),
-    [1, 2, 4, 5]
+    descending.rows.map(({ name, runningBalance }) => [name, runningBalance]),
+    [['New expense', 1355], ['Groceries', 1375], ['Paycheck', 1500]]
   )
+  assert.equal(newExpense.sequence, 3)
+})
+
+test('moving an expense away and back gives it a new latest sequence for the destination date', () => {
+  const startingTransactions = [
+    { id: 1, sequence: 1, name: 'Paycheck', date: '2026-11-06', amount: 1500, cleared: true },
+    { id: 2, sequence: 2, name: 'Groceries', date: '2026-11-06', amount: -125, cleared: true },
+    { id: 3, sequence: 3, name: 'New expense', date: '2026-11-06', amount: -20, cleared: false },
+    { id: 4, sequence: 4, name: 'Electric', date: '2026-11-07', amount: -128, cleared: false },
+  ]
+  const movedAway = moveTransactionToDate(startingTransactions, 3, '2026-11-07', 5)
+  const movedBack = moveTransactionToDate(movedAway, 3, '2026-11-06', 6)
+  const asc = calculateAccountBalances(0, movedBack, 'asc', '2026-11-06')
+  const desc = calculateAccountBalances(0, movedBack, 'desc', '2026-11-06')
+
+  assert.deepEqual(asc.rows.map(row => row.id), [1, 2, 3, 4])
+  assert.deepEqual(asc.rows.map(row => row.runningBalance), [1500, 1375, 1355, 1227])
+  assert.deepEqual(desc.rows.map(row => row.id), [4, 3, 2, 1])
+  assert.deepEqual(desc.rows.map(row => row.runningBalance), [1227, 1355, 1375, 1500])
+  assert.equal(movedBack.find(transaction => transaction.id === 3).sequence, 6)
 })
 
 test('added, edited, and deleted transactions are reflected in recalculated balances', () => {

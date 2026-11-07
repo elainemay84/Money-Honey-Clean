@@ -1,10 +1,10 @@
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   calculateAccountBalances,
+  getNextTransactionSequence,
   moveTransactionToDate,
-  normalizeTransactionAmount,
-  reorderTransactionWithinDate
+  normalizeTransactionAmount
 } from './accountBalances.js'
 
 const startingAccounts = [
@@ -13,10 +13,10 @@ const startingAccounts = [
 ]
 
 const startingTransactions = [
-  { id: 1, order: 1, accountId: 1, name: 'Paycheck', amount: 1500, date: '2026-11-06', cleared: true },
-  { id: 2, order: 2, accountId: 1, name: 'Groceries', amount: -125, date: '2026-11-06', cleared: true },
-  { id: 3, order: 3, accountId: 1, name: 'Electric Bill', amount: -128, date: '2026-11-07', cleared: false },
-  { id: 4, order: 4, accountId: 1, name: 'Gas', amount: -60, date: '2026-11-08', cleared: false },
+  { id: 1, sequence: 1, accountId: 1, name: 'Paycheck', amount: 1500, date: '2026-11-06', cleared: true },
+  { id: 2, sequence: 2, accountId: 1, name: 'Groceries', amount: -125, date: '2026-11-06', cleared: true },
+  { id: 3, sequence: 3, accountId: 1, name: 'Electric Bill', amount: -128, date: '2026-11-07', cleared: false },
+  { id: 4, sequence: 4, accountId: 1, name: 'Gas', amount: -60, date: '2026-11-08', cleared: false },
 ]
 
 const money = amount =>
@@ -25,6 +25,8 @@ const money = amount =>
 export default function Accounts() {
   const [accounts, setAccounts] = useState(startingAccounts)
   const [transactions, setTransactions] = useState(startingTransactions)
+  const nextTransactionId = useRef(5)
+  const nextTransactionSequence = useRef(getNextTransactionSequence(startingTransactions))
   const [selectedAccount, setSelectedAccount] = useState(1)
   const [transactionSort, setTransactionSort] = useState(() =>
     localStorage.getItem('money-honey-transaction-sort') === 'asc' ? 'asc' : 'desc'
@@ -78,11 +80,10 @@ export default function Accounts() {
 
   function updateDate(id, date) {
     if (!date) return
-    setTransactions(current => moveTransactionToDate(current, id, date))
-  }
-
-  function reorderTransaction(id, direction) {
-    setTransactions(current => reorderTransactionWithinDate(current, id, direction))
+    const transaction = transactions.find(item => item.id === id)
+    if (!transaction || transaction.date === date) return
+    const sequence = nextTransactionSequence.current++
+    setTransactions(current => moveTransactionToDate(current, id, date, sequence))
   }
 
   function addTransaction(event) {
@@ -92,8 +93,8 @@ export default function Accounts() {
     if (!newName.trim() || !newDate || !Number.isFinite(amount) || amount === 0) return
 
     setTransactions(current => [...current, {
-      id: current.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1,
-      order: current.reduce((maxOrder, item) => Math.max(maxOrder, item.order ?? item.id), 0) + 1,
+      id: nextTransactionId.current++,
+      sequence: nextTransactionSequence.current++,
       accountId: selectedAccount,
       name: newName.trim(),
       amount: normalizeTransactionAmount(amount, kind),
@@ -298,17 +299,11 @@ export default function Accounts() {
           Change dates directly without opening Edit.
         </p>
 
-        {rows.map(item => {
-          const sameDateRows = [...accountTransactions]
-            .filter(transaction => transaction.date === item.date)
-            .sort((a, b) => (a.order ?? a.id) - (b.order ?? b.id) || a.id - b.id)
-          const sameDateIndex = sameDateRows.findIndex(transaction => transaction.id === item.id)
-
-          return (
+        {rows.map(item => (
           <div
             key={item.id}
             data-transaction-id={item.id}
-            data-transaction-order={item.order}
+            data-transaction-sequence={item.sequence}
             style={{
               display: 'grid',
               gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
@@ -357,71 +352,27 @@ export default function Accounts() {
               }}>
                 {item.name}
               </strong>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 1 }}>
-                <input
-                  type="date"
-                  aria-label={`Date for ${item.name}`}
-                  value={item.date}
-                  onChange={event => updateDate(item.id, event.target.value)}
-                  style={{
-                    display: 'block',
-                    boxSizing: 'border-box',
-                    width: 112,
-                    maxWidth: '100%',
-                    height: 18,
-                    marginTop: 0,
-                    padding: 0,
-                    border: 'none',
-                    borderRadius: 0,
-                    background: 'transparent',
-                    fontSize: 11,
-                    color: '#79502A',
-                    textAlign: 'left'
-                  }}
-                />
-                {sameDateRows.length > 1 && (
-                  <span style={{ display: 'flex', alignItems: 'center' }}>
-                    <button
-                      type="button"
-                      aria-label={`Move ${item.name} earlier on this date`}
-                      title="Move earlier on this date"
-                      disabled={sameDateIndex === 0}
-                      onClick={() => reorderTransaction(item.id, 'up')}
-                      style={{
-                        border: 'none',
-                        padding: '0 2px',
-                        background: 'transparent',
-                        color: '#B87522',
-                        cursor: sameDateIndex === 0 ? 'default' : 'pointer',
-                        opacity: sameDateIndex === 0 ? 0.35 : 1,
-                        fontSize: 12,
-                        lineHeight: 1
-                      }}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Move ${item.name} later on this date`}
-                      title="Move later on this date"
-                      disabled={sameDateIndex === sameDateRows.length - 1}
-                      onClick={() => reorderTransaction(item.id, 'down')}
-                      style={{
-                        border: 'none',
-                        padding: '0 2px',
-                        background: 'transparent',
-                        color: '#B87522',
-                        cursor: sameDateIndex === sameDateRows.length - 1 ? 'default' : 'pointer',
-                        opacity: sameDateIndex === sameDateRows.length - 1 ? 0.35 : 1,
-                        fontSize: 12,
-                        lineHeight: 1
-                      }}
-                    >
-                      ↓
-                    </button>
-                  </span>
-                )}
-              </div>
+              <input
+                type="date"
+                aria-label={`Date for ${item.name}`}
+                value={item.date}
+                onChange={event => updateDate(item.id, event.target.value)}
+                style={{
+                  display: 'block',
+                  boxSizing: 'border-box',
+                  width: 120,
+                  maxWidth: '100%',
+                  height: 18,
+                  marginTop: 1,
+                  padding: 0,
+                  border: 'none',
+                  borderRadius: 0,
+                  background: 'transparent',
+                  fontSize: 11,
+                  color: '#79502A',
+                  textAlign: 'left'
+                }}
+              />
             </div>
 
             <div style={{
@@ -453,8 +404,7 @@ export default function Accounts() {
               </span>
             </div>
           </div>
-          )
-        })}
+        ))}
       </section>
 
       <section style={card}>
