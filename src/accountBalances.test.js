@@ -39,7 +39,7 @@ test('opening reference date excludes already-included earlier transactions from
   assert.equal(result.unclearedBalance, 20)
 })
 
-test('Accounts renders the calculated balance under each transaction in newest-first order', async () => {
+test('Accounts Overview renders active account cards and separate management actions', async () => {
   const server = await createServer({
     configFile: './vite.config.js',
     server: { middlewareMode: true },
@@ -49,46 +49,22 @@ test('Accounts renders the calculated balance under each transaction in newest-f
   const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
 
   try {
-    let sortPreference = 'desc'
     globalThis.localStorage = {
-      getItem: () => sortPreference,
+      getItem: () => 'desc',
       setItem: () => {}
     }
 
     const { default: Accounts } = await server.ssrLoadModule('/src/Accounts.jsx')
-    const expectedDisplayedAmountsAndBalances = [
-      [1, '$1,500.00', '$3,000.00'],
-      [2, '-$125.00', '$2,875.00'],
-      [3, '-$128.00', '$2,747.00'],
-      [4, '-$60.00', '$2,687.00'],
-    ]
+    const markup = renderToStaticMarkup(createElement(Accounts))
+    const accountCards = [...markup.matchAll(/<button[^>]*data-account-id="(\d+)"/g)]
 
-    for (const [sortOrder, expectedIds] of [
-      ['desc', [4, 3, 2, 1]],
-      ['asc', [1, 2, 3, 4]],
-    ]) {
-      sortPreference = sortOrder
-      const markup = renderToStaticMarkup(createElement(Accounts))
-      const renderedRows = [...markup.matchAll(
-        /<div data-transaction-id="(\d+)"[^>]*>([\s\S]*?)(?=<div data-transaction-id=|<\/section>)/g
-      )]
-
-      assert.deepEqual(
-        renderedRows.map(([, id]) => Number(id)),
-        expectedIds
-      )
-
-      for (const [id, amount, balance] of expectedDisplayedAmountsAndBalances) {
-        const row = renderedRows.find(([, rowId]) => Number(rowId) === id)?.[2]
-        assert.ok(row, `rendered transaction row ${id} should exist`)
-        assert.ok(row.includes(`>${amount}</strong>`), `row ${id} should display amount ${amount}`)
-        assert.ok(row.includes(`>${balance}</span>`), `row ${id} should display running balance ${balance}`)
-      }
-
-      assert.match(markup, /BALANCE[\s\S]*?\$2,875\.00/)
-      assert.match(markup, /AVAILABLE[\s\S]*?\$2,687\.00/)
-      assert.match(markup, /UNCLEARED[\s\S]*?\$188\.00/)
-    }
+    assert.match(markup, /Accounts 🍯/)
+    assert.match(markup, /aria-label="Manage accounts"/)
+    assert.match(markup, /aria-label="Add account"/)
+    assert.deepEqual(accountCards.map(([, id]) => Number(id)), [1, 2])
+    assert.match(markup, /Everyday Checking/)
+    assert.match(markup, /Savings/)
+    assert.doesNotMatch(markup, /account-select/)
   } finally {
     await server.close()
     if (previousStorage) {
