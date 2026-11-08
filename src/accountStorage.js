@@ -194,6 +194,16 @@ export function unlinkOccurrenceTransaction(transactionId, storage = localStorag
   return transaction
 }
 
+export function removeOccurrenceTransaction(flow, occurrence, storage = localStorage) {
+  const data = readAccountDataForMutation(storage)
+  const transaction = getLinkedOccurrenceTransaction(data.transactions, flow, occurrence)
+  if (!transaction) throw new Error('The linked account transaction no longer exists.')
+
+  data.transactions = data.transactions.filter(item => item.id !== transaction.id)
+  saveAccountData(data.accounts, data.transactions, storage)
+  return transaction
+}
+
 export function updateOccurrenceTransaction(transactionId, changes, storage = localStorage) {
   return updateOccurrenceTransactions([transactionId], changes, storage)[0]
 }
@@ -212,7 +222,15 @@ export function updateOccurrenceTransactions(transactionIds, changes, storage = 
   ) {
     throw new Error('The selected account is unavailable or archived.')
   }
-  for (const transaction of transactions) Object.assign(transaction, changes)
+  let nextSequence = data.transactions.reduce(
+    (max, transaction) => Math.max(max, transaction.sequence ?? transaction.id),
+    0
+  ) + 1
+  for (const transaction of transactions) {
+    const dateChanged = changes.date && changes.date !== transaction.date
+    Object.assign(transaction, changes)
+    if (dateChanged) transaction.sequence = nextSequence++
+  }
   saveAccountData(data.accounts, data.transactions, storage)
   return transactions
 }

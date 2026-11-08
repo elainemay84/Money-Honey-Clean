@@ -45,6 +45,7 @@ export default function Accounts() {
   const [newDate, setNewDate] = useState(todayDate)
   const [kind, setKind] = useState('expense')
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false)
+  const [editingTransactionId, setEditingTransactionId] = useState(null)
 
   useEffect(() => {
     const refreshAccountData = () => {
@@ -167,24 +168,53 @@ export default function Accounts() {
     updateTransactions(current => moveTransactionToDate(current, id, date, sequence))
   }
 
+  function openEditTransaction(transaction) {
+    setEditingTransactionId(transaction.id)
+    setNewName(transaction.name)
+    setNewAmount(String(Math.abs(transaction.amount)))
+    setNewDate(transaction.date)
+    setKind(transaction.amount < 0 ? 'expense' : 'income')
+    setIsAddTransactionOpen(true)
+  }
+
   function addTransaction(event) {
     event.preventDefault()
 
     const amount = Number(newAmount)
     if (!newName.trim() || !newDate || !Number.isFinite(amount) || amount === 0) return
 
-    updateTransactions(current => [...current, {
-      id: nextTransactionId.current++,
-      sequence: nextTransactionSequence.current++,
-      accountId: selectedAccount,
-      name: newName.trim(),
-      amount: normalizeTransactionAmount(amount, kind),
-      date: newDate,
-      cleared: account.defaultCleared
-    }])
+    if (editingTransactionId !== null) {
+      const currentTransaction = transactions.find(item => item.id === editingTransactionId)
+      if (!currentTransaction) return
+      const sequence = currentTransaction.date === newDate
+        ? currentTransaction.sequence
+        : nextTransactionSequence.current++
+      updateTransactions(current => current.map(item =>
+        item.id === editingTransactionId
+          ? {
+            ...item,
+            sequence,
+            name: newName.trim(),
+            amount: normalizeTransactionAmount(amount, kind),
+            date: newDate
+          }
+          : item
+      ))
+    } else {
+      updateTransactions(current => [...current, {
+        id: nextTransactionId.current++,
+        sequence: nextTransactionSequence.current++,
+        accountId: selectedAccount,
+        name: newName.trim(),
+        amount: normalizeTransactionAmount(amount, kind),
+        date: newDate,
+        cleared: account.defaultCleared
+      }])
+    }
 
     setNewName('')
     setNewAmount('')
+    setEditingTransactionId(null)
     setIsAddTransactionOpen(false)
   }
 
@@ -666,20 +696,35 @@ export default function Accounts() {
             key={item.id}
             data-transaction-id={item.id}
             data-transaction-sequence={item.sequence}
+            role="group"
+            tabIndex={0}
+            aria-label={`Transaction row: ${item.name}`}
+            onClick={() => openEditTransaction(item)}
+            onKeyDown={event => {
+              if (event.target !== event.currentTarget) return
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                openEditTransaction(item)
+              }
+            }}
             style={{
               display: 'grid',
               gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
               alignItems: 'center',
               columnGap: 8,
               padding: '5px 0',
-              borderBottom: '1px solid #EEE5D9'
+              borderBottom: '1px solid #EEE5D9',
+              cursor: 'pointer'
             }}
           >
             <button
               type="button"
               aria-label={item.cleared ? 'Mark pending' : 'Mark cleared'}
               aria-pressed={item.cleared}
-              onClick={() => toggleCleared(item.id)}
+              onClick={event => {
+                event.stopPropagation()
+                toggleCleared(item.id)
+              }}
               style={{
                 width: 24,
                 height: 24,
@@ -718,6 +763,8 @@ export default function Accounts() {
                 type="date"
                 aria-label={`Date for ${item.name}`}
                 value={item.date}
+                onClick={event => event.stopPropagation()}
+                onKeyDown={event => event.stopPropagation()}
                 onChange={event => updateDate(item.id, event.target.value)}
                 style={{
                   display: 'block',
@@ -773,7 +820,14 @@ export default function Accounts() {
         type="button"
         aria-label="Add transaction"
         title="Add Transaction"
-        onClick={() => setIsAddTransactionOpen(true)}
+        onClick={() => {
+          setEditingTransactionId(null)
+          setNewName('')
+          setNewAmount('')
+          setNewDate(todayDate)
+          setKind('expense')
+          setIsAddTransactionOpen(true)
+        }}
         style={{
           position: 'fixed',
           right: 'max(20px, calc((100vw - 460px) / 2))',
@@ -833,11 +887,11 @@ export default function Accounts() {
               marginBottom: 14
             }}>
               <h2 id="add-transaction-title" style={{ margin: 0, color: '#79502A' }}>
-                Add Transaction
+                {editingTransactionId === null ? 'Add Transaction' : 'Edit Transaction'}
               </h2>
               <button
                 type="button"
-                aria-label="Close add transaction"
+                aria-label={editingTransactionId === null ? 'Close add transaction' : 'Close edit transaction'}
                 onClick={() => setIsAddTransactionOpen(false)}
                 style={{
                   border: 'none',
@@ -908,7 +962,7 @@ export default function Accounts() {
                   fontWeight: 'bold',
                   cursor: 'pointer'
                 }}>
-                  Add Transaction
+                  {editingTransactionId === null ? 'Add Transaction' : 'Save Transaction'}
                 </button>
               </div>
             </form>

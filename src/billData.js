@@ -67,8 +67,13 @@ function isDueInMonth(bill, year, monthIndex, candidate) {
   const anchorDay = anchor.getUTCDate()
   const monthOffset = (year - anchorYear) * 12 + monthIndex - anchorMonth
   const dayOffset = (candidate.getTime() - anchor.getTime()) / DAY_MS
+  const candidateDate = formatUTCDate(candidate)
 
-  if (monthOffset < 0 || dayOffset < 0) return false
+  if (
+    monthOffset < 0
+    || dayOffset < 0
+    || (bill.endDate && candidateDate > bill.endDate)
+  ) return false
 
   switch (bill.frequency) {
     case 'one-time':
@@ -139,11 +144,11 @@ function getScheduleOccurrence(schedule, scheduledDate, isIncome, transactions =
   occurrence.legacyReceived = !linkedTransaction
     && Boolean(legacyEntry?.status === 'received' || legacyEntry?.received === true)
   if (isIncome) {
-    occurrence.status = linkedTransaction ? 'received' : 'expected'
+    occurrence.status = linkedTransaction || occurrence.legacyReceived ? 'received' : 'expected'
     occurrence.received = occurrence.status === 'received'
     occurrence.cleared = Boolean(linkedTransaction?.cleared)
   } else {
-    occurrence.paid = Boolean(linkedTransaction)
+    occurrence.paid = Boolean(linkedTransaction || legacyEntry?.paid)
     occurrence.cleared = Boolean(linkedTransaction?.cleared)
   }
   return occurrence
@@ -202,6 +207,11 @@ export function getBillOccurrencesInRange(bills, startDate, endDate, transaction
     }
     for (const entry of bill.paymentHistory ?? []) {
       if (typeof entry.dueDate !== 'string') continue
+      const sourceDate = new Date(`${entry.dueDate}T00:00:00Z`)
+      if (
+        !Number.isFinite(sourceDate.getTime())
+        || !isDueInMonth(bill, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
+      ) continue
       const effectiveDate = getScheduleOverride(bill, entry.dueDate).dueDate ?? entry.dueDate
       if (effectiveDate >= startDate && effectiveDate <= endDate) {
         const dates = sourceDatesBySchedule.get(bill.id) ?? new Set()
@@ -216,6 +226,11 @@ export function getBillOccurrencesInRange(bills, startDate, endDate, transaction
       if (bill.archived || bill.active === false) continue
       const scheduledDate = getLinkedScheduledDate(transaction, bill, false)
       if (!scheduledDate) continue
+      const sourceDate = new Date(`${scheduledDate}T00:00:00Z`)
+      if (
+        !Number.isFinite(sourceDate.getTime())
+        || !isDueInMonth(bill, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
+      ) continue
       const effectiveDate = getScheduleOverride(bill, scheduledDate).dueDate ?? scheduledDate
       if (effectiveDate < startDate || effectiveDate > endDate) continue
       const dates = sourceDatesBySchedule.get(bill.id) ?? new Set()
@@ -266,7 +281,6 @@ export function getIncomeOccurrencesInRange(incomes, startDate, endDate, transac
       }
     }
   }
-
   for (const income of incomes) {
     if (income.archived || income.active === false) continue
     for (const override of income.occurrenceOverrides ?? []) {
@@ -285,6 +299,11 @@ export function getIncomeOccurrencesInRange(incomes, startDate, endDate, transac
     }
     for (const entry of income.paymentHistory ?? []) {
       if (typeof entry.dueDate !== 'string') continue
+      const sourceDate = new Date(`${entry.dueDate}T00:00:00Z`)
+      if (
+        !Number.isFinite(sourceDate.getTime())
+        || !isDueInMonth(income, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
+      ) continue
       const effectiveDate = getScheduleOverride(income, entry.dueDate).dueDate ?? entry.dueDate
       if (effectiveDate >= startDate && effectiveDate <= endDate) {
         const dates = sourceDatesBySchedule.get(income.id) ?? new Set()
@@ -298,6 +317,11 @@ export function getIncomeOccurrencesInRange(incomes, startDate, endDate, transac
       if (income.archived || income.active === false) continue
       const scheduledDate = getLinkedScheduledDate(transaction, income, true)
       if (!scheduledDate) continue
+      const sourceDate = new Date(`${scheduledDate}T00:00:00Z`)
+      if (
+        !Number.isFinite(sourceDate.getTime())
+        || !isDueInMonth(income, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
+      ) continue
       const effectiveDate = getScheduleOverride(income, scheduledDate).dueDate ?? scheduledDate
       if (effectiveDate < startDate || effectiveDate > endDate) continue
       const dates = sourceDatesBySchedule.get(income.id) ?? new Set()

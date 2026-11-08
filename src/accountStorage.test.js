@@ -4,6 +4,7 @@ import {
   createOccurrenceTransaction,
   linkExistingOccurrenceTransaction,
   loadSavedAccountData,
+  removeOccurrenceTransaction,
   saveAccountData,
   setOccurrenceTransactionCleared,
   unlinkOccurrenceTransaction,
@@ -135,6 +136,72 @@ test('receiving income creates one positive linked transaction and reload keeps 
   assert.equal(incomeAfterClear.cleared, false)
 })
 
+test('undo removes only the linked bill transaction and restores unpaid balance without touching unrelated transactions', () => {
+  const storage = createStorage()
+  seedAccounts(storage)
+  const { transaction } = createOccurrenceTransaction('out', billOccurrence, '2026-04-12', storage)
+  const unrelated = {
+    id: 90,
+    sequence: 90,
+    accountId: 1,
+    name: 'Electric',
+    amount: -80,
+    date: '2026-04-12',
+    cleared: true
+  }
+  const otherOccurrence = {
+    ...billOccurrence,
+    occurrenceId: 'bill:7:2026-04-17',
+    scheduledDate: '2026-04-17'
+  }
+  const otherTransaction = createOccurrenceTransaction(
+    'out',
+    otherOccurrence,
+    '2026-04-17',
+    storage
+  ).transaction
+  let data = loadSavedAccountData(storage)
+  saveAccountData(data.accounts, [...data.transactions, unrelated], storage)
+
+  const removed = removeOccurrenceTransaction('out', billOccurrence, storage)
+  data = loadSavedAccountData(storage)
+
+  assert.equal(removed.id, transaction.id)
+  assert.deepEqual(
+    data.transactions.map(item => item.id).sort((a, b) => a - b),
+    [unrelated.id, otherTransaction.id].sort((a, b) => a - b)
+  )
+  assert.equal(calculateAccountBalances(1000, data.transactions).available, 840)
+  assert.equal(getBillOccurrences(
+    [{ ...billOccurrence, frequency: 'weekly', paymentHistory: [] }],
+    new Date(Date.UTC(2026, 3, 1)),
+    data.transactions
+  )[0].paid, false)
+  assert.equal(data.transactions.find(item => item.id === unrelated.id).cleared, true)
+})
+
+test('undo removes the linked income transaction and restores the account balance', () => {
+  const storage = createStorage()
+  seedAccounts(storage)
+  const { transaction } = createOccurrenceTransaction('in', incomeOccurrence, '2026-04-11', storage)
+
+  removeOccurrenceTransaction('in', incomeOccurrence, storage)
+  const data = loadSavedAccountData(storage)
+
+  assert.deepEqual(data.transactions, [])
+  assert.equal(calculateAccountBalances(1000, data.transactions).available, 1000)
+  assert.equal(getIncomeOccurrences([{
+    ...incomeOccurrence,
+    frequency: 'one-time',
+    paymentHistory: []
+  }], new Date(Date.UTC(2026, 3, 1)), data.transactions)[0].status, 'expected')
+  assert.throws(
+    () => removeOccurrenceTransaction('in', incomeOccurrence, storage),
+    /no longer exists/
+  )
+  assert.equal(transaction.cleared, false)
+})
+
 test('clearing and unclearing a transaction immediately controls its linked occurrence and Home summary', () => {
   const storage = createStorage()
   seedAccounts(storage)
@@ -224,7 +291,32 @@ test('occurrence edits update the same linked transaction only after explicit co
   assert.equal(calculateAccountBalances(500, data.transactions.filter(item => item.accountId === 2)).available, 1650)
 })
 
-test('unlink retains the account transaction; reversing it removes the transaction and resets the occurrence', () => {
+test('moving a linked occurrence transaction onto a date places it after existing same-day transactions', () => {
+  const storage = createStorage()
+  seedAccounts(storage)
+  const { transaction } = createOccurrenceTransaction('out', billOccurrence, '2026-04-11', storage)
+  const sameDayTransaction = {
+    id: 20,
+    sequence: 20,
+    accountId: 1,
+    name: 'Other expense',
+    amount: -10,
+    date: '2026-04-12',
+    cleared: false
+  }
+  const data = loadSavedAccountData(storage)
+  saveAccountData(data.accounts, [...data.transactions, sameDayTransaction], storage)
+
+  updateOccurrenceTransaction(transaction.id, { date: '2026-04-12' }, storage)
+  const updated = loadSavedAccountData(storage)
+  const sameDayRows = calculateAccountBalances(1000, updated.transactions, 'asc')
+    .rows.filter(item => item.date === '2026-04-12')
+
+  assert.deepEqual(sameDayRows.map(item => item.name), ['Other expense', 'Electric'])
+  assert.ok(updated.transactions.find(item => item.id === transaction.id).sequence > sameDayTransaction.sequence)
+})
+
+test('unlinking or removing a transaction does not erase the occurrence payment history', () => {
   const storage = createStorage()
   seedAccounts(storage)
   const bill = {
@@ -246,14 +338,14 @@ test('unlink retains the account transaction; reversing it removes the transacti
   let data = loadSavedAccountData(storage)
   assert.equal(data.transactions.length, 1)
   assert.equal(data.transactions[0].linkedOccurrenceId, undefined)
-  assert.equal(getBillOccurrences([billWithHistory], new Date(Date.UTC(2026, 3, 1)), data.transactions)[0].paid, false)
+  assert.equal(getBillOccurrences([billWithHistory], new Date(Date.UTC(2026, 3, 1)), data.transactions)[0].paid, true)
 
   const relinked = linkExistingOccurrenceTransaction('out', billOccurrence, transaction.id, storage)
   assert.equal(relinked.linkedOccurrenceId, billOccurrence.occurrenceId)
   data = loadSavedAccountData(storage)
   assert.equal(getBillOccurrences([billWithHistory], new Date(Date.UTC(2026, 3, 1)), data.transactions)[0].paid, true)
   saveAccountData(data.accounts, data.transactions.filter(item => item.id !== transaction.id), storage)
-  assert.equal(getBillOccurrences([billWithHistory], new Date(Date.UTC(2026, 3, 1)), loadSavedAccountData(storage).transactions)[0].paid, false)
+  assert.equal(getBillOccurrences([billWithHistory], new Date(Date.UTC(2026, 3, 1)), loadSavedAccountData(storage).transactions)[0].paid, true)
 })
 
 test('separate recurring occurrences on the same schedule link to different transactions', () => {

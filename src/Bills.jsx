@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   createIncomeId,
   createBillId,
   createDemoBills,
   formatLocalDate,
+  getBillOccurrencesInRange,
   getIncomeOccurrences,
+  getIncomeOccurrencesInRange,
   getScheduleViewData,
-  getScheduleSummary,
   getBillOccurrences,
   loadBillData,
   saveBillData,
@@ -17,8 +18,7 @@ import {
   createOccurrenceTransaction,
   linkExistingOccurrenceTransaction,
   loadSavedAccountData,
-  saveAccountData,
-  unlinkOccurrenceTransaction,
+  removeOccurrenceTransaction,
   updateOccurrenceTransaction,
   updateOccurrenceTransactions
 } from './accountStorage.js'
@@ -43,6 +43,32 @@ function firstDateOfMonth(date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`
 }
 
+function lastDateOfMonth(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0))
+    .toISOString()
+    .slice(0, 10)
+}
+
+function getEarliestScheduleDate(schedules) {
+  const dates = schedules
+    .filter(schedule => !schedule.archived && schedule.active !== false)
+    .flatMap(schedule => [
+      schedule.dueDate,
+      ...(schedule.occurrenceOverrides ?? []).flatMap(override => [
+        override.scheduledDate,
+        override.dueDate
+      ]),
+      ...(schedule.paymentHistory ?? []).map(entry => entry.dueDate)
+    ])
+    .filter(date => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return false
+      const parsed = new Date(`${date}T00:00:00Z`)
+      return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date
+    })
+
+  return dates.sort()[0] ?? null
+}
+
 function formatDueDate(date) {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
     month: 'short',
@@ -50,6 +76,12 @@ function formatDueDate(date) {
     year: 'numeric',
     timeZone: 'UTC'
   })
+}
+
+function isOccurrenceCompleted(flow, occurrence) {
+  return flow === 'out'
+    ? occurrence.paid === true
+    : occurrence.status === 'received'
 }
 
 const card = {
@@ -88,14 +120,17 @@ export default function Bills() {
   const accountOptions = accountData?.accounts.filter(account => !account.archived) ?? []
   const accountTransactions = accountData?.transactions ?? []
   const [flow, setFlow] = useState('out')
+  const [currentMonth] = useState(() => monthStart(new Date()))
   const [selectedMonth, setSelectedMonth] = useState(() => monthStart(new Date()))
   const [view, setView] = useState('list')
+  const [showCompleted, setShowCompleted] = useState(false)
   const [selectedDay, setSelectedDay] = useState(today)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingBillId, setEditingBillId] = useState(null)
   const [editingScope, setEditingScope] = useState('schedule')
   const [editingOccurrenceDate, setEditingOccurrenceDate] = useState(null)
   const [editingLinkedTransactionId, setEditingLinkedTransactionId] = useState(null)
+  const [editingOccurrence, setEditingOccurrence] = useState(null)
   const [selectedOccurrence, setSelectedOccurrence] = useState(null)
   const [actualDate, setActualDate] = useState(today)
   const [occurrenceError, setOccurrenceError] = useState('')
@@ -116,9 +151,61 @@ export default function Bills() {
 
   const billOccurrences = getBillOccurrences(bills, selectedMonth, accountTransactions)
   const incomeOccurrences = getIncomeOccurrences(incomes, selectedMonth, accountTransactions)
+  const listSchedules = flow === 'out' ? bills : incomes
+  const earliestScheduleDate = getEarliestScheduleDate(listSchedules)
+  const earliestScheduleMonth = earliestScheduleDate
+    ? monthStart(new Date(`${earliestScheduleDate}T00:00:00Z`))
+    : currentMonth
+  const listStartMonth = earliestScheduleMonth < currentMonth ? earliestScheduleMonth : currentMonth
+  const listStartDate = firstDateOfMonth(listStartMonth)
+  const listEndMonth = addMonths(currentMonth, 11)
+  const listEndDate = lastDateOfMonth(listEndMonth)
+  const listBillOccurrences = getBillOccurrencesInRange(
+    bills,
+    listStartDate,
+    listEndDate,
+    accountTransactions
+  )
+  const listIncomeOccurrences = getIncomeOccurrencesInRange(
+    incomes,
+    listStartDate,
+    listEndDate,
+    accountTransactions
+  )
+  const listOccurrences = flow === 'out' ? listBillOccurrences : listIncomeOccurrences
+  const listMonthCount = (
+    (listEndMonth.getUTCFullYear() - listStartMonth.getUTCFullYear()) * 12
+    + listEndMonth.getUTCMonth() - listStartMonth.getUTCMonth() + 1
+  )
+  const listMonths = Array.from({ length: listMonthCount }, (_, index) => addMonths(listStartMonth, index))
+    .map(month => {
+      const monthKey = firstDateOfMonth(month).slice(0, 7)
+      const occurrences = listOccurrences.filter(item => item.dueDate.startsWith(monthKey))
+      const total = occurrences.reduce(
+        (sum, item) => sum + Math.round(item.amount * 100),
+        0
+      ) / 100
+      const visibleOccurrences = showCompleted
+        ? occurrences
+        : occurrences.filter(item => !isOccurrenceCompleted(flow, item))
+      return { month, monthKey, occurrences, visibleOccurrences, total }
+    })
+    .filter(group => group.occurrences.length > 0)
+    .filter(group =>
+      showCompleted
+      || group.month >= currentMonth
+      || group.visibleOccurrences.length > 0
+    )
+  const initialScrollMonthKey = listMonths.find(group => group.month >= currentMonth)?.monthKey
+    ?? listMonths.at(-1)?.monthKey
   const scheduleView = getScheduleViewData(flow, billOccurrences, incomeOccurrences, selectedDay, view)
-  const { occurrences: visibleOccurrences, selectedDayOccurrences, calendarDates } = scheduleView
-  const summary = getScheduleSummary(flow, billOccurrences, incomeOccurrences, today)
+  const { occurrences: calendarOccurrences, selectedDayOccurrences, calendarDates } = scheduleView
+  const inactiveSchedules = (flow === 'in' ? incomes : bills)
+    .filter(schedule => schedule.archived || schedule.active === false)
+  const calendarTotal = calendarOccurrences.reduce(
+    (total, occurrence) => total + Math.round(occurrence.amount * 100),
+    0
+  ) / 100
   const editingSchedule = (flow === 'out' ? bills : incomes)
     .find(schedule => schedule.id === editingBillId)
   const monthDays = new Date(Date.UTC(
@@ -127,6 +214,11 @@ export default function Bills() {
     0
   )).getUTCDate()
   const firstWeekday = selectedMonth.getUTCDay()
+  const currentMonthRef = useRef(null)
+
+  useEffect(() => {
+    currentMonthRef.current?.scrollIntoView?.({ block: 'start' })
+  }, [])
 
   function persistData(nextBills = bills, nextIncomes = incomes) {
     setBills(nextBills)
@@ -158,6 +250,7 @@ export default function Bills() {
     setEditingScope('schedule')
     setEditingOccurrenceDate(null)
     setEditingLinkedTransactionId(null)
+    setEditingOccurrence(null)
     setName('')
     setAmount('')
     setDueDate(today)
@@ -178,6 +271,7 @@ export default function Bills() {
     setEditingScope('schedule')
     setEditingOccurrenceDate(null)
     setEditingLinkedTransactionId(null)
+    setEditingOccurrence(null)
     setName(savedBill.name)
     setAmount(String(savedBill.amount))
     setDueDate(savedBill.dueDate)
@@ -196,6 +290,7 @@ export default function Bills() {
       : incomes.find(item => item.id === occurrence.id) ?? occurrence
     setEditingBillId(savedSchedule.id)
     setEditingScope('occurrence')
+    setEditingOccurrence(occurrence)
     setEditingOccurrenceDate(occurrence.scheduledDate ?? occurrence.dueDate)
     setEditingLinkedTransactionId(occurrence.transactionId ?? null)
     setName(occurrence.name)
@@ -208,6 +303,34 @@ export default function Bills() {
     setDaysOfMonth((savedSchedule.daysOfMonth ?? [1, 15]).map(String))
     setFormError('')
     setIsFormOpen(true)
+  }
+
+  function selectEditingScope(scope) {
+    if (scope === 'schedule' && editingSchedule) {
+      setEditingScope('schedule')
+      setEditingOccurrenceDate(null)
+      setEditingLinkedTransactionId(null)
+      setName(editingSchedule.name)
+      setAmount(String(editingSchedule.amount))
+      setDueDate(editingSchedule.dueDate)
+      setFrequency(editingSchedule.frequency)
+      setAutopay(Boolean(editingSchedule.autopay))
+      setAccountId(editingSchedule.accountId == null ? '' : String(editingSchedule.accountId))
+      setNotes(editingSchedule.notes ?? '')
+      setDaysOfMonth((editingSchedule.daysOfMonth ?? [1, 15]).map(String))
+    } else if (scope === 'occurrence' && editingOccurrence) {
+      setEditingScope('occurrence')
+      setEditingOccurrenceDate(editingOccurrence.scheduledDate ?? editingOccurrence.dueDate)
+      setEditingLinkedTransactionId(editingOccurrence.transactionId ?? null)
+      setName(editingOccurrence.name)
+      setAmount(String(editingOccurrence.amount))
+      setDueDate(editingOccurrence.dueDate)
+      setFrequency(editingSchedule?.frequency ?? 'one-time')
+      setAutopay(Boolean(editingOccurrence.autopay))
+      setAccountId(editingOccurrence.accountId == null ? '' : String(editingOccurrence.accountId))
+      setNotes(editingOccurrence.notes ?? '')
+      setDaysOfMonth((editingSchedule?.daysOfMonth ?? [1, 15]).map(String))
+    }
   }
 
   function openPaymentConfirmation(occurrence) {
@@ -253,7 +376,7 @@ export default function Bills() {
       updateBills(bills.map(bill => bill.id === occurrence.id
         ? (() => {
           const history = bill.paymentHistory ?? []
-          if (history.at(-1)?.transactionId === transactionId) return bill
+          if (history.some(entry => entry.transactionId === transactionId)) return bill
           return {
             ...bill,
             paymentHistory: [...history, {
@@ -269,10 +392,51 @@ export default function Bills() {
       ))
     } else {
       const income = incomes.find(item => item.id === occurrence.id)
-      if (income?.paymentHistory?.at(-1)?.transactionId === transactionId) return
+      if (income?.paymentHistory?.some(entry => entry.transactionId === transactionId)) return
       const updated = updateIncomeStatus(income, scheduledDate, 'received', new Date().toISOString(), transactionId)
       updateIncomes(incomes.map(item => item.id === occurrence.id ? updated : item))
     }
+  }
+
+  function undoOccurrencePayment(occurrence) {
+    const recordedLabel = flow === 'out' ? 'payment' : 'receipt'
+    if (!window.confirm(`Undo this ${recordedLabel} for ${occurrence.name}? Its linked account transaction will be removed.`)) {
+      return
+    }
+
+    try {
+      const transaction = removeOccurrenceTransaction(flow, occurrence)
+      if (flow === 'out') {
+        updateBills(bills.map(bill => bill.id === occurrence.id
+          ? {
+            ...bill,
+            paymentHistory: (bill.paymentHistory ?? [])
+              .filter(entry => entry.transactionId !== transaction.id)
+          }
+          : bill
+        ))
+      } else {
+        updateIncomes(incomes.map(income => income.id === occurrence.id
+          ? {
+            ...income,
+            paymentHistory: (income.paymentHistory ?? [])
+              .filter(entry => entry.transactionId !== transaction.id)
+          }
+          : income
+        ))
+      }
+      setAccountData(loadSavedAccountData())
+    } catch (error) {
+      window.alert(error.message)
+    }
+  }
+
+  function handleOccurrenceAction(occurrence) {
+    const isRecorded = flow === 'in'
+      ? occurrence.status === 'received'
+      : occurrence.paid
+    if (isRecorded) undoOccurrencePayment(occurrence)
+    else openPaymentConfirmation(occurrence)
   }
 
   function updateScheduleManagement(changes) {
@@ -303,28 +467,34 @@ export default function Bills() {
 
     if (editingScope === 'occurrence' && editingBillId !== null && editingOccurrenceDate) {
       if (editingLinkedTransactionId !== null) {
-        if (accountId === '') {
+        const linkedChanges = {}
+        if (name.trim() !== editingOccurrence.name) linkedChanges.name = name.trim()
+        if (numericAmount !== editingOccurrence.amount) {
+          linkedChanges.amount = flow === 'out' ? -numericAmount : numericAmount
+        }
+        if (accountId !== String(editingOccurrence.accountId ?? '')) {
+          linkedChanges.accountId = accountId === '' ? null : Number(accountId)
+        }
+        if (dueDate !== editingOccurrence.dueDate) linkedChanges.date = dueDate
+
+        if (Object.keys(linkedChanges).length && accountId === '') {
           setFormError('Choose an associated account to keep the linked transaction valid.')
           return
         }
-        const shouldUpdateTransaction = window.confirm(
-          'This occurrence is linked to an account transaction. Update that transaction’s amount, date, and account to match these changes?'
-        )
-        if (!shouldUpdateTransaction) {
-          setFormError('The linked transaction was not changed; cancel or confirm the matching transaction update.')
-          return
-        }
-        try {
-          updateOccurrenceTransaction(editingLinkedTransactionId, {
-            accountId: accountId === '' ? null : Number(accountId),
-            name: name.trim(),
-            amount: flow === 'out' ? -numericAmount : numericAmount,
-            date: dueDate
-          })
-          setAccountData(loadSavedAccountData())
-        } catch (error) {
-          setFormError(error.message)
-          return
+        if (Object.keys(linkedChanges).length) {
+          if (!window.confirm(
+            'This occurrence is linked to an account transaction. Update the changed transaction fields to match?'
+          )) {
+            setFormError('The linked transaction was not changed; cancel or confirm the matching transaction update.')
+            return
+          }
+          try {
+            updateOccurrenceTransaction(editingLinkedTransactionId, linkedChanges)
+            setAccountData(loadSavedAccountData())
+          } catch (error) {
+            setFormError(error.message)
+            return
+          }
         }
       }
       const occurrenceChanges = {
@@ -548,74 +718,89 @@ export default function Bills() {
         </div>
       </header>
 
-      <section style={{
-        ...card,
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-        gap: 8,
-        padding: 14,
-        background: '#F5D6A5'
-      }}>
-        {[
-          [summary.firstLabel, summary.firstValue, '#B87522'],
-          [summary.secondLabel, summary.secondValue, '#21834B'],
-          [summary.thirdLabel, summary.thirdValue, '#9B463E']
-        ].map(([label, total, color]) => (
-          <div key={label} style={{ minWidth: 0 }}>
-            <div style={{ color: '#79502A', fontSize: 10, fontWeight: 'bold', letterSpacing: 0.3 }}>
-              {label}
-            </div>
-            <strong style={{
-              display: 'block',
-              marginTop: 5,
-              color,
-              fontSize: 15,
-              whiteSpace: 'nowrap',
-              fontVariantNumeric: 'tabular-nums'
-            }}>
-              {money(total)}
-            </strong>
-          </div>
-        ))}
-      </section>
+      {view === 'calendar' && (
+        <section
+          aria-label={flow === 'out' ? 'Monthly total due' : 'Monthly total incoming'}
+          style={{
+            ...card,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: '11px 14px',
+            background: '#F5D6A5'
+          }}
+        >
+          <strong style={{ color: '#79502A', fontSize: 12, fontWeight: 600 }}>
+            {flow === 'out' ? 'Money Out · Total Due' : 'Money In · Total Incoming'}
+          </strong>
+          <strong style={{
+            color: '#493320',
+            fontSize: 16,
+            whiteSpace: 'nowrap',
+            fontVariantNumeric: 'tabular-nums'
+          }}>
+            {money(calendarTotal)}
+          </strong>
+        </section>
+      )}
 
       <section style={card}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          marginBottom: 14
-        }}>
-          <button
-            type="button"
-            aria-label="Previous month"
-            onClick={() => {
-              const previous = addMonths(selectedMonth, -1)
-              setSelectedMonth(previous)
-              setSelectedDay(firstDateOfMonth(previous))
-            }}
-            style={{ border: 'none', background: 'transparent', color: '#B87522', fontSize: 22, cursor: 'pointer' }}
-          >
-            ‹
-          </button>
-          <h2 style={{ margin: 0, color: '#493320', fontSize: 17 }}>{monthLabel(selectedMonth)}</h2>
-          <button
-            type="button"
-            aria-label="Next month"
-            onClick={() => {
-              const next = addMonths(selectedMonth, 1)
-              setSelectedMonth(next)
-              setSelectedDay(firstDateOfMonth(next))
-            }}
-            style={{ border: 'none', background: 'transparent', color: '#B87522', fontSize: 22, cursor: 'pointer' }}
-          >
-            ›
-          </button>
-        </div>
-
+        {view === 'list' && (
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 7,
+            marginBottom: 8,
+            color: '#79502A',
+            fontSize: 11,
+            cursor: 'pointer'
+          }}>
+            <input
+              type="checkbox"
+              aria-label="Show Completed"
+              checked={showCompleted}
+              onChange={event => setShowCompleted(event.target.checked)}
+            />
+            Show Completed
+          </label>
+        )}
         {view === 'calendar' ? (
           <>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginBottom: 8
+            }}>
+              <button
+                type="button"
+                aria-label="Previous month"
+                onClick={() => {
+                  const previous = addMonths(selectedMonth, -1)
+                  setSelectedMonth(previous)
+                  setSelectedDay(firstDateOfMonth(previous))
+                }}
+                style={{ border: 'none', background: 'transparent', color: '#B87522', fontSize: 22, cursor: 'pointer' }}
+              >
+                ‹
+              </button>
+              <h2 style={{ margin: 0, color: '#493320', fontSize: 17 }}>{monthLabel(selectedMonth)}</h2>
+              <button
+                type="button"
+                aria-label="Next month"
+                onClick={() => {
+                  const next = addMonths(selectedMonth, 1)
+                  setSelectedMonth(next)
+                  setSelectedDay(firstDateOfMonth(next))
+                }}
+                style={{ border: 'none', background: 'transparent', color: '#B87522', fontSize: 22, cursor: 'pointer' }}
+              >
+                ›
+              </button>
+            </div>
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
@@ -663,16 +848,15 @@ export default function Bills() {
               ) : <span key={cell.key} />)}
             </div>
             <section aria-live="polite" style={{ marginTop: 16 }}>
-              <h2 style={{ margin: '0 0 4px', fontSize: 15 }}>
-                {flow === 'out' ? 'Bills' : 'Incoming'} · {formatDueDate(selectedDay)}
+              <h2 style={{ margin: '0 0 4px', fontSize: 13, color: '#79502A' }}>
+                Entries · {formatDueDate(selectedDay)}
               </h2>
               {selectedDayOccurrences.length ? (
                 selectedDayOccurrences.map(item => renderOccurrenceRow(
                   item,
                   flow,
-                  accountOptions,
                   openOccurrenceForEdit,
-                  openPaymentConfirmation
+                  handleOccurrenceAction
                 ))
               ) : (
                 <p style={{ margin: '7px 0 0', color: '#79502A', fontSize: 12 }}>
@@ -683,33 +867,59 @@ export default function Bills() {
           </>
         ) : (
           <>
-            <h2 style={{ margin: 0, fontSize: 17 }}>Scheduled Items</h2>
-            {visibleOccurrences.length
-              ? visibleOccurrences.map(item => renderOccurrenceRow(
-                item,
-                flow,
-                accountOptions,
-                openOccurrenceForEdit,
-                openPaymentConfirmation
-              ))
-              : <p style={{ color: '#79502A', fontSize: 13 }}>
-                Nothing scheduled this month.
-              </p>}
-            {(flow === 'in' ? incomes : bills).filter(schedule => schedule.archived || schedule.active === false).map(schedule => (
-              renderOccurrenceRow(
-                {
-                  ...schedule,
-                  occurrenceId: `schedule:${schedule.id}`,
-                  status: schedule.archived ? 'archived' : 'paused',
-                  dueDate: schedule.dueDate,
-                  scheduledDate: schedule.dueDate
-                },
-                flow,
-                accountOptions,
-                openOccurrenceForEdit,
-                openPaymentConfirmation
-              )
-            ))}
+            {listMonths.length ? listMonths.map(group => (
+              <section
+                key={group.monthKey}
+                ref={group.monthKey === initialScrollMonthKey ? currentMonthRef : undefined}
+                aria-label={`${monthLabel(group.month)} ${flow === 'out' ? 'bills' : 'income'}`}
+              >
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  margin: '0 -6px 3px',
+                  padding: '8px 10px',
+                  borderRadius: 9,
+                  background: '#F5D6A5',
+                  color: '#79502A'
+                }}>
+                  <h2 style={{ margin: 0, fontSize: 13 }}>{monthLabel(group.month)}</h2>
+                  <strong style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+                    Total scheduled · {money(group.total)}
+                  </strong>
+                </div>
+                {group.visibleOccurrences.map(item => renderOccurrenceRow(
+                  item,
+                  flow,
+                  openOccurrenceForEdit,
+                  handleOccurrenceAction
+                ))}
+              </section>
+            )) : (
+              <p style={{ color: '#79502A', fontSize: 13 }}>
+                Nothing scheduled in this date range.
+              </p>
+            )}
+            {inactiveSchedules.length > 0 && (
+              <section aria-label="Inactive schedules" style={{ marginTop: 16 }}>
+                <h2 style={{ margin: '0 0 4px', color: '#79502A', fontSize: 13 }}>
+                  Inactive schedules
+                </h2>
+                {inactiveSchedules.map(schedule => renderOccurrenceRow(
+                  {
+                    ...schedule,
+                    occurrenceId: `schedule:${schedule.id}`,
+                    status: schedule.archived ? 'archived' : 'paused',
+                    dueDate: schedule.dueDate,
+                    scheduledDate: schedule.dueDate
+                  },
+                  flow,
+                  openOccurrenceForEdit,
+                  handleOccurrenceAction
+                ))}
+              </section>
+            )}
           </>
         )}
       </section>
@@ -871,6 +1081,42 @@ export default function Bills() {
               </button>
             </div>
             <form onSubmit={saveBill} style={{ display: 'grid', gap: 10 }}>
+              {editingBillId !== null && editingOccurrence && editingSchedule?.frequency !== 'one-time' && (
+                <fieldset style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 8,
+                  margin: 0,
+                  padding: 10,
+                  border: '1px solid #E9D6B7',
+                  borderRadius: 10
+                }}>
+                  <legend style={{ padding: '0 4px', color: '#79502A', fontSize: 12 }}>
+                    Apply changes to
+                  </legend>
+                  {[
+                    ['occurrence', 'This occurrence'],
+                    ['schedule', 'Recurring schedule']
+                  ].map(([scope, label]) => (
+                    <label key={scope} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      color: '#79502A',
+                      fontSize: 12
+                    }}>
+                      <input
+                        type="radio"
+                        name="edit-scope"
+                        value={scope}
+                        checked={editingScope === scope}
+                        onChange={() => selectEditingScope(scope)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               <input aria-label={flow === 'out' ? 'Bill name' : 'Income name'} placeholder={flow === 'out' ? 'Bill name' : 'Income name'} value={name} onChange={event => setName(event.target.value)} style={field} required />
               <input aria-label="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" value={amount} onChange={event => setAmount(event.target.value)} style={field} required />
               <input aria-label={flow === 'out' ? 'Due date' : 'First expected date'} type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} style={field} required />
@@ -915,15 +1161,6 @@ export default function Bills() {
                       : ' Schedule changes apply to future occurrences.'}
                   </p>
                   <div style={{ display: 'grid', gap: 7 }}>
-                    {editingScope === 'occurrence' && editingSchedule?.frequency !== 'one-time' && (
-                      <button
-                        type="button"
-                        onClick={() => openEditBill(editingSchedule)}
-                        style={{ ...field, color: '#79502A', cursor: 'pointer' }}
-                      >
-                        Edit recurring schedule
-                      </button>
-                    )}
                     {editingSchedule?.archived ? (
                       <button type="button" onClick={() => updateScheduleManagement({ archived: false, active: true })} style={{
                         ...field, color: '#79502A', cursor: 'pointer'
@@ -950,49 +1187,6 @@ export default function Bills() {
                         Archive schedule
                       </button>
                     )}
-                  </div>
-                </details>
-              )}
-              {editingLinkedTransactionId !== null && editingScope === 'occurrence' && (
-                <details style={{ color: '#79502A', fontSize: 12 }}>
-                  <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Advanced linked transaction settings</summary>
-                  <p style={{ margin: '8px 0', fontSize: 11 }}>
-                    Payment status and clearing follow this linked transaction. Clearing remains in Accounts.
-                  </p>
-                  <div style={{ display: 'grid', gap: 7 }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!window.confirm('Unlink this occurrence? The account transaction will remain in the register.')) return
-                        try {
-                          unlinkOccurrenceTransaction(editingLinkedTransactionId)
-                          setAccountData(loadSavedAccountData())
-                          setEditingLinkedTransactionId(null)
-                        } catch (error) {
-                          setFormError(error.message)
-                        }
-                      }}
-                      style={{ ...field, color: '#9B463E', cursor: 'pointer' }}
-                    >
-                      Unlink and keep transaction
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!window.confirm('Reverse this payment by deleting its linked account transaction? This changes the account balance.')) return
-                        try {
-                          const nextTransactions = accountTransactions.filter(item => item.id !== editingLinkedTransactionId)
-                          saveAccountData(accountData.accounts, nextTransactions)
-                          setAccountData(loadSavedAccountData())
-                          setEditingLinkedTransactionId(null)
-                        } catch (error) {
-                          setFormError(error.message)
-                        }
-                      }}
-                      style={{ ...field, color: '#9B463E', cursor: 'pointer' }}
-                    >
-                      Reverse and remove transaction
-                    </button>
                   </div>
                 </details>
               )}
@@ -1146,29 +1340,22 @@ export default function Bills() {
 function renderOccurrenceRow(
   occurrence,
   flow,
-  accountOptions,
   onOpen,
-  onPay
+  onAction
 ) {
   const isIncome = flow === 'in'
-  const linkedAccount = accountOptions.find(account => account.id === occurrence.accountId)
   const isInactive = occurrence.status === 'paused' || occurrence.status === 'archived'
-  const isRecorded = isIncome ? occurrence.status === 'received' : occurrence.paid
+  const isRecorded = isOccurrenceCompleted(flow, occurrence)
   const actionLabel = isIncome ? 'Receive' : 'Pay'
   const recordedLabel = isIncome ? 'Received' : 'Paid'
-  const rowStatus = occurrence.status === 'archived'
-    ? 'Archived'
-    : occurrence.status === 'paused'
-      ? 'Paused'
-      : isRecorded ? recordedLabel : null
   const openRow = () => onOpen(occurrence)
 
   return (
     <div
       key={occurrence.occurrenceId}
-      role="button"
+      role="group"
       tabIndex={0}
-      aria-label={`Edit ${occurrence.name}`}
+      aria-label={`${isIncome ? 'Income' : 'Bill'} row: ${occurrence.name}`}
       onClick={openRow}
       onKeyDown={event => {
         if (event.target !== event.currentTarget) return
@@ -1180,11 +1367,11 @@ function renderOccurrenceRow(
       style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1fr) auto',
-        gap: 12,
+        gap: 8,
         alignItems: 'center',
         width: '100%',
         minWidth: 0,
-        padding: '9px 0',
+        padding: '7px 0',
         borderBottom: '1px solid #EEE5D9',
         background: 'transparent',
         color: '#493320',
@@ -1196,60 +1383,40 @@ function renderOccurrenceRow(
         <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {occurrence.name}
         </strong>
-        <span style={{ display: 'block', marginTop: 3, color: '#79502A', fontSize: 11 }}>
+        <span style={{ display: 'block', marginTop: 2, color: '#79502A', fontSize: 11 }}>
           {formatDueDate(occurrence.dueDate)}
         </span>
-        <span style={{ display: 'block', marginTop: 2, color: '#9B7955', fontSize: 10 }}>
-          {linkedAccount?.name ?? 'No account linked'}
-        </span>
       </span>
-      <div style={{ minWidth: 80, display: 'grid', justifyItems: 'end', gap: 5 }}>
+      <div style={{ minWidth: 80, display: 'grid', justifyItems: 'end', gap: 3 }}>
         <strong style={{
           color: isIncome ? '#21834B' : '#493320',
           fontVariantNumeric: 'tabular-nums'
         }}>
           {money(occurrence.amount)}
         </strong>
-        {rowStatus ? (
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '4px 9px',
-            borderRadius: 999,
+        <button
+          type="button"
+          aria-label={`${isRecorded ? recordedLabel : actionLabel} ${occurrence.name}`}
+          aria-pressed={isRecorded}
+          onClick={event => {
+            event.stopPropagation()
+            onAction(occurrence)
+          }}
+          disabled={isInactive && !isRecorded}
+          style={{
+            border: 'none',
+            borderRadius: 9,
+            padding: '5px 10px',
             background: isRecorded ? '#D8EFDF' : '#F1EEE9',
-            color: isRecorded ? '#21834B' : '#79502A',
+            color: isRecorded ? '#21834B' : '#625B53',
             fontSize: 11,
             fontWeight: 'bold',
-            whiteSpace: 'nowrap'
-          }}>
-            {isRecorded && <span aria-hidden="true">✓</span>}
-            {rowStatus}
-          </span>
-        ) : (
-          <button
-            type="button"
-            aria-label={`${isIncome ? 'Receive' : 'Pay'} ${occurrence.name}`}
-            onClick={event => {
-              event.stopPropagation()
-              onPay(occurrence)
-            }}
-            disabled={isInactive}
-            style={{
-              border: 'none',
-              borderRadius: 9,
-              padding: '5px 10px',
-              background: '#F1EEE9',
-              color: '#625B53',
-              fontSize: 11,
-              fontWeight: 'bold',
-              cursor: isInactive ? 'default' : 'pointer',
-              opacity: isInactive ? 0.6 : 1
-            }}
-          >
-            {actionLabel}
-          </button>
-        )}
+            cursor: isInactive && !isRecorded ? 'default' : 'pointer',
+            opacity: isInactive && !isRecorded ? 0.6 : 1
+          }}
+        >
+          {isRecorded ? recordedLabel : actionLabel}
+        </button>
       </div>
     </div>
   )

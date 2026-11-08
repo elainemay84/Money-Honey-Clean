@@ -84,7 +84,7 @@ test('one-time due dates and calendar month boundaries are calculated accurately
   assert.equal(new Date(Date.UTC(2026, 2 + 1, 0)).getUTCDate(), 31)
 })
 
-test('only linked cleared transactions mark bills cleared; legacy payment history is retained for review', () => {
+test('linked transactions control clearing while paid history remains a separate completion state', () => {
   const due = bill({ dueDate: '2026-04-03', amount: 70, accountId: 1 })
   const unpaid = bill({ id: 2, name: 'Water', dueDate: '2026-04-04', amount: 35, accountId: 1 })
   const markedPaid = updateBillPayment(due, due.dueDate, true, '2026-04-03T12:00:00.000Z')
@@ -113,6 +113,38 @@ test('only linked cleared transactions mark bills cleared; legacy payment histor
   assert.equal(markedUnpaid.paymentHistory.length, 2)
 })
 
+test('persisted paid and received history remains completed without conflating cleared state', () => {
+  const paidBill = bill({
+    id: 21,
+    dueDate: '2026-04-03',
+    paymentHistory: [{ dueDate: '2026-04-03', paid: true }]
+  })
+  const clearedOnlyBill = bill({
+    id: 22,
+    dueDate: '2026-04-04',
+    paymentHistory: [{ dueDate: '2026-04-04', cleared: true }]
+  })
+  const income = {
+    id: 23,
+    name: 'Paycheck',
+    amount: 1200,
+    dueDate: '2026-04-03',
+    frequency: 'one-time',
+    paymentHistory: [{ dueDate: '2026-04-03', status: 'received' }]
+  }
+
+  const bills = getBillOccurrences(
+    [paidBill, clearedOnlyBill],
+    month(2026, 3)
+  )
+  const [received] = getIncomeOccurrences([income], month(2026, 3))
+
+  assert.equal(bills[0].paid, true)
+  assert.equal(bills[0].cleared, false)
+  assert.equal(bills[1].paid, false)
+  assert.equal(received.status, 'received')
+})
+
 test('bill data and payment history survive reloads without replacing saved bills or account data', () => {
   const values = new Map([
     ['money-honey-account-data', JSON.stringify({
@@ -127,13 +159,20 @@ test('bill data and payment history survive reloads without replacing saved bill
   }
 
   let savedBills = loadBills([bill()], storage)
-  const paidBill = updateBillPayment(savedBills[0], savedBills[0].dueDate, true, '2026-04-01T10:00:00.000Z')
+  const paidBill = {
+    ...savedBills[0],
+    paymentHistory: [{
+      dueDate: savedBills[0].dueDate,
+      paid: true,
+      changedAt: '2026-04-01T10:00:00.000Z'
+    }]
+  }
   savedBills = [paidBill, bill({ id: 2, name: 'New bill', dueDate: '2026-05-10' })]
   saveBills(savedBills, storage)
 
   const reloaded = loadBills([bill({ id: 99, name: 'Replacement demo' })], storage)
   assert.deepEqual(reloaded, savedBills)
-  assert.equal(getBillOccurrences(reloaded, month(2026, 3))[0].paid, false)
+  assert.equal(getBillOccurrences(reloaded, month(2026, 3))[0].paid, true)
   assert.equal(getBillOccurrences(reloaded, month(2026, 3))[0].legacyPaid, true)
   assert.equal(createBillId(reloaded), 3)
   assert.equal(JSON.parse(values.get('money-honey-account-data')).accounts[0].name, 'Checking')
@@ -443,7 +482,7 @@ test('Money In and Money Out view data filters list, calendar dots, and inline s
     }, '2026-04-10', { amount: 120, dueDate: '2026-04-12' })
     const incomeOccurrence = getIncomeOccurrences([editedIncome], month(2026, 3))
     assert.deepEqual(incomeOccurrence.map(item => [item.amount, item.dueDate, item.status]), [
-      [120, '2026-04-12', 'expected']
+      [120, '2026-04-12', 'received']
     ])
 
     const values = new Map()
@@ -464,6 +503,20 @@ test('Money In and Money Out view data filters list, calendar dots, and inline s
     assert.deepEqual(getBillOccurrences([paused, archived], month(2026, 3)), [])
     assert.equal(paused.paymentHistory.length, 0)
     assert.equal(archived.paymentHistory.length, 0)
+  })
+
+  test('recurring occurrences respect their start date and optional end date', () => {
+    const bounded = bill({
+      dueDate: '2026-04-10',
+      endDate: '2026-05-15',
+      frequency: 'monthly'
+    })
+
+    assert.deepEqual(
+      getBillOccurrencesInRange([bounded], '2026-03-01', '2026-06-30')
+        .map(item => item.dueDate),
+      ['2026-04-10', '2026-05-10']
+    )
   })
   assert.deepEqual(getScheduleSummary('in', billOccurrences, incomeOccurrences, '2026-04-10'), {
     firstLabel: 'TOTAL INCOMING',
