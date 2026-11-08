@@ -8,7 +8,8 @@ import {
 } from './accountBalances.js'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
-import { reconcileDebtPaymentForTransaction } from './debtData.js'
+import { BILL_STORAGE_KEY, loadBillData, saveBillData } from './billData.js'
+import { loadDebts, reconcileDebtPaymentForTransaction, removeDebtPaymentForTransaction } from './debtData.js'
 
 const todayDate = new Date().toLocaleDateString('en-CA')
 
@@ -47,6 +48,7 @@ export default function Accounts() {
   const [kind, setKind] = useState('expense')
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false)
   const [editingTransactionId, setEditingTransactionId] = useState(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState(null)
 
   useEffect(() => {
     const refreshAccountData = () => {
@@ -176,6 +178,77 @@ export default function Accounts() {
     setNewDate(transaction.date)
     setKind(transaction.amount < 0 ? 'expense' : 'income')
     setIsAddTransactionOpen(true)
+  }
+
+  function getTransactionAssociations(transaction) {
+    const billData = localStorage.getItem(BILL_STORAGE_KEY) === null
+      ? { bills: [], incomes: [] }
+      : loadBillData([])
+    const debts = loadDebts()
+    return {
+      bill: transaction.linkedOccurrenceType === 'bill'
+        || transaction.linkedOccurrenceId?.startsWith('bill:')
+        || transaction.linkedBillOccurrenceId != null
+        || billData.bills.some(bill =>
+          bill.paymentHistory?.some(entry => entry.transactionId === transaction.id)
+        ),
+      income: transaction.linkedOccurrenceType === 'income'
+        || transaction.linkedOccurrenceId?.startsWith('income:')
+        || transaction.linkedIncomeOccurrenceId != null
+        || billData.incomes.some(income =>
+          income.paymentHistory?.some(entry => entry.transactionId === transaction.id)
+        ),
+      debt: transaction.linkedDebtId != null
+        || transaction.linkedDebtPaymentId != null
+        || debts.some(debt =>
+          debt.paymentHistory.some(payment => payment.transactionId === transaction.id)
+        )
+    }
+  }
+
+  function openDeleteConfirmation() {
+    const transaction = transactions.find(item => item.id === editingTransactionId)
+    if (!transaction) return
+    setDeleteConfirmation({
+      transaction,
+      associations: getTransactionAssociations(transaction)
+    })
+  }
+
+  function deleteTransaction() {
+    if (!deleteConfirmation) return
+    const { transaction, associations } = deleteConfirmation
+    if (!transactions.some(item => item.id === transaction.id)) {
+      setDeleteConfirmation(null)
+      setIsAddTransactionOpen(false)
+      return
+    }
+
+    removeDebtPaymentForTransaction(transaction.id)
+    if (associations.bill || associations.income) {
+      const billData = localStorage.getItem(BILL_STORAGE_KEY) === null
+        ? { bills: [], incomes: [] }
+        : loadBillData([])
+      const bills = billData.bills.map(bill => {
+        const paymentHistory = (bill.paymentHistory ?? [])
+          .filter(entry => entry.transactionId !== transaction.id)
+        return paymentHistory.length === (bill.paymentHistory ?? []).length
+          ? bill
+          : { ...bill, paymentHistory }
+      })
+      const incomes = billData.incomes.map(income => {
+        const paymentHistory = (income.paymentHistory ?? [])
+          .filter(entry => entry.transactionId !== transaction.id)
+        return paymentHistory.length === (income.paymentHistory ?? []).length
+          ? income
+          : { ...income, paymentHistory }
+      })
+      saveBillData({ bills, incomes })
+    }
+    updateTransactions(current => current.filter(item => item.id !== transaction.id))
+    setDeleteConfirmation(null)
+    setIsAddTransactionOpen(false)
+    setEditingTransactionId(null)
   }
 
   function addTransaction(event) {
@@ -667,13 +740,13 @@ export default function Accounts() {
         </div>
       </section>
 
-      <section style={card}>
+      <section style={{ ...card, padding: '14px 16px' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 8,
-          marginBottom: 8
+          marginBottom: 5
         }}>
           <h2 style={{ margin: 0 }}>Transactions</h2>
           <select
@@ -713,8 +786,8 @@ export default function Accounts() {
               display: 'grid',
               gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
               alignItems: 'center',
-              columnGap: 8,
-              padding: '5px 0',
+              columnGap: 6,
+              padding: '3px 0',
               borderBottom: '1px solid #EEE5D9',
               cursor: 'pointer'
             }}
@@ -773,8 +846,8 @@ export default function Accounts() {
                   boxSizing: 'border-box',
                   width: 120,
                   maxWidth: '100%',
-                  height: 18,
-                  marginTop: 1,
+                  height: 17,
+                  marginTop: 0,
                   padding: 0,
                   border: 'none',
                   borderRadius: 0,
@@ -824,6 +897,7 @@ export default function Accounts() {
         title="Add Transaction"
         onClick={() => {
           setEditingTransactionId(null)
+          setDeleteConfirmation(null)
           setNewName('')
           setNewAmount('')
           setNewDate(todayDate)
@@ -855,7 +929,10 @@ export default function Accounts() {
       {isAddTransactionOpen && (
         <div
           onMouseDown={event => {
-            if (event.target === event.currentTarget) setIsAddTransactionOpen(false)
+            if (event.target === event.currentTarget) {
+              setDeleteConfirmation(null)
+              setIsAddTransactionOpen(false)
+            }
           }}
           style={{
             position: 'fixed',
@@ -894,7 +971,10 @@ export default function Accounts() {
               <button
                 type="button"
                 aria-label={editingTransactionId === null ? 'Close add transaction' : 'Close edit transaction'}
-                onClick={() => setIsAddTransactionOpen(false)}
+                onClick={() => {
+                  setDeleteConfirmation(null)
+                  setIsAddTransactionOpen(false)
+                }}
                 style={{
                   border: 'none',
                   background: 'transparent',
@@ -942,7 +1022,10 @@ export default function Accounts() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
                 <button
                   type="button"
-                  onClick={() => setIsAddTransactionOpen(false)}
+                  onClick={() => {
+                    setDeleteConfirmation(null)
+                    setIsAddTransactionOpen(false)
+                  }}
                   style={{
                     background: '#FFFFFF',
                     color: '#79502A',
@@ -967,7 +1050,113 @@ export default function Accounts() {
                   {editingTransactionId === null ? 'Add Transaction' : 'Save Transaction'}
                 </button>
               </div>
+              {editingTransactionId !== null && (
+                <button
+                  type="button"
+                  aria-label="Delete Transaction"
+                  onClick={openDeleteConfirmation}
+                  style={{
+                    justifySelf: 'start',
+                    border: 'none',
+                    padding: '4px 2px',
+                    background: 'transparent',
+                    color: '#9B463E',
+                    fontSize: 11,
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Delete Transaction
+                </button>
+              )}
             </form>
+          </section>
+        </div>
+      )}
+      {deleteConfirmation && (
+        <div
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) setDeleteConfirmation(null)
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 31,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            background: '#33231266'
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-transaction-title"
+            style={{
+              boxSizing: 'border-box',
+              width: '100%',
+              maxWidth: 380,
+              padding: 20,
+              borderRadius: 18,
+              background: '#FFF8ED',
+              boxShadow: '0 8px 30px #33231233'
+            }}
+          >
+            <h2 id="delete-transaction-title" style={{ margin: '0 0 10px', color: '#79502A', fontSize: 18 }}>
+              Delete Transaction?
+            </h2>
+            <p style={{ margin: '0 0 8px', color: '#493320', fontSize: 13 }}>
+              Delete <strong>{deleteConfirmation.transaction.name}</strong> ({money(deleteConfirmation.transaction.amount)})?
+            </p>
+            {(deleteConfirmation.associations.bill
+              || deleteConfirmation.associations.income
+              || deleteConfirmation.associations.debt) && (
+              <p style={{ margin: '0 0 14px', color: '#9B463E', fontSize: 12 }}>
+                This transaction is linked to
+                {deleteConfirmation.associations.bill ? ' a bill payment' : ''}
+                {deleteConfirmation.associations.bill && deleteConfirmation.associations.income ? ' and' : ''}
+                {deleteConfirmation.associations.income ? ' an income receipt' : ''}
+                {(deleteConfirmation.associations.bill || deleteConfirmation.associations.income)
+                  && deleteConfirmation.associations.debt ? ' and' : ''}
+                {deleteConfirmation.associations.debt ? ' a debt payment' : ''}.
+                {deleteConfirmation.associations.bill && ' The bill occurrence will return to Unpaid.'}
+                {deleteConfirmation.associations.income && ' The income occurrence will return to Not Received.'}
+                {deleteConfirmation.associations.debt && ' The associated debt payment will be reversed.'}
+              </p>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmation(null)}
+                style={{
+                  background: '#FFFFFF',
+                  color: '#79502A',
+                  border: '1px solid #E9D6B7',
+                  borderRadius: 12,
+                  padding: 11,
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={deleteTransaction}
+                style={{
+                  background: '#9B463E',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: 12,
+                  padding: 11,
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </section>
         </div>
       )}

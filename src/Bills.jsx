@@ -790,7 +790,7 @@ export default function Bills() {
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 210 }}>
       <header style={{
-        marginBottom: 16
+        marginBottom: 12
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <h1 style={{
@@ -875,14 +875,14 @@ export default function Bills() {
         </section>
       )}
 
-      <section style={card}>
+      <section style={{ ...card, padding: view === 'list' ? 14 : card.padding }}>
         {view === 'list' && (
           <label style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
             gap: 7,
-            marginBottom: 8,
+            marginBottom: 5,
             color: '#79502A',
             fontSize: 11,
             cursor: 'pointer'
@@ -977,7 +977,7 @@ export default function Bills() {
                 </button>
               ) : <span key={cell.key} />)}
             </div>
-            <section aria-live="polite" style={{ marginTop: 16 }}>
+            <section aria-live="polite" style={{ marginTop: 12 }}>
               <h2 style={{ margin: '0 0 4px', fontSize: 13, color: '#79502A' }}>
                 Entries · {formatDueDate(selectedDay)}
               </h2>
@@ -1008,8 +1008,8 @@ export default function Bills() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 8,
-                  margin: '0 -6px 3px',
-                  padding: '8px 10px',
+                  margin: '0 -4px 2px',
+                  padding: '5px 8px',
                   borderRadius: 9,
                   background: '#F5D6A5',
                   color: '#79502A'
@@ -1239,7 +1239,7 @@ export default function Bills() {
                 <fieldset style={{
                   display: 'grid',
                   gridTemplateColumns: '1fr 1fr',
-                  gap: 8,
+                  gap: 6,
                   margin: 0,
                   padding: 10,
                   border: '1px solid #E9D6B7',
@@ -1569,7 +1569,7 @@ function renderOccurrenceRow(
         alignItems: 'center',
         width: '100%',
         minWidth: 0,
-        padding: '7px 0',
+        padding: '4px 0',
         borderBottom: '1px solid #EEE5D9',
         background: 'transparent',
         color: '#493320',
@@ -1578,16 +1578,18 @@ function renderOccurrenceRow(
       }}
     >
       <span style={{ display: 'block', minWidth: 0 }}>
-        <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: 1.2 }}>
           {occurrence.name}
         </strong>
-        <span style={{ display: 'block', marginTop: 2, color: '#79502A', fontSize: 11 }}>
+        <span style={{ display: 'block', marginTop: 1, color: '#79502A', fontSize: 11, lineHeight: 1.2 }}>
           {formatDueDate(occurrence.dueDate)}
         </span>
       </span>
-      <div style={{ minWidth: 80, display: 'grid', justifyItems: 'end', gap: 3 }}>
+      <div style={{ minWidth: 76, display: 'grid', justifyItems: 'end', gap: 2 }}>
         <strong style={{
           color: isIncome ? '#21834B' : '#493320',
+          fontSize: 14,
+          lineHeight: 1.2,
           fontVariantNumeric: 'tabular-nums'
         }}>
           {money(occurrence.amount)}
@@ -1604,10 +1606,12 @@ function renderOccurrenceRow(
           style={{
             border: 'none',
             borderRadius: 9,
-            padding: '5px 10px',
+            minHeight: 28,
+            padding: '4px 9px',
             background: isRecorded ? '#D8EFDF' : '#F1EEE9',
             color: isRecorded ? '#21834B' : '#625B53',
             fontSize: 11,
+            lineHeight: 1.2,
             fontWeight: 'bold',
             cursor: isInactive && !isRecorded ? 'default' : 'pointer',
             opacity: isInactive && !isRecorded ? 0.6 : 1

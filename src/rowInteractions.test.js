@@ -572,6 +572,220 @@ test('transaction row edits directly; clearing and inline date changes do not op
   assert.equal(container.querySelector('[role="dialog"]'), null)
 })
 
+test('ordinary transaction deletion requires confirmation, persists, and recalculates account balances', async () => {
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
+    version: 1,
+    accounts: [
+      { id: 1, name: 'Checking', type: 'Checking', openingBalance: 500, openingDate: '2026-11-06', defaultCleared: false, archived: false },
+      { id: 2, name: 'Savings', type: 'Savings', openingBalance: 200, openingDate: '2026-11-06', defaultCleared: false, archived: false }
+    ],
+    transactions: [
+      { id: 1, sequence: 1, accountId: 1, name: 'Deposit', amount: 200, date: '2026-11-06', cleared: true },
+      { id: 2, sequence: 2, accountId: 1, name: 'Coffee', amount: -50, date: '2026-11-07', cleared: false },
+      { id: 3, sequence: 3, accountId: 1, name: 'Groceries', amount: -25, date: '2026-11-08', cleared: true },
+      { id: 4, sequence: 4, accountId: 2, name: 'Savings deposit', amount: 40, date: '2026-11-08', cleared: true }
+    ]
+  }))
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(button(container, 'Add transaction'))
+  const addDialog = container.querySelector('[role="dialog"]')
+  assert.equal(addDialog.querySelector('[aria-label="Delete Transaction"]'), null)
+  await click(button(addDialog, 'Cancel'))
+  await click(container.querySelector('[data-transaction-id="2"]'))
+  let editDialog = container.querySelector('[role="dialog"]')
+  assert.ok(button(editDialog, 'Delete Transaction'))
+  await click(button(editDialog, 'Delete Transaction'))
+  let confirmation = container.querySelector('[aria-labelledby="delete-transaction-title"]')
+  assert.match(confirmation.textContent, /Coffee/)
+  assert.match(confirmation.textContent, /-\$50\.00/)
+  assert.doesNotMatch(confirmation.textContent, /linked|reverse/i)
+  await click(button(confirmation, 'Cancel'))
+  assert.equal(readAccountData().transactions.length, 4)
+  assert.ok(container.querySelector('[role="dialog"]'))
+
+  await click(button(editDialog, 'Delete Transaction'))
+  confirmation = container.querySelector('[aria-labelledby="delete-transaction-title"]')
+  await click(button(confirmation, 'Delete'))
+  const data = readAccountData()
+  assert.deepEqual(data.transactions.map(item => item.id), [1, 3, 4])
+  assert.equal(data.transactions.find(item => item.id === 4).accountId, 2)
+  assert.equal(container.querySelector('[data-transaction-id="2"]'), null)
+  assert.match(container.textContent, /\$675\.00/)
+  assert.match(container.textContent, /No net amount/)
+  const billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.equal(billData.bills[0].name, 'Electric')
+  assert.equal(billData.incomes[0].name, 'Paycheck')
+})
+
+test('deleting a linked recurring debt transaction reverses only its bill occurrence and debt payment', async () => {
+  seedData({ recurring: true })
+  const date = localDate()
+  const occurrenceId = `bill:1:${date}`
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.bills[0] = {
+    ...savedBills.bills[0],
+    name: 'Auto loan',
+    amount: 24,
+    debtId: 8,
+    paymentHistory: [
+      { dueDate: date, actualDate: shiftDate(date, -1), transactionId: 1, paid: true },
+      { dueDate: nextMonthlyDate(date), transactionId: 2, paid: true }
+    ]
+  }
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [{
+      id: 8,
+      name: 'Auto loan',
+      type: 'Auto Loan',
+      startingBalance: 200,
+      currentBalance: 176,
+      interestRate: 35,
+      minimumPayment: 24,
+      nextPaymentDue: date,
+      paymentCalculationMethod: 'principal-only',
+      billId: 1,
+      paymentHistory: [{
+        id: '8:1',
+        sequence: 1,
+        transactionId: 1,
+        date: shiftDate(date, -1),
+        total: 24,
+        principal: 24,
+        interest: 0,
+        fees: 0,
+        automaticPrincipal: true,
+        calculationMethod: 'principal-only',
+        scheduledDueDate: date,
+        billOccurrenceId: occurrenceId
+      }]
+    }]
+  }))
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
+    ...readAccountData(),
+    transactions: [
+      {
+        id: 1,
+        sequence: 1,
+        accountId: 1,
+        name: 'Auto loan',
+        amount: -24,
+        date: shiftDate(date, -1),
+        cleared: true,
+        linkedOccurrenceType: 'bill',
+        linkedOccurrenceId: occurrenceId,
+        linkedBillOccurrenceId: occurrenceId,
+        linkedDebtId: 8,
+        linkedDebtPaymentId: '8:1',
+        transactionType: 'debt-payment'
+      },
+      {
+        id: 2,
+        sequence: 2,
+        accountId: 1,
+        name: 'Auto loan',
+        amount: -24,
+        date: nextMonthlyDate(date),
+        cleared: false,
+        linkedOccurrenceType: 'bill',
+        linkedOccurrenceId: `bill:1:${nextMonthlyDate(date)}`,
+        linkedBillOccurrenceId: `bill:1:${nextMonthlyDate(date)}`
+      },
+      {
+        id: 3,
+        sequence: 3,
+        accountId: 1,
+        name: 'Unrelated',
+        amount: -10,
+        date,
+        cleared: true
+      }
+    ]
+  }))
+  const debtContainer = await render(Debt)
+  const billsContainer = await render(Bills)
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(container.querySelector('[data-transaction-id="1"]'))
+  const editDialog = container.querySelector('[role="dialog"]')
+  await click(button(editDialog, 'Delete Transaction'))
+  const confirmation = container.querySelector('[aria-labelledby="delete-transaction-title"]')
+  assert.match(confirmation.textContent, /bill payment/)
+  assert.match(confirmation.textContent, /debt payment/)
+  await click(button(confirmation, 'Delete'))
+
+  const accountData = readAccountData()
+  const billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  const debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.deepEqual(accountData.transactions.map(item => item.id), [2, 3])
+  assert.deepEqual(billData.bills[0].paymentHistory.map(entry => entry.dueDate), [nextMonthlyDate(date)])
+  assert.equal(debt.currentBalance, 200)
+  assert.equal(debt.paymentHistory.length, 1)
+  assert.ok(debt.paymentHistory[0].reversedAt)
+  assert.ok(billsContainer.querySelector('[aria-label="Bill row: Auto loan"]'))
+  assert.ok(button(billsContainer, 'Pay Auto loan'))
+  assert.match(debtContainer.querySelector('[aria-label="Debt row: Auto loan"]').textContent, /\$200\.00/)
+})
+
+test('deleting a linked income transaction restores only that occurrence to Not Received', async () => {
+  seedData({ recurringIncome: true })
+  const date = localDate()
+  const occurrenceId = `income:2:${date}`
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.incomes[0].paymentHistory = [
+    { dueDate: date, status: 'received', transactionId: 1 },
+    { dueDate: nextMonthlyDate(date), status: 'received', transactionId: 2 }
+  ]
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
+    ...readAccountData(),
+    transactions: [
+      {
+        id: 1,
+        sequence: 1,
+        accountId: 1,
+        name: 'Paycheck',
+        amount: 1200,
+        date,
+        cleared: true,
+        linkedOccurrenceType: 'income',
+        linkedOccurrenceId: occurrenceId,
+        linkedIncomeOccurrenceId: occurrenceId
+      },
+      {
+        id: 2,
+        sequence: 2,
+        accountId: 1,
+        name: 'Paycheck',
+        amount: 1200,
+        date: nextMonthlyDate(date),
+        cleared: false,
+        linkedOccurrenceType: 'income',
+        linkedOccurrenceId: `income:2:${nextMonthlyDate(date)}`,
+        linkedIncomeOccurrenceId: `income:2:${nextMonthlyDate(date)}`
+      }
+    ]
+  }))
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(container.querySelector('[data-transaction-id="1"]'))
+  const editDialog = container.querySelector('[role="dialog"]')
+  await click(button(editDialog, 'Delete Transaction'))
+  const confirmation = container.querySelector('[aria-labelledby="delete-transaction-title"]')
+  assert.match(confirmation.textContent, /income receipt/)
+  await click(button(confirmation, 'Delete'))
+  const billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.deepEqual(billData.incomes[0].paymentHistory.map(entry => entry.dueDate), [nextMonthlyDate(date)])
+  assert.equal(readAccountData().transactions.length, 1)
+
+  const billsContainer = await render(Bills)
+  await click(button(billsContainer, 'Money In'))
+  assert.ok(billsContainer.querySelector('[aria-label="Income row: Paycheck"]'))
+  assert.ok(button(billsContainer, 'Receive Paycheck'))
+})
+
 test('Debt card opens read-only details and Edit Debt opens the compact form', async () => {
   browser.localStorage.setItem('money-honey-debts', JSON.stringify({
     version: 1,
@@ -675,7 +889,9 @@ test('linked debt bill payment immediately advances next due date and keeps sche
   const details = debtContainer.querySelector('[aria-label="Auto loan debt details"]')
   assert.match(details.textContent, new RegExp(`Next Payment Due${displayDate(nextDueDate)}`))
   assert.match(details.textContent, new RegExp(`Paid ${displayDate(actualPaymentDate)}`))
-  assert.match(details.textContent, new RegExp(`Due ${displayDate(scheduledDueDate)}`))
+  const paymentHistory = details.querySelector('h3 + div')
+  assert.match(paymentHistory.textContent, new RegExp(`Paid ${displayDate(actualPaymentDate)}`))
+  assert.doesNotMatch(paymentHistory.textContent, /Due /)
 
   await click(billsContainer.querySelector('[aria-label="Show Completed"]'))
   await click(button(billsContainer, 'Paid Auto loan'))
@@ -900,6 +1116,9 @@ test('Debt edits create and update one monthly bill; Bills records and reverses 
   assert.equal(accountData.transactions[0].linkedDebtId, savedDebt.id)
   assert.equal(savedDebt.currentBalance, 875)
   assert.equal(savedDebt.paymentHistory.length, 1)
+  assert.equal(savedDebt.paymentHistory[0].date, localDate())
+  assert.equal(savedDebt.paymentHistory[0].scheduledDueDate, dueDate)
+  assert.equal(savedDebt.paymentHistory[0].billOccurrenceId, `bill:${savedDebt.billId}:${dueDate}`)
 
   await click(debtContainer.querySelector('[aria-label="Debt row: Auto loan"]'))
   const details = debtContainer.querySelector('[aria-label="Auto loan debt details"]')
@@ -908,10 +1127,8 @@ test('Debt edits create and update one monthly bill; Bills records and reverses 
   assert.match(details.textContent, /\$125\.00/)
   const paymentHistory = details.querySelector('h3 + div')
   assert.match(paymentHistory.textContent, new RegExp(`Paid ${displayDate(localDate())}`))
-  assert.match(
-    paymentHistory.textContent,
-    new RegExp(`Due ${displayDate(savedDebt.paymentHistory[0].scheduledDueDate)}`)
-  )
+  assert.match(paymentHistory.textContent, /Uncleared/)
+  assert.doesNotMatch(paymentHistory.textContent, /Due /)
   assert.equal(details.querySelectorAll('button').length, 2)
   accountData.transactions[0].cleared = true
   browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accountData))

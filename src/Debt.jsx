@@ -485,14 +485,7 @@ export default function Debt() {
                     borderTop: '1px solid #F1E6D7',
                     fontSize: 12
                   }}>
-                    <div>
-                      <strong>Paid {displayDate(payment.date)}</strong>
-                      {payment.scheduledDueDate && (
-                        <div style={{ marginTop: 1, color: '#9B7955', fontSize: 10 }}>
-                          Due {displayDate(payment.scheduledDueDate)}
-                        </div>
-                      )}
-                    </div>
+                    <strong>Paid {displayDate(payment.date)}</strong>
                     <strong style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>{money(payment.total)}</strong>
                     <span style={{
                       minWidth: 54,

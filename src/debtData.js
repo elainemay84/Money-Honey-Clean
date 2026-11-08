@@ -487,6 +487,19 @@ function getLinkedPaymentAllocation(debt, total, details) {
   }
 }
 
+function getLinkedBillOccurrence(transaction, details) {
+  const transactionOccurrenceId = transaction.linkedBillOccurrenceId
+    ?? (transaction.linkedOccurrenceType === 'bill' ? transaction.linkedOccurrenceId : null)
+  const billOccurrenceId = transactionOccurrenceId ?? details.billOccurrenceId ?? null
+  const match = typeof billOccurrenceId === 'string'
+    ? /^bill:\d+:(\d{4}-\d{2}-\d{2})$/.exec(billOccurrenceId)
+    : null
+  const scheduledDueDate = match && validISODate(match[1])
+    ? match[1]
+    : details.scheduledDueDate ?? null
+  return { billOccurrenceId, scheduledDueDate }
+}
+
 export function recordDebtPaymentFromTransaction(
   debtId,
   transactionId,
@@ -502,10 +515,11 @@ export function recordDebtPaymentFromTransaction(
     throw new Error('A debt payment must link to an existing expense transaction.')
   }
 
+  const { billOccurrenceId, scheduledDueDate } = getLinkedBillOccurrence(transaction, details)
   const existing = debt.paymentHistory.find(payment =>
     !payment.reversedAt && (
     payment.transactionId === transactionId
-    || (details.billOccurrenceId && payment.billOccurrenceId === details.billOccurrenceId)
+    || (billOccurrenceId && payment.billOccurrenceId === billOccurrenceId)
     )
   )
   if (existing) return existing
@@ -524,14 +538,14 @@ export function recordDebtPaymentFromTransaction(
     id: getNextPaymentId(debt),
     sequence: debt.paymentHistory.length + 1,
     transactionId,
-    date: details.date ?? transaction.date,
+    date: transaction.date,
     total,
     ...allocation,
     automaticPrincipal,
     balanceReviewRequired,
     calculationMethod,
-    scheduledDueDate: details.scheduledDueDate ?? null,
-    billOccurrenceId: details.billOccurrenceId ?? null
+    scheduledDueDate,
+    billOccurrenceId
   }
   transaction.linkedDebtId = debt.id
   transaction.linkedDebtPaymentId = payment.id

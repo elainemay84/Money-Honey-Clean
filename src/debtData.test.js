@@ -310,7 +310,7 @@ test('bill-linked debt payments reuse the bill transaction and are idempotent', 
     accountId: 1,
     name: 'Auto loan payment',
     amount: -400,
-    date: '2026-04-15',
+    date: '2026-04-14',
     cleared: false,
     linkedOccurrenceType: 'bill',
     linkedOccurrenceId: 'bill:9:2026-04-15',
@@ -319,11 +319,12 @@ test('bill-linked debt payments reuse the bill transaction and are idempotent', 
 
   saveAccountData(accountData.accounts, accountData.transactions, storage)
   const details = {
-    date: '2026-04-15',
+    date: '2026-04-16',
     principal: 300,
     interest: 100,
     fees: 0,
-    billOccurrenceId: 'bill:9:2026-04-15'
+    billOccurrenceId: 'bill:9:2026-04-16',
+    scheduledDueDate: '2026-04-16'
   }
   recordDebtPaymentFromTransaction(7, 12, details, storage)
   recordDebtPaymentFromTransaction(7, 12, details, storage)
@@ -333,8 +334,84 @@ test('bill-linked debt payments reuse the bill transaction and are idempotent', 
   assert.equal(savedAccounts.transactions.length, 1)
   assert.equal(savedAccounts.transactions[0].linkedBillOccurrenceId, 'bill:9:2026-04-15')
   assert.equal(savedAccounts.transactions[0].linkedDebtId, 7)
+  assert.equal(debt.paymentHistory[0].date, '2026-04-14')
+  assert.equal(debt.paymentHistory[0].scheduledDueDate, '2026-04-15')
+  assert.equal(debt.paymentHistory[0].billOccurrenceId, 'bill:9:2026-04-15')
   assert.equal(debt.currentBalance, 7700)
   assert.equal(debt.paymentHistory.length, 1)
+})
+
+test('multiple principal reductions and reversals preserve saved balance adjustments', () => {
+  const storage = createStorage()
+  seed(storage)
+  saveDebts(loadDebts(storage).map(debt => ({
+    ...debt,
+    currentBalance: 1000,
+    interestRate: 6.5,
+    paymentCalculationMethod: 'manual-principal'
+  })), storage)
+  const accountData = loadSavedAccountData(storage)
+  accountData.transactions.push(
+    {
+      id: 12,
+      accountId: 1,
+      name: 'Auto loan payment',
+      amount: -300,
+      date: '2026-04-14',
+      cleared: true,
+      linkedBillOccurrenceId: 'bill:11:2026-04-15'
+    },
+    {
+      id: 13,
+      accountId: 1,
+      name: 'Auto loan payment',
+      amount: -200,
+      date: '2026-05-14',
+      cleared: false,
+      linkedBillOccurrenceId: 'bill:11:2026-05-15'
+    }
+  )
+  saveAccountData(accountData.accounts, accountData.transactions, storage)
+
+  const first = recordDebtPaymentFromTransaction(7, 12, {
+    principal: 200,
+    interest: 100,
+    fees: 0,
+    billOccurrenceId: 'bill:11:2026-04-15',
+    scheduledDueDate: '2026-04-15'
+  }, storage)
+  const second = recordDebtPaymentFromTransaction(7, 13, {
+    principal: 125,
+    interest: 75,
+    fees: 0,
+    billOccurrenceId: 'bill:11:2026-05-15',
+    scheduledDueDate: '2026-05-15'
+  }, storage)
+
+  let debt = loadDebts(storage)[0]
+  assert.equal(debt.currentBalance, 675)
+  assert.deepEqual(debt.paymentHistory.map(payment => [
+    payment.date,
+    payment.scheduledDueDate,
+    payment.billOccurrenceId,
+    payment.principal
+  ]), [
+    ['2026-04-14', '2026-04-15', 'bill:11:2026-04-15', 200],
+    ['2026-05-14', '2026-05-15', 'bill:11:2026-05-15', 125]
+  ])
+  assert.equal(getDebtPrincipalPaid(debt), 325)
+
+  debt.currentBalance = 700
+  saveDebts([debt], storage)
+  reverseDebtPayment(first.id, storage)
+  debt = loadDebts(storage)[0]
+  assert.equal(debt.currentBalance, 900)
+  assert.equal(getDebtPrincipalPaid(debt), 125)
+  reverseDebtPayment(second.id, storage)
+  debt = loadDebts(storage)[0]
+  assert.equal(debt.currentBalance, 1025)
+  assert.equal(getDebtPrincipalPaid(debt), 0)
+  assert.equal(loadSavedAccountData(storage).transactions.length, 0)
 })
 
 test('principal-only linked payments reduce balance immediately and remain independent of clearing', () => {
@@ -511,6 +588,8 @@ test('correcting a linked transaction recalculates principal and preserves corre
   assert.equal(debt.paymentHistory[0].total, 500)
   assert.equal(debt.paymentHistory[0].principal, 500)
   assert.equal(debt.paymentHistory[0].date, '2026-04-16')
+  assert.equal(debt.paymentHistory[0].scheduledDueDate, '2026-04-15')
+  assert.equal(debt.paymentHistory[0].billOccurrenceId, 'bill:9:2026-04-15')
   assert.equal(debt.paymentHistory[0].corrections.length, 1)
 
   const corrected = loadSavedAccountData(storage)
