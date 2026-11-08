@@ -8,6 +8,7 @@ import {
 } from './accountBalances.js'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { reconcileDebtPaymentForTransaction } from './debtData.js'
 
 const todayDate = new Date().toLocaleDateString('en-CA')
 
@@ -200,6 +201,7 @@ export default function Accounts() {
           }
           : item
       ))
+      reconcileDebtPaymentForTransaction(editingTransactionId)
     } else {
       updateTransactions(current => [...current, {
         id: nextTransactionId.current++,

@@ -35,15 +35,41 @@ const vite = await createServer({
   appType: 'custom',
   logLevel: 'silent'
 })
-const [{ default: Bills }, { default: Accounts }] = await Promise.all([
+const [{ default: Bills }, { default: Accounts }, { default: Debt }] = await Promise.all([
   vite.ssrLoadModule('/src/Bills.jsx'),
-  vite.ssrLoadModule('/src/Accounts.jsx')
+  vite.ssrLoadModule('/src/Accounts.jsx'),
+  vite.ssrLoadModule('/src/Debt.jsx')
 ])
 const roots = new Set()
 const rootContainers = new Map()
 
 function localDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function shiftDate(date, days) {
+  const shifted = new Date(`${date}T00:00:00Z`)
+  shifted.setUTCDate(shifted.getUTCDate() + days)
+  return shifted.toISOString().slice(0, 10)
+}
+
+function nextMonthlyDate(date) {
+  const anchor = new Date(`${date}T00:00:00Z`)
+  const year = anchor.getUTCFullYear()
+  const month = anchor.getUTCMonth() + 1
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(year, month, Math.min(anchor.getUTCDate(), lastDay)))
+    .toISOString()
+    .slice(0, 10)
+}
+
+function displayDate(date) {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC'
+  })
 }
 
 function seedData({ recurring = false, recurringIncome = false } = {}) {
@@ -117,7 +143,10 @@ async function click(element) {
 
 async function changeValue(element, value) {
   await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, 'value')?.set
+    const prototype = element instanceof browser.HTMLSelectElement
+      ? browser.HTMLSelectElement.prototype
+      : browser.HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
     element.dispatchEvent(new browser.Event('input', { bubbles: true }))
     element.dispatchEvent(new browser.Event('change', { bubbles: true }))
@@ -533,4 +562,498 @@ test('transaction row edits directly; clearing and inline date changes do not op
   data = readAccountData()
   assert.equal(data.transactions.find(item => item.id === 1).date, '2026-11-08')
   assert.equal(container.querySelector('[role="dialog"]'), null)
+})
+
+test('Debt card opens read-only details and Edit Debt opens the compact form', async () => {
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [{
+      id: 21,
+      name: 'Student loan',
+      type: 'Personal Loan',
+      startingBalance: 1000,
+      currentBalance: 700,
+      interestRate: 4.5,
+      minimumPayment: 75,
+      nextPaymentDue: '2026-11-15',
+      paymentHistory: []
+    }]
+  }))
+  const container = await render(Debt)
+  const card = container.querySelector('[aria-label="Debt row: Student loan"]')
+  assert.match(card.textContent, /Personal Loan/)
+  assert.match(card.textContent, /\$700\.00/)
+  assert.match(card.textContent, /\$75\.00/)
+  assert.match(card.textContent, /Nov 15, 2026/)
+  assert.match(card.textContent, /70% left/)
+  assert.equal(card.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '30')
+
+  await click(card)
+  const details = container.querySelector('[aria-label="Student loan debt details"]')
+  assert.ok(details)
+  assert.equal(container.querySelector('[aria-label="Edit debt form"]'), null)
+  assert.match(details.textContent, /Outstanding Balance/)
+  assert.match(details.textContent, /Starting Balance/)
+  assert.match(details.textContent, /Minimum Payment/)
+  assert.match(details.textContent, /Next Payment Due/)
+  assert.match(details.textContent, /Payoff Progress/)
+  assert.doesNotMatch(details.textContent, /Percentage remaining/)
+  assert.equal(details.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '30')
+  assert.match(details.textContent, /4\.5%/)
+  assert.match(details.textContent, /No payments recorded/)
+  assert.equal(details.querySelectorAll('button').length, 2)
+
+  await click(button(details, 'Edit Debt'))
+  const form = container.querySelector('[aria-label="Edit debt form"] form')
+  assert.ok(form)
+  assert.equal(form.querySelector('h3'), null)
+  assert.equal(form.textContent.includes('Payment History'), false)
+  assert.equal(form.querySelector('[aria-label="Next Payment Due"]').type, 'date')
+  assert.equal(form.querySelectorAll('input[type="number"]').length, 4)
+})
+
+test('linked debt bill payment immediately advances next due date and keeps scheduled and actual dates distinct', async () => {
+  seedData({ recurring: true })
+  const scheduledDueDate = localDate()
+  const actualPaymentDate = shiftDate(scheduledDueDate, -1)
+  const nextDueDate = nextMonthlyDate(scheduledDueDate)
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.bills[0] = {
+    ...savedBills.bills[0],
+    name: 'Auto loan',
+    amount: 24,
+    dueDate: scheduledDueDate,
+    frequency: 'monthly',
+    debtId: 8,
+    debtManaged: true
+  }
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [{
+      id: 8,
+      name: 'Auto loan',
+      type: 'Auto Loan',
+      startingBalance: 200,
+      currentBalance: 100,
+      interestRate: 0,
+      minimumPayment: 24,
+      nextPaymentDue: scheduledDueDate,
+      paymentCalculationMethod: 'principal-only',
+      billId: 1,
+      paymentHistory: []
+    }]
+  }))
+
+  const debtContainer = await render(Debt)
+  const debtRow = debtContainer.querySelector('[aria-label="Debt row: Auto loan"]')
+  assert.match(debtRow.textContent, /Due Today/)
+
+  const billsContainer = await render(Bills)
+  await click(button(billsContainer, 'Pay Auto loan'))
+  const paymentDialog = billsContainer.querySelector('[role="dialog"]')
+  await changeValue(paymentDialog.querySelector('[aria-label="Actual payment date"]'), actualPaymentDate)
+  await click(button(paymentDialog, 'Confirm'))
+
+  const updatedDebt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  const updatedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills
+  assert.equal(updatedDebt.paymentHistory[0].date, actualPaymentDate)
+  assert.equal(updatedDebt.paymentHistory[0].scheduledDueDate, scheduledDueDate)
+  assert.equal(updatedBills.find(bill => bill.id === 1).dueDate, scheduledDueDate)
+  assert.match(debtRow.textContent, new RegExp(`Due ${displayDate(nextDueDate)}`))
+  assert.doesNotMatch(debtRow.textContent, /Past Due/)
+
+  await click(debtRow)
+  const details = debtContainer.querySelector('[aria-label="Auto loan debt details"]')
+  assert.match(details.textContent, new RegExp(`Next Payment Due${displayDate(nextDueDate)}`))
+  assert.match(details.textContent, new RegExp(`Paid ${displayDate(actualPaymentDate)}`))
+  assert.match(details.textContent, new RegExp(`Due ${displayDate(scheduledDueDate)}`))
+
+  await click(billsContainer.querySelector('[aria-label="Show Completed"]'))
+  await click(button(billsContainer, 'Paid Auto loan'))
+  assert.match(debtRow.textContent, /Due Today/)
+  assert.doesNotMatch(debtRow.textContent, /Past Due/)
+  assert.equal(readAccountData().transactions.length, 0)
+})
+
+test('Debt card and details show the oldest unpaid overdue installment and combined overdue amount', async () => {
+  seedData({ recurring: true })
+  const today = localDate()
+  const firstDueDate = shiftDate(today, -75)
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.bills[0] = {
+    ...savedBills.bills[0],
+    name: 'Auto loan',
+    amount: 24,
+    dueDate: firstDueDate,
+    frequency: 'monthly',
+    debtId: 8,
+    debtManaged: true
+  }
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [{
+      id: 8,
+      name: 'Auto loan',
+      type: 'Auto Loan',
+      startingBalance: 200,
+      currentBalance: 100,
+      interestRate: 0,
+      minimumPayment: 24,
+      nextPaymentDue: firstDueDate,
+      paymentCalculationMethod: 'principal-only',
+      billId: 1,
+      paymentHistory: []
+    }]
+  }))
+
+  const container = await render(Debt)
+  const debtRow = container.querySelector('[aria-label="Debt row: Auto loan"]')
+  const overdueIndicator = [...debtRow.querySelectorAll('span')]
+    .find(element => element.textContent.includes('Past Due'))
+  assert.ok(overdueIndicator)
+  assert.match(overdueIndicator.textContent, new RegExp(`Past Due since ${displayDate(firstDueDate)}`))
+  assert.match(overdueIndicator.textContent, /\$72\.00 overdue/)
+
+  await click(debtRow)
+  const details = container.querySelector('[aria-label="Auto loan debt details"]')
+  const detailStatus = details.querySelector('[role="status"]')
+  assert.ok(detailStatus)
+  assert.match(detailStatus.textContent, new RegExp(`Past Due since ${displayDate(firstDueDate)}`))
+  assert.match(detailStatus.textContent, /\$72\.00 overdue/)
+})
+
+test('skipping one debt installment hides it from default List, updates debt due date, and can be undone', async () => {
+  seedData({ recurring: true })
+  const scheduledDueDate = localDate()
+  const nextDueDate = nextMonthlyDate(scheduledDueDate)
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.bills[0] = {
+    ...savedBills.bills[0],
+    name: 'Auto loan',
+    amount: 24,
+    dueDate: scheduledDueDate,
+    frequency: 'monthly',
+    debtId: 8,
+    debtManaged: true
+  }
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [{
+      id: 8,
+      name: 'Auto loan',
+      type: 'Auto Loan',
+      startingBalance: 200,
+      currentBalance: 100,
+      interestRate: 0,
+      minimumPayment: 24,
+      nextPaymentDue: scheduledDueDate,
+      paymentCalculationMethod: 'principal-only',
+      billId: 1,
+      paymentHistory: []
+    }]
+  }))
+
+  const debtContainer = await render(Debt)
+  const debtRow = debtContainer.querySelector('[aria-label="Debt row: Auto loan"]')
+  const billsContainer = await render(Bills)
+  assert.ok(billsContainer.querySelector('[aria-label="Bill row: Auto loan"]'))
+
+  let confirmation = ''
+  browser.confirm = message => {
+    confirmation = message
+    return true
+  }
+  await click(button(billsContainer, 'Skip Payment Auto loan'))
+  assert.match(confirmation, new RegExp(displayDate(scheduledDueDate)))
+  assert.match(confirmation, /\$24\.00/)
+  assert.match(confirmation, /internal planning status/)
+  const skippedDate = displayDate(scheduledDueDate)
+  const visibleBillRows = [...billsContainer.querySelectorAll('[aria-label="Bill row: Auto loan"]')]
+  assert.ok(visibleBillRows.every(row => !row.textContent.includes(skippedDate)))
+  assert.match(debtRow.textContent, new RegExp(`Due ${displayDate(nextDueDate)}`))
+  assert.doesNotMatch(debtRow.textContent, /Past Due/)
+
+  let data = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  const bill = data.bills.find(item => item.id === 1)
+  assert.equal(bill.dueDate, scheduledDueDate)
+  assert.equal(bill.paymentHistory.length, 1)
+  assert.equal(bill.paymentHistory[0].skipped, true)
+  assert.equal(readAccountData().transactions.length, 0)
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0].currentBalance, 100)
+
+  await click(button(billsContainer, 'Calendar'))
+  const calendarOccurrence = billsContainer.querySelector('[aria-label="Bill row: Auto loan"]')
+  assert.ok(calendarOccurrence)
+  assert.match(calendarOccurrence.textContent, /Skipped/)
+  assert.ok(button(calendarOccurrence, 'Undo Skip Auto loan'))
+
+  await click(button(billsContainer, 'List'))
+  await click(billsContainer.querySelector('[aria-label="Show Completed"]'))
+  const completedRow = billsContainer.querySelector('[aria-label="Bill row: Auto loan"]')
+  assert.ok(completedRow)
+  assert.match(completedRow.textContent, /Skipped/)
+  await click(button(completedRow, 'Undo Skip Auto loan'))
+
+  assert.match(debtRow.textContent, /Due Today/)
+  assert.doesNotMatch(debtRow.textContent, /Past Due/)
+  assert.equal(readAccountData().transactions.length, 0)
+  data = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.equal(data.bills[0].paymentHistory.length, 2)
+  assert.equal(data.bills[0].paymentHistory[1].skipped, false)
+  assert.equal(data.bills[0].dueDate, scheduledDueDate)
+  await click(debtRow)
+  const details = debtContainer.querySelector('[aria-label="Auto loan debt details"]')
+  assert.match(details.textContent, /Skipped/)
+  assert.match(details.textContent, new RegExp(displayDate(scheduledDueDate)))
+})
+
+test('Debt edits create and update one monthly bill; Bills records and reverses the payment', async () => {
+  let debtContainer = await render(Debt)
+  await click(button(debtContainer, 'Add debt'))
+  let form = debtContainer.querySelector('[aria-label="Add debt form"] form')
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Auto loan')
+  await changeValue(form.querySelector('[aria-label="Debt type"]'), 'Auto Loan')
+  await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '1000')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '1000')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '100')
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), localDate())
+  await submit(form)
+
+  assert.ok(debtContainer.querySelector('[aria-label="Debt row: Auto loan"]'))
+  let savedDebt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  let billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  let linkedBill = billData.bills.find(bill => bill.debtId === savedDebt.id)
+  assert.ok(linkedBill)
+  assert.equal(linkedBill.frequency, 'monthly')
+  assert.equal(linkedBill.amount, 100)
+  assert.equal(linkedBill.dueDate, localDate())
+  assert.equal(billData.bills.filter(bill => bill.debtId === savedDebt.id).length, 1)
+  assert.equal(debtContainer.querySelector('[aria-label="Record debt payment"]'), null)
+
+  debtContainer = await reload(Debt, debtContainer)
+  billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.equal(billData.bills.filter(bill => bill.debtId === savedDebt.id).length, 1)
+
+  await click(debtContainer.querySelector('[aria-label="Debt row: Auto loan"]'))
+  assert.ok(debtContainer.querySelector('[aria-label="Auto loan debt details"]'))
+  assert.equal(debtContainer.querySelector('[aria-label="Edit debt form"]'), null)
+  await click(button(debtContainer.querySelector('[role="dialog"]'), 'Edit Debt'))
+  form = debtContainer.querySelector('[aria-label="Edit debt form"] form')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '125')
+  const nextDueDate = new Date(`${localDate()}T00:00:00`)
+  nextDueDate.setMonth(nextDueDate.getMonth() + 1)
+  const dueDate = `${nextDueDate.getFullYear()}-${String(nextDueDate.getMonth() + 1).padStart(2, '0')}-${String(nextDueDate.getDate()).padStart(2, '0')}`
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), dueDate)
+  await submit(form)
+
+  billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  linkedBill = billData.bills.find(bill => bill.debtId === savedDebt.id)
+  assert.equal(linkedBill.amount, 125)
+  assert.equal(linkedBill.dueDate, dueDate)
+  assert.equal(billData.bills.filter(bill => bill.debtId === savedDebt.id).length, 1)
+
+  const billsContainer = await render(Bills)
+  await click(button(billsContainer, 'Pay Auto loan'))
+  const paymentDialog = billsContainer.querySelector('[role="dialog"]')
+  assert.ok(paymentDialog.querySelector('[aria-label="Payment account"]'))
+  await changeValue(paymentDialog.querySelector('[aria-label="Payment account"]'), '1')
+  await changeValue(paymentDialog.querySelector('[aria-label="Actual payment date"]'), localDate())
+  await click(button(paymentDialog, 'Confirm'))
+
+  let accountData = readAccountData()
+  savedDebt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.equal(accountData.transactions.length, 1)
+  assert.equal(accountData.transactions[0].amount, -125)
+  assert.equal(accountData.transactions[0].cleared, false)
+  assert.equal(accountData.transactions[0].linkedDebtId, savedDebt.id)
+  assert.equal(savedDebt.currentBalance, 875)
+  assert.equal(savedDebt.paymentHistory.length, 1)
+
+  await click(debtContainer.querySelector('[aria-label="Debt row: Auto loan"]'))
+  const details = debtContainer.querySelector('[aria-label="Auto loan debt details"]')
+  assert.ok(details)
+  assert.match(details.textContent, /Uncleared/)
+  assert.match(details.textContent, /\$125\.00/)
+  const paymentHistory = details.querySelector('h3 + div')
+  assert.match(paymentHistory.textContent, new RegExp(`Paid ${displayDate(localDate())}`))
+  assert.doesNotMatch(paymentHistory.textContent, /Due /)
+  assert.equal(details.querySelectorAll('button').length, 2)
+  accountData.transactions[0].cleared = true
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accountData))
+  await act(async () => browser.dispatchEvent(new browser.Event('money-honey-accounts-updated')))
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0].currentBalance, 875)
+  assert.match(debtContainer.querySelector('[aria-label="Auto loan debt details"]').textContent, /Cleared/)
+  await click(button(debtContainer.querySelector('[aria-label="Auto loan debt details"]'), 'Edit Debt'))
+  form = debtContainer.querySelector('[aria-label="Edit debt form"] form')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '150')
+  const laterDue = new Date(`${dueDate}T00:00:00`)
+  laterDue.setMonth(laterDue.getMonth() + 1)
+  const laterDueDate = `${laterDue.getFullYear()}-${String(laterDue.getMonth() + 1).padStart(2, '0')}-${String(laterDue.getDate()).padStart(2, '0')}`
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), laterDueDate)
+  await submit(form)
+
+  accountData = readAccountData()
+  billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  linkedBill = billData.bills.find(bill => bill.debtId === savedDebt.id)
+  assert.equal(linkedBill.amount, 150)
+  assert.equal(linkedBill.dueDate, laterDueDate)
+  assert.equal(linkedBill.paymentHistory.length, 1)
+  assert.equal(accountData.transactions[0].amount, -125)
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0].paymentHistory.length, 1)
+
+  await click(billsContainer.querySelector('[aria-label="Show Completed"]'))
+  await click(button(billsContainer, 'Paid Auto loan'))
+  assert.equal(readAccountData().transactions.length, 0)
+  savedDebt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.equal(savedDebt.currentBalance, 1000)
+  assert.equal(savedDebt.paymentHistory.length, 1)
+  assert.ok(savedDebt.paymentHistory[0].reversedAt)
+})
+
+test('Paying a linked bill reuses its transaction, updates principal automatically, and reverses both records', async () => {
+  const recurringBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  recurringBills.bills[0].frequency = 'monthly'
+  recurringBills.bills[0].amount = 24
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(recurringBills))
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [{
+      id: 8,
+      name: 'Auto loan',
+      type: 'Auto Loan',
+      startingBalance: 200,
+      currentBalance: 100,
+      interestRate: 35,
+      paymentCalculationMethod: 'principal-only',
+      accountId: 1,
+      billId: 1,
+      paymentHistory: []
+    }]
+  }))
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.bills[0].debtId = 8
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+
+  const container = await render(Bills)
+  await click(button(container, 'Pay Electric'))
+  const paymentDialog = container.querySelector('[role="dialog"]')
+  await click(button(paymentDialog, 'Confirm'))
+
+  let accountData = readAccountData()
+  let debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.equal(accountData.transactions.length, 1)
+  assert.equal(accountData.transactions[0].amount, -24)
+  assert.equal(accountData.transactions[0].linkedOccurrenceId, `bill:1:${localDate()}`)
+  assert.equal(accountData.transactions[0].linkedDebtId, 8)
+  assert.equal(debt.currentBalance, 76)
+  assert.equal(debt.paymentHistory.length, 1)
+
+  for (const cleared of [true, false]) {
+    accountData.transactions[0].cleared = cleared
+    browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accountData))
+    debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+    assert.equal(debt.currentBalance, 76)
+    assert.equal(debt.paymentHistory.length, 1)
+  }
+  debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.equal(debt.currentBalance, 76)
+  assert.equal(debt.paymentHistory.length, 1)
+
+  await click(container.querySelector('[aria-label="Show Completed"]'))
+  await click(button(container, 'Paid Electric'))
+  assert.equal(readAccountData().transactions.length, 0)
+  debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.equal(debt.currentBalance, 100)
+  assert.equal(debt.paymentHistory.length, 1)
+  assert.ok(debt.paymentHistory[0].reversedAt)
+})
+
+test('Credit-card debt card opens the edit form directly with no payment management UI', async () => {
+  const accountData = readAccountData()
+  accountData.accounts.push({
+    id: 2,
+    name: 'Store Card',
+    type: 'Credit Card',
+    openingBalance: 500,
+    openingDate: localDate(),
+    archived: false
+  })
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accountData))
+
+  const container = await render(Debt)
+  await click(button(container, 'Add debt'))
+  const form = container.querySelector('[aria-label="Add debt form"] form')
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Store card debt')
+  await changeValue(form.querySelector('[aria-label="Debt type"]'), 'Credit Card')
+  await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '500')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '500')
+  await changeValue(form.querySelector('[aria-label="Interest rate · annual percentage (optional)"]'), '18')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '100')
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), localDate())
+  await submit(form)
+
+  await click(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+  const details = container.querySelector('[aria-label="Store card debt debt details"]')
+  assert.ok(details)
+  assert.equal(container.querySelector('[aria-label="Record debt payment"]'), null)
+  assert.equal(details.querySelectorAll('button').length, 2)
+  await click(button(details, 'Edit Debt'))
+  assert.ok(container.querySelector('[aria-label="Edit debt form"]'))
+  await click(button(container.querySelector('[aria-label="Edit debt form"]'), 'Cancel'))
+
+  const billsContainer = await render(Bills)
+  await click(button(billsContainer, 'Pay Store card debt'))
+  const paymentDialog = billsContainer.querySelector('[role="dialog"]')
+  await changeValue(paymentDialog.querySelector('[aria-label="Payment account"]'), '1')
+  await click(button(paymentDialog, 'Confirm'))
+
+  const saved = readAccountData()
+  const debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.equal(saved.transactions.length, 1)
+  assert.equal(saved.transactions[0].amount, -100)
+  assert.equal(saved.transactions[0].transactionType, 'debt-payment')
+  assert.equal(debt.currentBalance, 500)
+  assert.equal(debt.paymentHistory[0].principal, 0)
+
+  await click(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+  await click(button(container.querySelector('[aria-label="Store card debt debt details"]'), 'Edit Debt'))
+  await click(button(container.querySelector('[aria-label="Edit debt form"]'), 'Archive Debt'))
+  assert.equal(container.querySelector('[aria-label="Debt row: Store card debt"]'), null)
+  await click(container.querySelector('[aria-label="Show Archived Debts"]'))
+  await click(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+  await click(button(container.querySelector('[aria-label="Store card debt debt details"]'), 'Edit Debt'))
+  await click(button(container.querySelector('[aria-label="Edit debt form"]'), 'Restore Debt'))
+  assert.ok(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+})
+
+test('Debt links a matching monthly bill instead of duplicating its schedule', async () => {
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  savedBills.bills[0] = {
+    ...savedBills.bills[0],
+    name: 'Auto loan',
+    amount: 100,
+    dueDate: localDate(),
+    frequency: 'monthly'
+  }
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(savedBills))
+  const container = await render(Debt)
+  await click(button(container, 'Add debt'))
+  const form = container.querySelector('[aria-label="Add debt form"] form')
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Auto loan')
+  await changeValue(form.querySelector('[aria-label="Debt type"]'), 'Auto Loan')
+  await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '1000')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '1000')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '100')
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), localDate())
+  await submit(form)
+
+  const debts = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills
+  assert.equal(bills.length, 1)
+  assert.equal(bills[0].debtId, debts[0].id)
+  assert.equal(debts[0].billId, bills[0].id)
+  assert.equal(bills[0].debtManaged, false)
 })

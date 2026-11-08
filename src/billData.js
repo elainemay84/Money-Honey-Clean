@@ -131,9 +131,19 @@ function getScheduleOccurrence(schedule, scheduledDate, isIncome, transactions =
     occurrenceId: `${isIncome ? 'income' : 'bill'}:${schedule.id}:${scheduledDate}`
   }
   delete occurrence.occurrenceOverrides
-  const legacyEntry = (schedule.paymentHistory ?? [])
-    .filter(entry => entry.dueDate === scheduledDate)
+  const historyEntries = schedule.paymentHistory ?? []
+  const legacyEntry = historyEntries
+    .filter(entry => entry.dueDate === scheduledDate && (
+      entry.transactionId != null
+      || entry.paid === true
+      || entry.cleared === true
+      || entry.status === 'received'
+      || entry.received === true
+    ))
     .at(-1)
+  const skipEntry = [...historyEntries]
+    .reverse()
+    .find(entry => entry.dueDate === scheduledDate && typeof entry.skipped === 'boolean')
   const linkedTransaction = getLinkedOccurrenceTransaction(transactions, isIncome ? 'in' : 'out', {
     ...occurrence,
     transactionId: legacyEntry?.transactionId
@@ -149,6 +159,7 @@ function getScheduleOccurrence(schedule, scheduledDate, isIncome, transactions =
     occurrence.cleared = Boolean(linkedTransaction?.cleared)
   } else {
     occurrence.paid = Boolean(linkedTransaction || legacyEntry?.paid)
+    occurrence.skipped = !occurrence.paid && skipEntry?.skipped === true
     occurrence.cleared = Boolean(linkedTransaction?.cleared)
   }
   return occurrence
@@ -198,7 +209,6 @@ export function getBillOccurrencesInRange(bills, startDate, endDate, transaction
         effectiveDate >= startDate
         && effectiveDate <= endDate
         && Number.isFinite(sourceDate.getTime())
-        && isDueInMonth(bill, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
       ) {
         const dates = sourceDatesBySchedule.get(bill.id) ?? new Set()
         dates.add(override.scheduledDate)
@@ -210,7 +220,6 @@ export function getBillOccurrencesInRange(bills, startDate, endDate, transaction
       const sourceDate = new Date(`${entry.dueDate}T00:00:00Z`)
       if (
         !Number.isFinite(sourceDate.getTime())
-        || !isDueInMonth(bill, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
       ) continue
       const effectiveDate = getScheduleOverride(bill, entry.dueDate).dueDate ?? entry.dueDate
       if (effectiveDate >= startDate && effectiveDate <= endDate) {
@@ -229,7 +238,6 @@ export function getBillOccurrencesInRange(bills, startDate, endDate, transaction
       const sourceDate = new Date(`${scheduledDate}T00:00:00Z`)
       if (
         !Number.isFinite(sourceDate.getTime())
-        || !isDueInMonth(bill, sourceDate.getUTCFullYear(), sourceDate.getUTCMonth(), sourceDate)
       ) continue
       const effectiveDate = getScheduleOverride(bill, scheduledDate).dueDate ?? scheduledDate
       if (effectiveDate < startDate || effectiveDate > endDate) continue
@@ -535,6 +543,32 @@ export function updateBillPayment(bill, dueDate, cleared, changedAt = new Date()
       ...bill.paymentHistory,
       { dueDate, cleared, changedAt }
     ]
+  }
+}
+
+export function updateBillOccurrenceSkip(
+  bill,
+  dueDate,
+  skipped,
+  changedAt = new Date().toISOString()
+) {
+  const paymentHistory = bill.paymentHistory ?? []
+  const latestSkip = [...paymentHistory]
+    .reverse()
+    .find(entry => entry.dueDate === dueDate && typeof entry.skipped === 'boolean')
+  if ((latestSkip?.skipped === true) === skipped) return bill
+
+  const skipEntry = {
+    dueDate,
+    skipped,
+    changedAt
+  }
+  if (skipped) skipEntry.skippedAt = changedAt
+  else skipEntry.skipUndoneAt = changedAt
+
+  return {
+    ...bill,
+    paymentHistory: [...paymentHistory, skipEntry]
   }
 }
 

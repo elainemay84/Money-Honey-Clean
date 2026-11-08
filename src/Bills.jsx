@@ -12,6 +12,7 @@ import {
   loadBillData,
   saveBillData,
   updateIncomeStatus,
+  updateBillOccurrenceSkip,
   updateScheduleOccurrence
 } from './billData.js'
 import {
@@ -22,6 +23,15 @@ import {
   updateOccurrenceTransaction,
   updateOccurrenceTransactions
 } from './accountStorage.js'
+import {
+  DEBT_PAYMENT_CALCULATION_METHODS,
+  getDebtPaymentCalculationMethod,
+  loadDebts,
+  recordDebtPaymentFromTransaction,
+  reconcileDebtPaymentForTransaction,
+  removeDebtPaymentForTransaction,
+  saveDebts
+} from './debtData.js'
 
 const today = formatLocalDate(new Date())
 const frequencies = ['one-time', 'weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'yearly']
@@ -80,7 +90,7 @@ function formatDueDate(date) {
 
 function isOccurrenceCompleted(flow, occurrence) {
   return flow === 'out'
-    ? occurrence.paid === true
+    ? occurrence.paid === true || occurrence.skipped === true
     : occurrence.status === 'received'
 }
 
@@ -117,6 +127,7 @@ export default function Bills() {
   const [bills, setBills] = useState(initialData.bills)
   const [incomes, setIncomes] = useState(initialData.incomes)
   const [accountData, setAccountData] = useState(() => loadSavedAccountData())
+  const [debts, setDebts] = useState(() => loadDebts())
   const accountOptions = accountData?.accounts.filter(account => !account.archived) ?? []
   const accountTransactions = accountData?.transactions ?? []
   const [flow, setFlow] = useState('out')
@@ -133,6 +144,8 @@ export default function Bills() {
   const [editingOccurrence, setEditingOccurrence] = useState(null)
   const [selectedOccurrence, setSelectedOccurrence] = useState(null)
   const [actualDate, setActualDate] = useState(today)
+  const [paymentAccountId, setPaymentAccountId] = useState('')
+  const [linkedDebtId, setLinkedDebtId] = useState('')
   const [occurrenceError, setOccurrenceError] = useState('')
   const [name, setName] = useState('')
   const [amount, setAmount] = useState('')
@@ -208,6 +221,12 @@ export default function Bills() {
   ) / 100
   const editingSchedule = (flow === 'out' ? bills : incomes)
     .find(schedule => schedule.id === editingBillId)
+  const selectedOccurrenceDebt = selectedOccurrence?.debtId == null
+    ? null
+    : debts.find(debt => debt.id === selectedOccurrence.debtId) ?? null
+  const paymentAccountIsAvailable = accountOptions.some(account =>
+    account.id === selectedOccurrence?.accountId
+  )
   const monthDays = new Date(Date.UTC(
     selectedMonth.getUTCFullYear(),
     selectedMonth.getUTCMonth() + 1,
@@ -237,12 +256,53 @@ export default function Bills() {
     }
   }, [])
 
+  useEffect(() => {
+    const refreshBillData = () => {
+      const saved = loadBillData([])
+      setBills(saved.bills)
+      setIncomes(saved.incomes)
+      setDebts(loadDebts())
+    }
+    window.addEventListener('money-honey-bills-updated', refreshBillData)
+    window.addEventListener('storage', refreshBillData)
+    return () => {
+      window.removeEventListener('money-honey-bills-updated', refreshBillData)
+      window.removeEventListener('storage', refreshBillData)
+    }
+  }, [])
+
+  useEffect(() => {
+    const refreshDebts = () => setDebts(loadDebts())
+    window.addEventListener('money-honey-debts-updated', refreshDebts)
+    window.addEventListener('storage', refreshDebts)
+    return () => {
+      window.removeEventListener('money-honey-debts-updated', refreshDebts)
+      window.removeEventListener('storage', refreshDebts)
+    }
+  }, [])
+
   function updateBills(nextBills) {
     persistData(nextBills, incomes)
   }
 
   function updateIncomes(nextIncomes) {
     persistData(bills, nextIncomes)
+  }
+
+  function persistDebtBillLink(billId, debtId) {
+    const linkedElsewhere = debts.find(debt =>
+      debt.id === debtId && debt.billId != null && debt.billId !== billId
+    )
+    if (linkedElsewhere) {
+      throw new Error('This debt is already linked to another bill schedule.')
+    }
+    const nextDebts = debts.map(debt => {
+      if (debt.id === debtId) return { ...debt, billId }
+      if (debt.billId === billId) return { ...debt, billId: null }
+      return debt
+    })
+    setDebts(nextDebts)
+    saveDebts(nextDebts)
   }
 
   function openNewBill() {
@@ -259,6 +319,7 @@ export default function Bills() {
     setAccountId('')
     setNotes('')
     setDaysOfMonth(['1', '15'])
+    setLinkedDebtId('')
     setFormError('')
     setIsFormOpen(true)
   }
@@ -280,6 +341,7 @@ export default function Bills() {
     setAccountId(savedBill.accountId == null ? '' : String(savedBill.accountId))
     setNotes(savedBill.notes ?? '')
     setDaysOfMonth((savedBill.daysOfMonth ?? [1, 15]).map(String))
+    setLinkedDebtId(savedBill.debtId == null ? '' : String(savedBill.debtId))
     setFormError('')
     setIsFormOpen(true)
   }
@@ -318,6 +380,7 @@ export default function Bills() {
       setAccountId(editingSchedule.accountId == null ? '' : String(editingSchedule.accountId))
       setNotes(editingSchedule.notes ?? '')
       setDaysOfMonth((editingSchedule.daysOfMonth ?? [1, 15]).map(String))
+      setLinkedDebtId(editingSchedule.debtId == null ? '' : String(editingSchedule.debtId))
     } else if (scope === 'occurrence' && editingOccurrence) {
       setEditingScope('occurrence')
       setEditingOccurrenceDate(editingOccurrence.scheduledDate ?? editingOccurrence.dueDate)
@@ -336,6 +399,7 @@ export default function Bills() {
   function openPaymentConfirmation(occurrence) {
     setSelectedOccurrence(occurrence)
     setActualDate(today)
+    setPaymentAccountId(occurrence.accountId == null ? '' : String(occurrence.accountId))
     setOccurrenceError('')
   }
 
@@ -349,9 +413,14 @@ export default function Bills() {
 
   function confirmOccurrencePayment() {
     if (!selectedOccurrence) return
-    const occurrence = selectedOccurrence
+    const occurrence = flow === 'out' && !paymentAccountIsAvailable
+      ? { ...selectedOccurrence, accountId: Number(paymentAccountId) }
+      : selectedOccurrence
 
     try {
+      if (flow === 'out' && !accountOptions.some(account => account.id === occurrence.accountId)) {
+        throw new Error('Choose an active account for this payment.')
+      }
       const result = createOccurrenceTransaction(flow, occurrence, actualDate)
       if (result.status === 'matches') {
         setTransactionOptions(result.transactions)
@@ -373,12 +442,25 @@ export default function Bills() {
   function recordOccurrencePayment(occurrence, transactionId) {
     const scheduledDate = occurrence.scheduledDate ?? occurrence.dueDate
     if (flow === 'out') {
+      const bill = bills.find(item => item.id === occurrence.id)
+      if (bill?.debtId != null) {
+        recordDebtPaymentFromTransaction(bill.debtId, transactionId, {
+          date: actualDate,
+          principal: null,
+          interest: 0,
+          fees: 0,
+          automaticPrincipal: true,
+          scheduledDueDate: scheduledDate,
+          billOccurrenceId: occurrence.occurrenceId
+        })
+      }
       updateBills(bills.map(bill => bill.id === occurrence.id
         ? (() => {
           const history = bill.paymentHistory ?? []
           if (history.some(entry => entry.transactionId === transactionId)) return bill
           return {
             ...bill,
+            accountId: bill.accountId ?? occurrence.accountId,
             paymentHistory: [...history, {
             dueDate: scheduledDate,
             actualDate,
@@ -406,6 +488,7 @@ export default function Bills() {
 
     try {
       const transaction = removeOccurrenceTransaction(flow, occurrence)
+      if (flow === 'out') removeDebtPaymentForTransaction(transaction.id)
       if (flow === 'out') {
         updateBills(bills.map(bill => bill.id === occurrence.id
           ? {
@@ -439,6 +522,28 @@ export default function Bills() {
     else openPaymentConfirmation(occurrence)
   }
 
+  function handleSkipOccurrence(occurrence) {
+    const bill = bills.find(item => item.id === occurrence.id)
+    if (!bill || bill.debtId == null || occurrence.paid) return
+    const dueDate = occurrence.scheduledDate ?? occurrence.dueDate
+    if (occurrence.skipped) {
+      updateBills(bills.map(item => item.id === bill.id
+        ? updateBillOccurrenceSkip(item, dueDate, false)
+        : item
+      ))
+      return
+    }
+
+    if (!window.confirm(
+      `Skip ${occurrence.name} scheduled for ${formatDueDate(occurrence.dueDate)} (${money(occurrence.amount)})? This is only an internal planning status. It does not change your lender's terms, interest, fees, or payment obligation.`
+    )) return
+
+    updateBills(bills.map(item => item.id === bill.id
+      ? updateBillOccurrenceSkip(item, dueDate, true)
+      : item
+    ))
+  }
+
   function updateScheduleManagement(changes) {
     if (editingBillId === null) return
     if (flow === 'out') {
@@ -453,6 +558,10 @@ export default function Bills() {
     setFormError('')
     const numericAmount = Number(amount)
     if (!name.trim() || !dueDate || !Number.isFinite(numericAmount) || numericAmount <= 0) return
+    if (flow === 'out' && editingScope === 'schedule' && linkedDebtId !== '' && frequency === 'one-time') {
+      setFormError('Only recurring bills can be linked to a debt.')
+      return
+    }
     const selectedDays = frequency === 'twice-monthly'
       ? [...new Set(daysOfMonth.map(Number).filter(day => Number.isInteger(day) && day >= 1 && day <= 31))].sort((a, b) => a - b)
       : []
@@ -490,6 +599,7 @@ export default function Bills() {
           }
           try {
             updateOccurrenceTransaction(editingLinkedTransactionId, linkedChanges)
+            reconcileDebtPaymentForTransaction(editingLinkedTransactionId)
             setAccountData(loadSavedAccountData())
           } catch (error) {
             setFormError(error.message)
@@ -556,6 +666,9 @@ export default function Bills() {
             amount: signedAmount,
             accountId: Number(accountId)
           })
+          for (const transaction of linkedTransactions) {
+            reconcileDebtPaymentForTransaction(transaction.id)
+          }
           setAccountData(loadSavedAccountData())
         } catch (error) {
           setFormError(error.message)
@@ -565,6 +678,12 @@ export default function Bills() {
     }
 
     if (flow === 'out' && editingBillId !== null) {
+      try {
+        persistDebtBillLink(editingBillId, linkedDebtId === '' ? null : Number(linkedDebtId))
+      } catch (error) {
+        setFormError(error.message)
+        return
+      }
       updateBills(bills.map(bill => bill.id === editingBillId
         ? {
           ...bill,
@@ -573,6 +692,7 @@ export default function Bills() {
           dueDate,
           frequency,
           autopay,
+          debtId: linkedDebtId === '' ? null : Number(linkedDebtId),
           accountId: accountId === '' ? null : Number(accountId),
           notes: notes.trim(),
           daysOfMonth: frequency === 'twice-monthly' ? selectedDays : []
@@ -580,14 +700,22 @@ export default function Bills() {
         : bill
       ))
     } else if (flow === 'out') {
+      const newBillId = createBillId(bills)
+      try {
+        if (linkedDebtId !== '') persistDebtBillLink(newBillId, Number(linkedDebtId))
+      } catch (error) {
+        setFormError(error.message)
+        return
+      }
       updateBills([...bills, {
-        id: createBillId(bills),
+        id: newBillId,
         name: name.trim(),
         amount: numericAmount,
         dueDate,
         frequency,
         autopay,
         accountId: accountId === '' ? null : Number(accountId),
+        debtId: linkedDebtId === '' ? null : Number(linkedDebtId),
         notes: notes.trim(),
         daysOfMonth: frequency === 'twice-monthly'
           ? [...new Set(daysOfMonth.map(Number).filter(day => Number.isInteger(day) && day >= 1 && day <= 31))].sort((a, b) => a - b)
@@ -856,7 +984,8 @@ export default function Bills() {
                   item,
                   flow,
                   openOccurrenceForEdit,
-                  handleOccurrenceAction
+                  handleOccurrenceAction,
+                  handleSkipOccurrence
                 ))
               ) : (
                 <p style={{ margin: '7px 0 0', color: '#79502A', fontSize: 12 }}>
@@ -893,7 +1022,8 @@ export default function Bills() {
                   item,
                   flow,
                   openOccurrenceForEdit,
-                  handleOccurrenceAction
+                  handleOccurrenceAction,
+                  handleSkipOccurrence
                 ))}
               </section>
             )) : (
@@ -916,7 +1046,8 @@ export default function Bills() {
                   },
                   flow,
                   openOccurrenceForEdit,
-                  handleOccurrenceAction
+                  handleOccurrenceAction,
+                  handleSkipOccurrence
                 ))}
               </section>
             )}
@@ -987,6 +1118,23 @@ export default function Bills() {
             <p style={{ margin: '0 0 14px', color: '#79502A', fontSize: 13 }}>
               {selectedOccurrence.name} · {money(selectedOccurrence.amount)}
             </p>
+            {flow === 'out' && !paymentAccountIsAvailable && (
+              <label style={{ display: 'grid', gap: 6, marginBottom: 12, color: '#79502A', fontSize: 12 }}>
+                Account for this payment
+                <select
+                  aria-label="Payment account"
+                  value={paymentAccountId}
+                  onChange={event => setPaymentAccountId(event.target.value)}
+                  style={field}
+                  required
+                >
+                  <option value="">Choose account</option>
+                  {accountOptions.map(account => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label style={{ display: 'grid', gap: 6, marginBottom: 12, color: '#79502A', fontSize: 12 }}>
               {flow === 'out' ? 'Actual payment date' : 'Actual received date'}
               <input
@@ -997,6 +1145,13 @@ export default function Bills() {
                 style={field}
               />
             </label>
+            {selectedOccurrenceDebt && (
+              <p style={{ margin: '0 0 12px', color: '#79502A', fontSize: 12 }}>
+                {getDebtPaymentCalculationMethod(selectedOccurrenceDebt) === DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
+                  ? `This payment will reduce ${selectedOccurrenceDebt.name}'s balance by the payment amount, up to the remaining balance.`
+                  : `This payment will be recorded without guessing principal. Review ${selectedOccurrenceDebt.name}'s balance after accounting for interest.`}
+              </p>
+            )}
             {occurrenceError && (
               <p role="alert" style={{ margin: '0 0 10px', color: '#9B463E', fontSize: 12 }}>
                 {occurrenceError}
@@ -1196,6 +1351,25 @@ export default function Bills() {
                 Autopay
                 </label>
               )}
+              {flow === 'out'
+                && editingScope === 'schedule'
+                && (frequency !== 'one-time' || linkedDebtId !== '')
+                && (
+                <label style={{ display: 'grid', gap: 5, color: '#79502A', fontSize: 12 }}>
+                  Linked debt
+                  <select
+                    aria-label="Linked debt"
+                    value={linkedDebtId}
+                    onChange={event => setLinkedDebtId(event.target.value)}
+                    style={field}
+                  >
+                    <option value="">No debt linked</option>
+                    {debts.map(debt => (
+                      <option key={debt.id} value={debt.id}>{debt.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {flow === 'in' && (
                 <textarea
                   aria-label="Notes"
@@ -1341,11 +1515,16 @@ function renderOccurrenceRow(
   occurrence,
   flow,
   onOpen,
-  onAction
+  onAction,
+  onSkip
 ) {
   const isIncome = flow === 'in'
   const isInactive = occurrence.status === 'paused' || occurrence.status === 'archived'
-  const isRecorded = isOccurrenceCompleted(flow, occurrence)
+  const isRecorded = isIncome
+    ? occurrence.status === 'received'
+    : occurrence.paid === true
+  const isSkipped = flow === 'out' && occurrence.skipped === true
+  const canSkip = flow === 'out' && occurrence.debtId != null && !isRecorded && !isInactive
   const actionLabel = isIncome ? 'Receive' : 'Pay'
   const recordedLabel = isIncome ? 'Received' : 'Paid'
   const openRow = () => onOpen(occurrence)
@@ -1417,6 +1596,31 @@ function renderOccurrenceRow(
         >
           {isRecorded ? recordedLabel : actionLabel}
         </button>
+        {isSkipped && (
+          <span style={{ color: '#9B7955', fontSize: 10, fontWeight: 'bold' }}>Skipped</span>
+        )}
+        {canSkip && (
+          <button
+            type="button"
+            aria-label={isSkipped ? `Undo Skip ${occurrence.name}` : `Skip Payment ${occurrence.name}`}
+            onClick={event => {
+              event.stopPropagation()
+              onSkip(occurrence)
+            }}
+            style={{
+              border: 'none',
+              borderRadius: 8,
+              padding: '4px 8px',
+              background: isSkipped ? '#F5E9D7' : 'transparent',
+              color: '#79502A',
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            {isSkipped ? 'Undo Skip' : 'Skip Payment'}
+          </button>
+        )}
       </div>
     </div>
   )

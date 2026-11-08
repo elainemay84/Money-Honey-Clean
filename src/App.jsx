@@ -1,6 +1,7 @@
 
 import { useEffect, useState } from 'react'
 import Accounts from './Accounts'
+import Debt from './Debt'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import Bills from './Bills'
 import {
@@ -304,6 +305,8 @@ function App() {
   <Accounts />
 ) : activePage === 'Bills' ? (
   <Bills />
+) : activePage === 'Debt' ? (
+  <Debt />
 ) : (
   <main style={{
     maxWidth: 460,

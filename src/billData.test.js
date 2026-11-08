@@ -24,6 +24,7 @@ import {
   saveIncomeSchedules,
   updateIncomeStatus,
   updateBillPayment,
+  updateBillOccurrenceSkip,
   updateScheduleOccurrence
 } from './billData.js'
 
@@ -82,6 +83,42 @@ test('one-time due dates and calendar month boundaries are calculated accurately
   assert.deepEqual(getBillOccurrences([marchBill, aprilBill], month(2026, 3)).map(item => item.dueDate), ['2026-04-01'])
   assert.equal(month(2026, 2).getUTCDay(), 0)
   assert.equal(new Date(Date.UTC(2026, 2 + 1, 0)).getUTCDate(), 31)
+})
+
+test('skipped debt installments persist once, stay unpaid, and can be restored without changing recurrence', () => {
+  const original = bill({
+    debtId: 7,
+    dueDate: '2026-11-08',
+    frequency: 'monthly',
+    paymentHistory: []
+  })
+  const skipped = updateBillOccurrenceSkip(original, '2026-11-08', true, '2026-11-07T12:00:00Z')
+  const duplicate = updateBillOccurrenceSkip(skipped, '2026-11-08', true, '2026-11-07T12:01:00Z')
+  assert.equal(duplicate.paymentHistory.length, 1)
+  assert.equal(duplicate.dueDate, '2026-11-08')
+  assert.equal(duplicate.paymentHistory[0].skipped, true)
+
+  const occurrence = getBillOccurrences(
+    [skipped],
+    month(2026, 10)
+  )[0]
+  assert.equal(occurrence.paid, false)
+  assert.equal(occurrence.skipped, true)
+  assert.equal(getBillOccurrences([skipped], month(2026, 11))[0].dueDate, '2026-12-08')
+
+  const restored = updateBillOccurrenceSkip(
+    skipped,
+    '2026-11-08',
+    false,
+    '2026-11-08T12:00:00Z'
+  )
+  const restoredOccurrence = getBillOccurrences([restored], month(2026, 10))[0]
+  assert.equal(restoredOccurrence.paid, false)
+  assert.equal(restoredOccurrence.skipped, false)
+  assert.equal(restored.paymentHistory.length, 2)
+  assert.equal(restored.paymentHistory[0].skipped, true)
+  assert.equal(restored.paymentHistory[1].skipped, false)
+  assert.equal(restored.dueDate, '2026-11-08')
 })
 
 test('linked transactions control clearing while paid history remains a separate completion state', () => {
