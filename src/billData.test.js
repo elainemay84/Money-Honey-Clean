@@ -86,28 +86,46 @@ test('one-time due dates and calendar month boundaries are calculated accurately
 })
 
 test('skipped debt installments persist once, stay unpaid, and can be restored without changing recurrence', () => {
+  const values = new Map()
+  const storage = {
+    getItem: key => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value)
+  }
   const original = bill({
     debtId: 7,
     dueDate: '2026-11-08',
     frequency: 'monthly',
     paymentHistory: []
   })
+  const datesBeforeSkip = getBillOccurrencesInRange(
+    [original],
+    '2026-11-01',
+    '2027-01-31'
+  ).map(item => item.dueDate)
   const skipped = updateBillOccurrenceSkip(original, '2026-11-08', true, '2026-11-07T12:00:00Z')
   const duplicate = updateBillOccurrenceSkip(skipped, '2026-11-08', true, '2026-11-07T12:01:00Z')
   assert.equal(duplicate.paymentHistory.length, 1)
   assert.equal(duplicate.dueDate, '2026-11-08')
   assert.equal(duplicate.paymentHistory[0].skipped, true)
+  saveBills([skipped], storage)
+  const reloaded = loadBills([], storage)[0]
+  assert.deepEqual(reloaded.paymentHistory, skipped.paymentHistory)
 
   const occurrence = getBillOccurrences(
-    [skipped],
+    [reloaded],
     month(2026, 10)
   )[0]
   assert.equal(occurrence.paid, false)
   assert.equal(occurrence.skipped, true)
-  assert.equal(getBillOccurrences([skipped], month(2026, 11))[0].dueDate, '2026-12-08')
+  assert.equal(getBillOccurrences([reloaded], month(2026, 11))[0].dueDate, '2026-12-08')
+  assert.deepEqual(
+    getBillOccurrencesInRange([reloaded], '2026-11-01', '2027-01-31')
+      .map(item => item.dueDate),
+    datesBeforeSkip
+  )
 
   const restored = updateBillOccurrenceSkip(
-    skipped,
+    reloaded,
     '2026-11-08',
     false,
     '2026-11-08T12:00:00Z'
@@ -119,6 +137,11 @@ test('skipped debt installments persist once, stay unpaid, and can be restored w
   assert.equal(restored.paymentHistory[0].skipped, true)
   assert.equal(restored.paymentHistory[1].skipped, false)
   assert.equal(restored.dueDate, '2026-11-08')
+  assert.deepEqual(
+    getBillOccurrencesInRange([restored], '2026-11-01', '2027-01-31')
+      .map(item => item.dueDate),
+    datesBeforeSkip
+  )
 })
 
 test('linked transactions control clearing while paid history remains a separate completion state', () => {

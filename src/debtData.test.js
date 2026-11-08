@@ -190,7 +190,7 @@ test('linked monthly debt schedule preserves month-end dates including February'
   assert.equal(status.overdueAmount, 24)
 })
 
-test('skipped debt installments are excluded from next due and overdue calculations only for that occurrence', () => {
+test('skipped installments advance only their own occurrence and do not count as overdue', () => {
   const debt = {
     id: 7,
     name: 'Auto loan',
@@ -212,11 +212,22 @@ test('skipped debt installments are excluded from next due and overdue calculati
     }]
   }
 
-  const status = getDebtScheduleStatus(debt, [bill], [], '2026-11-10')
+  let status = getDebtScheduleStatus(debt, [bill], [], '2026-11-10')
   assert.equal(status.nextDueDate, '2026-09-08')
   assert.equal(status.oldestOverdueDate, '2026-09-08')
   assert.equal(status.overdueCount, 2)
   assert.equal(status.overdueAmount, 48)
+  assert.equal(status.isPastDue, true)
+
+  bill.paymentHistory.push({
+    dueDate: '2026-10-08',
+    skipped: false,
+    changedAt: '2026-11-11T12:00:00Z'
+  })
+  status = getDebtScheduleStatus(debt, [bill], [], '2026-11-10')
+  assert.equal(status.nextDueDate, '2026-09-08')
+  assert.equal(status.overdueCount, 3)
+  assert.equal(status.overdueAmount, 72)
   assert.equal(status.isPastDue, true)
 })
 

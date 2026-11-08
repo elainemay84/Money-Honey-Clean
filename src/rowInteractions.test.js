@@ -196,8 +196,12 @@ after(async () => {
 test('bill row opens editing directly; Pay records once and Paid requires confirmation to undo', async () => {
   let container = await render(Bills)
   await click(container.querySelector('[aria-label="Bill row: Electric"]'))
-  assert.match(container.querySelector('[role="dialog"] h2').textContent, /Edit bill occurrence/)
-  await click(button(container.querySelector('[role="dialog"]'), 'Cancel'))
+  const editDialog = container.querySelector('[role="dialog"]')
+  assert.match(editDialog.querySelector('h2').textContent, /Edit bill occurrence/)
+  assert.equal([...editDialog.querySelectorAll('button')].some(item =>
+    item.textContent.trim() === 'Skip This Payment' || item.textContent.trim() === 'Undo Skip'
+  ), false)
+  await click(button(editDialog, 'Cancel'))
 
   await click(button(container, 'Pay Electric'))
   assert.ok(container.querySelector('[role="dialog"] input[aria-label="Actual payment date"]'))
@@ -243,8 +247,12 @@ test('income row opens editing directly; Receive records once and Received confi
   const container = await render(Bills)
   await click(button(container, 'Money In'))
   await click(container.querySelector('[aria-label="Income row: Paycheck"]'))
-  assert.match(container.querySelector('[role="dialog"] h2').textContent, /Edit income occurrence/)
-  await click(button(container.querySelector('[role="dialog"]'), 'Cancel'))
+  const editDialog = container.querySelector('[role="dialog"]')
+  assert.match(editDialog.querySelector('h2').textContent, /Edit income occurrence/)
+  assert.equal([...editDialog.querySelectorAll('button')].some(item =>
+    item.textContent.trim() === 'Skip This Payment' || item.textContent.trim() === 'Undo Skip'
+  ), false)
+  await click(button(editDialog, 'Cancel'))
 
   await click(button(container, 'Receive Paycheck'))
   assert.ok(container.querySelector('[role="dialog"] input[aria-label="Actual received date"]'))
@@ -759,17 +767,29 @@ test('skipping one debt installment hides it from default List, updates debt due
   const debtContainer = await render(Debt)
   const debtRow = debtContainer.querySelector('[aria-label="Debt row: Auto loan"]')
   const billsContainer = await render(Bills)
-  assert.ok(billsContainer.querySelector('[aria-label="Bill row: Auto loan"]'))
+  const billRow = billsContainer.querySelector('[aria-label="Bill row: Auto loan"]')
+  assert.ok(billRow)
+  assert.equal([...billRow.querySelectorAll('button')].some(item =>
+    item.textContent.includes('Skip')
+  ), false)
+  await click(billRow)
+  let editDialog = billsContainer.querySelector('[role="dialog"]')
+  assert.ok(button(editDialog, 'Skip This Payment'))
 
   let confirmation = ''
   browser.confirm = message => {
     confirmation = message
-    return true
+    return false
   }
-  await click(button(billsContainer, 'Skip Payment Auto loan'))
+  await click(button(editDialog, 'Skip This Payment'))
   assert.match(confirmation, new RegExp(displayDate(scheduledDueDate)))
   assert.match(confirmation, /\$24\.00/)
   assert.match(confirmation, /internal planning status/)
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills[0].paymentHistory.length, 0)
+
+  browser.confirm = () => true
+  await click(button(editDialog, 'Skip This Payment'))
+  assert.ok(button(editDialog, 'Undo Skip'))
   const skippedDate = displayDate(scheduledDueDate)
   const visibleBillRows = [...billsContainer.querySelectorAll('[aria-label="Bill row: Auto loan"]')]
   assert.ok(visibleBillRows.every(row => !row.textContent.includes(skippedDate)))
@@ -784,18 +804,27 @@ test('skipping one debt installment hides it from default List, updates debt due
   assert.equal(readAccountData().transactions.length, 0)
   assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0].currentBalance, 100)
 
+  await click(button(editDialog, 'Cancel'))
   await click(button(billsContainer, 'Calendar'))
   const calendarOccurrence = billsContainer.querySelector('[aria-label="Bill row: Auto loan"]')
   assert.ok(calendarOccurrence)
   assert.match(calendarOccurrence.textContent, /Skipped/)
-  assert.ok(button(calendarOccurrence, 'Undo Skip Auto loan'))
+  assert.equal([...calendarOccurrence.querySelectorAll('button')].some(item =>
+    item.textContent.includes('Skip')
+  ), false)
+  await click(calendarOccurrence)
+  editDialog = billsContainer.querySelector('[role="dialog"]')
+  assert.ok(button(editDialog, 'Undo Skip'))
+  await click(button(editDialog, 'Cancel'))
 
   await click(button(billsContainer, 'List'))
   await click(billsContainer.querySelector('[aria-label="Show Completed"]'))
   const completedRow = billsContainer.querySelector('[aria-label="Bill row: Auto loan"]')
   assert.ok(completedRow)
   assert.match(completedRow.textContent, /Skipped/)
-  await click(button(completedRow, 'Undo Skip Auto loan'))
+  await click(completedRow)
+  editDialog = billsContainer.querySelector('[role="dialog"]')
+  await click(button(editDialog, 'Undo Skip'))
 
   assert.match(debtRow.textContent, /Due Today/)
   assert.doesNotMatch(debtRow.textContent, /Past Due/)
@@ -879,7 +908,10 @@ test('Debt edits create and update one monthly bill; Bills records and reverses 
   assert.match(details.textContent, /\$125\.00/)
   const paymentHistory = details.querySelector('h3 + div')
   assert.match(paymentHistory.textContent, new RegExp(`Paid ${displayDate(localDate())}`))
-  assert.doesNotMatch(paymentHistory.textContent, /Due /)
+  assert.match(
+    paymentHistory.textContent,
+    new RegExp(`Due ${displayDate(savedDebt.paymentHistory[0].scheduledDueDate)}`)
+  )
   assert.equal(details.querySelectorAll('button').length, 2)
   accountData.transactions[0].cleared = true
   browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accountData))

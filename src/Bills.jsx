@@ -524,24 +524,26 @@ export default function Bills() {
 
   function handleSkipOccurrence(occurrence) {
     const bill = bills.find(item => item.id === occurrence.id)
-    if (!bill || bill.debtId == null || occurrence.paid) return
+    if (
+      !bill
+      || bill.debtId == null
+      || occurrence.paid
+      || occurrence.status === 'paused'
+      || occurrence.status === 'archived'
+    ) return
     const dueDate = occurrence.scheduledDate ?? occurrence.dueDate
-    if (occurrence.skipped) {
-      updateBills(bills.map(item => item.id === bill.id
-        ? updateBillOccurrenceSkip(item, dueDate, false)
-        : item
-      ))
-      return
-    }
-
-    if (!window.confirm(
+    const skipped = occurrence.skipped !== true
+    if (skipped && !window.confirm(
       `Skip ${occurrence.name} scheduled for ${formatDueDate(occurrence.dueDate)} (${money(occurrence.amount)})? This is only an internal planning status. It does not change your lender's terms, interest, fees, or payment obligation.`
     )) return
 
     updateBills(bills.map(item => item.id === bill.id
-      ? updateBillOccurrenceSkip(item, dueDate, true)
+      ? updateBillOccurrenceSkip(item, dueDate, skipped)
       : item
     ))
+    setEditingOccurrence(current => current?.occurrenceId === occurrence.occurrenceId
+      ? { ...current, skipped }
+      : current)
   }
 
   function updateScheduleManagement(changes) {
@@ -984,8 +986,7 @@ export default function Bills() {
                   item,
                   flow,
                   openOccurrenceForEdit,
-                  handleOccurrenceAction,
-                  handleSkipOccurrence
+                  handleOccurrenceAction
                 ))
               ) : (
                 <p style={{ margin: '7px 0 0', color: '#79502A', fontSize: 12 }}>
@@ -1022,8 +1023,7 @@ export default function Bills() {
                   item,
                   flow,
                   openOccurrenceForEdit,
-                  handleOccurrenceAction,
-                  handleSkipOccurrence
+                  handleOccurrenceAction
                 ))}
               </section>
             )) : (
@@ -1046,8 +1046,7 @@ export default function Bills() {
                   },
                   flow,
                   openOccurrenceForEdit,
-                  handleOccurrenceAction,
-                  handleSkipOccurrence
+                  handleOccurrenceAction
                 ))}
               </section>
             )}
@@ -1381,6 +1380,28 @@ export default function Bills() {
                 />
               )}
               {formError && <p role="alert" style={{ margin: 0, color: '#9B463E', fontSize: 12 }}>{formError}</p>}
+              {flow === 'out'
+                && editingScope === 'occurrence'
+                && editingOccurrence
+                && editingSchedule?.debtId != null
+                && !editingOccurrence.paid
+                && editingOccurrence.status !== 'paused'
+                && editingOccurrence.status !== 'archived' && (
+                <button
+                  type="button"
+                  onClick={() => handleSkipOccurrence(editingOccurrence)}
+                  style={{
+                    ...field,
+                    border: '1px solid #D9C29F',
+                    background: '#FFF8ED',
+                    color: '#79502A',
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {editingOccurrence.skipped ? 'Undo Skip' : 'Skip This Payment'}
+                </button>
+              )}
               <select aria-label="Associated account" value={accountId} onChange={event => setAccountId(event.target.value)} style={field}>
                 <option value="">No account linked</option>
                 {accountOptions.map(account => (
@@ -1515,8 +1536,7 @@ function renderOccurrenceRow(
   occurrence,
   flow,
   onOpen,
-  onAction,
-  onSkip
+  onAction
 ) {
   const isIncome = flow === 'in'
   const isInactive = occurrence.status === 'paused' || occurrence.status === 'archived'
@@ -1524,7 +1544,6 @@ function renderOccurrenceRow(
     ? occurrence.status === 'received'
     : occurrence.paid === true
   const isSkipped = flow === 'out' && occurrence.skipped === true
-  const canSkip = flow === 'out' && occurrence.debtId != null && !isRecorded && !isInactive
   const actionLabel = isIncome ? 'Receive' : 'Pay'
   const recordedLabel = isIncome ? 'Received' : 'Paid'
   const openRow = () => onOpen(occurrence)
@@ -1598,28 +1617,6 @@ function renderOccurrenceRow(
         </button>
         {isSkipped && (
           <span style={{ color: '#9B7955', fontSize: 10, fontWeight: 'bold' }}>Skipped</span>
-        )}
-        {canSkip && (
-          <button
-            type="button"
-            aria-label={isSkipped ? `Undo Skip ${occurrence.name}` : `Skip Payment ${occurrence.name}`}
-            onClick={event => {
-              event.stopPropagation()
-              onSkip(occurrence)
-            }}
-            style={{
-              border: 'none',
-              borderRadius: 8,
-              padding: '4px 8px',
-              background: isSkipped ? '#F5E9D7' : 'transparent',
-              color: '#79502A',
-              fontSize: 10,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
-          >
-            {isSkipped ? 'Undo Skip' : 'Skip Payment'}
-          </button>
         )}
       </div>
     </div>
