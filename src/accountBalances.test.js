@@ -9,6 +9,11 @@ import {
   moveTransactionToDate,
   normalizeTransactionAmount
 } from './accountBalances.js'
+import {
+  ACCOUNT_STORAGE_KEY,
+  loadAccountData,
+  saveAccountData
+} from './accountStorage.js'
 
 const transactions = [
   { id: 1, date: '2026-11-06', amount: 1500, cleared: true },
@@ -16,6 +21,74 @@ const transactions = [
   { id: 3, date: '2026-11-07', amount: -128, cleared: false },
   { id: 4, date: '2026-11-08', amount: -60, cleared: false },
 ]
+
+test('accounts and transaction changes persist across simulated reloads without restoring demo data', () => {
+  const values = new Map()
+  const storage = {
+    getItem: key => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value)
+  }
+  const demoAccounts = [
+    { id: 1, name: 'Demo Checking', type: 'Checking', openingBalance: 1500, openingDate: '2026-11-06' }
+  ]
+  const demoTransactions = [
+    { id: 1, sequence: 1, accountId: 1, name: 'Demo expense', amount: -50, date: '2026-11-06', cleared: false }
+  ]
+
+  let data = loadAccountData(demoAccounts, demoTransactions, storage)
+  assert.equal(values.has(ACCOUNT_STORAGE_KEY), true)
+
+  function persistAndReload(nextAccounts, nextTransactions) {
+    saveAccountData(nextAccounts, nextTransactions, storage)
+    data = loadAccountData(demoAccounts, demoTransactions, storage)
+  }
+
+  const accountsEdited = data.accounts.map(account => ({
+    ...account,
+    name: 'Renamed Checking',
+    type: 'Savings',
+    openingBalance: 2200,
+    openingDate: '2026-11-05',
+    color: '#123456',
+    defaultCleared: true,
+    archived: true
+  }))
+  persistAndReload(accountsEdited, data.transactions)
+  assert.deepEqual(data.accounts, accountsEdited)
+
+  const transactionAdded = [
+    ...data.transactions,
+    { id: 2, sequence: 2, accountId: 1, name: 'Deposit', amount: 300, date: '2026-11-07', cleared: false }
+  ]
+  persistAndReload(data.accounts, transactionAdded)
+  assert.deepEqual(data.transactions, transactionAdded)
+
+  const transactionEditedAndCleared = data.transactions.map(transaction =>
+    transaction.id === 2
+      ? { ...transaction, name: 'Edited Deposit', amount: 325, date: '2026-11-08', cleared: true }
+      : transaction
+  )
+  persistAndReload(data.accounts, transactionEditedAndCleared)
+  assert.deepEqual(data.transactions, transactionEditedAndCleared)
+
+  const transactionDeleted = data.transactions.filter(transaction => transaction.id !== 1)
+  const accountRestoredAndReordered = [
+    { ...data.accounts[0], archived: false },
+    { id: 2, name: 'Second Account', type: 'Checking', openingBalance: 0, openingDate: '2026-11-07' }
+  ]
+  persistAndReload(accountRestoredAndReordered, transactionDeleted)
+  assert.deepEqual(data.accounts, accountRestoredAndReordered)
+  assert.deepEqual(data.transactions, transactionDeleted)
+  assert.equal(data.transactions.some(transaction => transaction.id === 1), false)
+
+  const reloadedWithDifferentDemos = loadAccountData(
+    [{ id: 99, name: 'Replacement demo' }],
+    [],
+    storage
+  )
+  assert.deepEqual(reloadedWithDifferentDemos.accounts, accountRestoredAndReordered)
+  assert.deepEqual(reloadedWithDifferentDemos.transactions, transactionDeleted)
+})
 
 test('opening reference date excludes already-included earlier transactions from the summary', () => {
   const referenceTransactions = [
@@ -50,7 +123,7 @@ test('Accounts Overview renders active account cards and separate management act
 
   try {
     globalThis.localStorage = {
-      getItem: () => 'desc',
+      getItem: key => key === 'money-honey-transaction-sort' ? 'desc' : null,
       setItem: () => {}
     }
 

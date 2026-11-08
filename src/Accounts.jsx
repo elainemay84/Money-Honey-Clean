@@ -1,23 +1,13 @@
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   calculateAccountBalances,
   getNextTransactionSequence,
   moveTransactionToDate,
   normalizeTransactionAmount
 } from './accountBalances.js'
-
-const startingAccounts = [
-  { id: 1, name: 'Everyday Checking', type: 'Checking', openingBalance: 1500, openingDate: '2026-11-06', color: '#B87522', defaultCleared: false, archived: false },
-  { id: 2, name: 'Savings', type: 'Savings', openingBalance: 500, openingDate: '2026-11-06', color: '#6E9A72', defaultCleared: false, archived: false },
-]
-
-const startingTransactions = [
-  { id: 1, sequence: 1, accountId: 1, name: 'Paycheck', amount: 1500, date: '2026-11-06', cleared: true },
-  { id: 2, sequence: 2, accountId: 1, name: 'Groceries', amount: -125, date: '2026-11-06', cleared: true },
-  { id: 3, sequence: 3, accountId: 1, name: 'Electric Bill', amount: -128, date: '2026-11-07', cleared: false },
-  { id: 4, sequence: 4, accountId: 1, name: 'Gas', amount: -60, date: '2026-11-08', cleared: false },
-]
+import { startingAccounts, startingTransactions } from './accountDefaults.js'
+import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 
 const todayDate = new Date().toLocaleDateString('en-CA')
 
@@ -25,11 +15,20 @@ const money = amount =>
   amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
 export default function Accounts() {
-  const [accounts, setAccounts] = useState(startingAccounts)
-  const [transactions, setTransactions] = useState(startingTransactions)
-  const nextAccountId = useRef(3)
-  const nextTransactionId = useRef(5)
-  const nextTransactionSequence = useRef(getNextTransactionSequence(startingTransactions))
+  const [initialAccountData] = useState(() =>
+    loadAccountData(startingAccounts, startingTransactions)
+  )
+  const [accounts, setAccounts] = useState(initialAccountData.accounts)
+  const [transactions, setTransactions] = useState(initialAccountData.transactions)
+  const nextAccountId = useRef(
+    initialAccountData.accounts.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1
+  )
+  const nextTransactionId = useRef(
+    initialAccountData.transactions.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1
+  )
+  const nextTransactionSequence = useRef(
+    getNextTransactionSequence(initialAccountData.transactions)
+  )
   const [selectedAccount, setSelectedAccount] = useState(null)
   const [screen, setScreen] = useState('overview')
   const [showAddAccount, setShowAddAccount] = useState(false)
@@ -46,6 +45,24 @@ export default function Accounts() {
   const [newDate, setNewDate] = useState(todayDate)
   const [kind, setKind] = useState('expense')
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false)
+
+  useEffect(() => {
+    const refreshAccountData = () => {
+      const current = loadSavedAccountData()
+      if (!current) return
+      setAccounts(current.accounts)
+      setTransactions(current.transactions)
+      nextAccountId.current = current.accounts.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1
+      nextTransactionId.current = current.transactions.reduce((maxId, item) => Math.max(maxId, item.id), 0) + 1
+      nextTransactionSequence.current = getNextTransactionSequence(current.transactions)
+    }
+    window.addEventListener('money-honey-accounts-updated', refreshAccountData)
+    window.addEventListener('storage', refreshAccountData)
+    return () => {
+      window.removeEventListener('money-honey-accounts-updated', refreshAccountData)
+      window.removeEventListener('storage', refreshAccountData)
+    }
+  }, [])
 
   const account = accounts.find(item => item.id === selectedAccount)
 
@@ -66,6 +83,18 @@ export default function Accounts() {
   const unclearedBalance = registerBalances?.unclearedBalance ?? 0
   const activeAccounts = accounts.filter(item => !item.archived)
 
+  function updateAccounts(updater) {
+    const nextAccounts = updater(accounts)
+    setAccounts(nextAccounts)
+    saveAccountData(nextAccounts, transactions)
+  }
+
+  function updateTransactions(updater) {
+    const nextTransactions = updater(transactions)
+    setTransactions(nextTransactions)
+    saveAccountData(accounts, nextTransactions)
+  }
+
   function openRegister(id) {
     setSelectedAccount(id)
     setShowAddAccount(false)
@@ -73,13 +102,13 @@ export default function Accounts() {
   }
 
   function updateAccount(id, changes) {
-    setAccounts(current => current.map(item =>
+    updateAccounts(current => current.map(item =>
       item.id === id ? { ...item, ...changes } : item
     ))
   }
 
   function reorderAccount(id, direction) {
-    setAccounts(current => {
+    updateAccounts(current => {
       const active = current.filter(item => !item.archived)
       const archived = current.filter(item => item.archived)
       const index = active.findIndex(item => item.id === id)
@@ -96,7 +125,7 @@ export default function Accounts() {
     const openingBalance = Number(newAccountOpeningBalance || 0)
     if (!newAccountName.trim() || !Number.isFinite(openingBalance)) return
 
-    setAccounts(current => [...current, {
+    updateAccounts(current => [...current, {
       id: nextAccountId.current++,
       name: newAccountName.trim(),
       type: newAccountType,
@@ -112,8 +141,11 @@ export default function Accounts() {
   }
 
   function deleteAccount(id) {
-    setAccounts(current => current.filter(item => item.id !== id))
-    setTransactions(current => current.filter(item => item.accountId !== id))
+    const nextAccounts = accounts.filter(item => item.id !== id)
+    const nextTransactions = transactions.filter(item => item.accountId !== id)
+    setAccounts(nextAccounts)
+    setTransactions(nextTransactions)
+    saveAccountData(nextAccounts, nextTransactions)
   }
 
   function updateTransactionSort(sort) {
@@ -122,7 +154,7 @@ export default function Accounts() {
   }
 
   function toggleCleared(id) {
-    setTransactions(current => current.map(item =>
+    updateTransactions(current => current.map(item =>
       item.id === id ? { ...item, cleared: !item.cleared } : item
     ))
   }
@@ -132,7 +164,7 @@ export default function Accounts() {
     const transaction = transactions.find(item => item.id === id)
     if (!transaction || transaction.date === date) return
     const sequence = nextTransactionSequence.current++
-    setTransactions(current => moveTransactionToDate(current, id, date, sequence))
+    updateTransactions(current => moveTransactionToDate(current, id, date, sequence))
   }
 
   function addTransaction(event) {
@@ -141,7 +173,7 @@ export default function Accounts() {
     const amount = Number(newAmount)
     if (!newName.trim() || !newDate || !Number.isFinite(amount) || amount === 0) return
 
-    setTransactions(current => [...current, {
+    updateTransactions(current => [...current, {
       id: nextTransactionId.current++,
       sequence: nextTransactionSequence.current++,
       accountId: selectedAccount,
@@ -506,7 +538,7 @@ export default function Accounts() {
   }
 
   return (
-    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 210 }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -629,11 +661,6 @@ export default function Accounts() {
             <option value="asc">Oldest First ↑</option>
           </select>
         </div>
-        <p style={{ fontSize: 13, color: '#79502A' }}>
-          Tap the checkmark to clear a transaction.
-          Change dates directly without opening Edit.
-        </p>
-
         {rows.map(item => (
           <div
             key={item.id}
@@ -742,10 +769,6 @@ export default function Accounts() {
         ))}
       </section>
 
-      <p style={{ textAlign: 'center', fontSize: 12 }}>
-        Demo data only. Changes are not saved after a refresh.
-      </p>
-
       <button
         type="button"
         aria-label="Add transaction"
@@ -754,7 +777,7 @@ export default function Accounts() {
         style={{
           position: 'fixed',
           right: 'max(20px, calc((100vw - 460px) / 2))',
-          bottom: 'calc(24px + env(safe-area-inset-bottom))',
+          bottom: 'calc(100px + env(safe-area-inset-bottom))',
           zIndex: 20,
           width: 58,
           height: 58,
