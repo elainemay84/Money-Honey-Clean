@@ -96,9 +96,9 @@ function isOccurrenceCompleted(flow, occurrence) {
 
 const card = {
   background: '#FFFFFF',
-  padding: 18,
-  borderRadius: 20,
-  marginBottom: 16,
+  padding: 16,
+  borderRadius: 16,
+  marginBottom: 12,
   boxShadow: '0 3px 14px #76552212'
 }
 
@@ -875,7 +875,7 @@ export default function Bills() {
         </section>
       )}
 
-      <section style={{ ...card, padding: view === 'list' ? 14 : card.padding }}>
+      <section style={{ ...card, padding: view === 'list' ? '10px 12px' : 14 }}>
         {view === 'list' && (
           <label style={{
             display: 'flex',
@@ -977,7 +977,7 @@ export default function Bills() {
                 </button>
               ) : <span key={cell.key} />)}
             </div>
-            <section aria-live="polite" style={{ marginTop: 12 }}>
+            <section aria-live="polite" style={{ marginTop: 8 }}>
               <h2 style={{ margin: '0 0 4px', fontSize: 13, color: '#79502A' }}>
                 Entries · {formatDueDate(selectedDay)}
               </h2>
@@ -1008,9 +1008,9 @@ export default function Bills() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 8,
-                  margin: '0 -4px 2px',
-                  padding: '5px 8px',
-                  borderRadius: 9,
+                  margin: '0 -2px 1px',
+                  padding: '3px 6px',
+                  borderRadius: 6,
                   background: '#F5D6A5',
                   color: '#79502A'
                 }}>
@@ -1032,7 +1032,7 @@ export default function Bills() {
               </p>
             )}
             {inactiveSchedules.length > 0 && (
-              <section aria-label="Inactive schedules" style={{ marginTop: 16 }}>
+              <section aria-label="Inactive schedules" style={{ marginTop: 12 }}>
                 <h2 style={{ margin: '0 0 4px', color: '#79502A', fontSize: 13 }}>
                   Inactive schedules
                 </h2>
@@ -1569,7 +1569,7 @@ function renderOccurrenceRow(
         alignItems: 'center',
         width: '100%',
         minWidth: 0,
-        padding: '4px 0',
+        padding: '3px 0',
         borderBottom: '1px solid #EEE5D9',
         background: 'transparent',
         color: '#493320',
@@ -1585,11 +1585,11 @@ function renderOccurrenceRow(
           {formatDueDate(occurrence.dueDate)}
         </span>
       </span>
-      <div style={{ minWidth: 76, display: 'grid', justifyItems: 'end', gap: 2 }}>
+      <div style={{ minWidth: 76, display: 'grid', justifyItems: 'end', gap: 1 }}>
         <strong style={{
           color: isIncome ? '#21834B' : '#493320',
-          fontSize: 14,
-          lineHeight: 1.2,
+          fontSize: 13,
+          lineHeight: 1.1,
           fontVariantNumeric: 'tabular-nums'
         }}>
           {money(occurrence.amount)}
@@ -1606,8 +1606,8 @@ function renderOccurrenceRow(
           style={{
             border: 'none',
             borderRadius: 9,
-            minHeight: 28,
-            padding: '4px 9px',
+            minHeight: 24,
+            padding: '2px 8px',
             background: isRecorded ? '#D8EFDF' : '#F1EEE9',
             color: isRecorded ? '#21834B' : '#625B53',
             fontSize: 11,

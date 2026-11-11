@@ -295,9 +295,9 @@ export default function Accounts() {
 
   const card = {
     background: '#FFFFFF',
-    padding: 20,
-    borderRadius: 20,
-    marginBottom: 18,
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 12,
     boxShadow: '0 3px 14px #76552212'
   }
 
@@ -740,13 +740,13 @@ export default function Accounts() {
         </div>
       </section>
 
-      <section style={{ ...card, padding: '14px 16px' }}>
+      <section style={{ ...card, padding: '10px 12px' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 8,
-          marginBottom: 5
+          marginBottom: 4
         }}>
           <h2 style={{ margin: 0 }}>Transactions</h2>
           <select
@@ -787,7 +787,7 @@ export default function Accounts() {
               gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
               alignItems: 'center',
               columnGap: 6,
-              padding: '3px 0',
+              padding: '2px 0',
               borderBottom: '1px solid #EEE5D9',
               cursor: 'pointer'
             }}
@@ -830,7 +830,8 @@ export default function Accounts() {
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
                 textAlign: 'left',
-                lineHeight: 1.2
+                fontSize: 14,
+                lineHeight: 1.1
               }}>
                 {item.name}
               </strong>
@@ -846,13 +847,14 @@ export default function Accounts() {
                   boxSizing: 'border-box',
                   width: 120,
                   maxWidth: '100%',
-                  height: 17,
+                  height: 16,
                   marginTop: 0,
                   padding: 0,
                   border: 'none',
                   borderRadius: 0,
                   background: 'transparent',
                   fontSize: 11,
+                  lineHeight: 1.1,
                   color: '#79502A',
                   textAlign: 'left'
                 }}
@@ -871,7 +873,7 @@ export default function Accounts() {
                 color: item.amount < 0 ? '#9B463E' : '#21834B',
                 textAlign: 'right',
                 whiteSpace: 'nowrap',
-                lineHeight: 1.2
+                lineHeight: 1.1
               }}>
                 {money(item.amount)}
               </strong>
@@ -882,7 +884,7 @@ export default function Accounts() {
                 color: '#79502A',
                 textAlign: 'right',
                 whiteSpace: 'nowrap',
-                lineHeight: 1.2
+                lineHeight: 1.1
               }}>
                 {money(item.runningBalance)}
               </span>
