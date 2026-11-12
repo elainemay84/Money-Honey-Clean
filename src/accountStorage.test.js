@@ -112,6 +112,7 @@ test('receiving income creates one positive linked transaction and reload keeps 
   const occurrence = getIncomeOccurrences([income], new Date(Date.UTC(2026, 3, 1)), reloaded.transactions)[0]
 
   assert.equal(created.transaction.amount, 1200)
+  assert.equal(created.transaction.category, 'Other Income')
   assert.equal(created.transaction.date, '2026-04-11')
   assert.equal(created.transaction.cleared, false)
   assert.equal(occurrence.status, 'received')
@@ -222,7 +223,7 @@ test('clearing and unclearing a transaction immediately controls its linked occu
   let summary = getPaydayBillSummary([bill], period, data.transactions)
   assert.equal(occurrence.paid, true)
   assert.equal(occurrence.cleared, false)
-  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 80])
+  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 0])
 
   setOccurrenceTransactionCleared(transaction.id, true, storage)
   data = loadSavedAccountData(storage)
@@ -237,7 +238,7 @@ test('clearing and unclearing a transaction immediately controls its linked occu
   summary = getPaydayBillSummary([bill], period, data.transactions)
   assert.equal(occurrence.paid, true)
   assert.equal(occurrence.cleared, false)
-  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 80])
+  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 0])
 })
 
 test('an existing matching transaction requires explicit linking and cannot be linked to two occurrences', () => {
@@ -390,7 +391,7 @@ test('separate recurring occurrences on the same schedule link to different tran
   }, {
     totalDue: 100,
     cleared: 25,
-    remaining: 75,
+    remaining: 50,
     clearedCount: 1,
     totalCount: 4
   })

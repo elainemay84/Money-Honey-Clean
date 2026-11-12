@@ -4,20 +4,35 @@ import Accounts from './Accounts'
 import Debt from './Debt'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import Bills from './Bills'
+import Settings from './Settings'
+import Budgets from './Budgets'
+import Themes from './Themes'
 import {
   createDemoBills,
   getTodayDate,
   getPaydayBillSummary,
-  getPaydayIncomeSummary,
   getPaySchedulePeriod,
   loadBills,
   loadIncomeSchedules,
   loadPaySchedule,
   savePaySchedule
 } from './billData.js'
-import { loadAccountData, loadSavedAccountData } from './accountStorage.js'
+import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { loadDebts } from './debtData.js'
+import { calculatePaycheckForecast } from './paycheckForecast.js'
+import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budgetData.js'
+import { getCategories, loadCategoryConfig } from './categoryData.js'
+import { calculateDailySpending } from './dailySpending.js'
+import { loadAppearanceSize, saveAppearanceSize } from './appearanceData.js'
+import { FONT_STYLES, getThemeStyle, LINE_SPACING, loadThemeSettings, saveThemeSettings } from './themeData.js'
 
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const formatForecastDate = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC'
+})
 
 function App() {
   const [today] = useState(getTodayDate)
@@ -27,14 +42,81 @@ function App() {
   const [accountData, setAccountData] = useState(() =>
     loadAccountData(startingAccounts, startingTransactions)
   )
+  const [debts, setDebts] = useState(() => loadDebts())
+  const [isForecastOpen, setIsForecastOpen] = useState(false)
+  const [isDailyAllowanceOpen, setIsDailyAllowanceOpen] = useState(false)
   const [isEditingPaySchedule, setIsEditingPaySchedule] = useState(false)
   const [payFrequency, setPayFrequency] = useState(paySchedule?.frequency ?? 'biweekly')
   const [nextPayday, setNextPayday] = useState(paySchedule?.nextPayday ?? today)
   const [activePage, setActivePage] = useState('Home')
+  const [budgetSettings, setBudgetSettings] = useState(() => loadBudgetSettings())
+  const [, setBudgetRevision] = useState(0)
+  const [settingsView, setSettingsView] = useState('menu')
+  const [appearanceSize, setAppearanceSize] = useState(() => loadAppearanceSize())
+  const [themeSettings, setThemeSettings] = useState(() => loadThemeSettings())
+  const [themePreview, setThemePreview] = useState(null)
+  const activeTheme = themePreview ?? themeSettings
+  const themeStyle = getThemeStyle(activeTheme.themeId)
   const paydayPeriod = getPaySchedulePeriod(paySchedule, today)
   const transactions = accountData?.transactions ?? []
-  const paydaySummary = getPaydayBillSummary(bills, paydayPeriod, transactions)
-  const paydayIncome = getPaydayIncomeSummary(incomeSchedules, paydayPeriod, transactions)
+  const paycheckForecast = calculatePaycheckForecast({
+    accounts: accountData?.accounts ?? [],
+    transactions,
+    bills,
+    incomes: incomeSchedules,
+    today
+  })
+  const hasPaycheckForecast = paycheckForecast.hasIncomeSchedule && paycheckForecast.nextPayday
+  const paydaySummary = getPaydayBillSummary(
+    bills,
+    hasPaycheckForecast
+      ? { startDate: paycheckForecast.startDate, endDate: paycheckForecast.endDate }
+      : paydayPeriod,
+    transactions
+  )
+  const activeDebts = debts.filter(debt => !debt.archived)
+  const totalStartingDebt = activeDebts.reduce((total, debt) => total + debt.startingBalance, 0)
+  const totalCurrentDebt = activeDebts.reduce((total, debt) => total + debt.currentBalance, 0)
+  const debtProgress = totalStartingDebt > 0
+    ? Math.round((1 - totalCurrentDebt / totalStartingDebt) * 100)
+    : 0
+  const categoryConfig = loadCategoryConfig()
+  const budgetCategories = getCategories(
+    categoryConfig.customCategories,
+    'expense',
+    categoryConfig.builtInNames,
+    categoryConfig.disabledBuiltIns
+  )
+  const budgetSnapshot = calculateBudgetSnapshot({
+    transactions,
+    today,
+    categories: budgetCategories,
+    mode: budgetSettings.mode,
+    budgets: loadBudgets(budgetSettings.mode)
+  })
+  const rollingForecastEnd = new Date(`${today}T00:00:00Z`)
+  rollingForecastEnd.setUTCDate(rollingForecastEnd.getUTCDate() + 29)
+  const rollingCashFlowForecast = calculatePaycheckForecast({
+    accounts: accountData?.accounts ?? [],
+    transactions,
+    bills,
+    incomes: incomeSchedules,
+    today,
+    forecastEndDate: rollingForecastEnd.toISOString().slice(0, 10)
+  })
+  const dailySpending = calculateDailySpending({
+    transactions,
+    today,
+    forecast: rollingCashFlowForecast,
+    categories: budgetCategories,
+    budgets: loadBudgets(budgetSettings.mode)
+  })
+  const dailyValue = value => value == null ? 'Not enough information' : money(value)
+  const remainingDailyValue = dailySpending.remainingToday == null
+    ? 'Not enough information'
+    : dailySpending.remainingToday < 0
+      ? `${money(Math.abs(dailySpending.remainingToday))} over`
+      : money(dailySpending.remainingToday)
 
   useEffect(() => {
     const refreshData = () => {
@@ -48,6 +130,35 @@ function App() {
       window.removeEventListener('storage', refreshData)
     }
   }, [])
+
+  useEffect(() => {
+    const refreshDebts = () => setDebts(loadDebts())
+    window.addEventListener('money-honey-debts-updated', refreshDebts)
+    window.addEventListener('storage', refreshDebts)
+    return () => {
+      window.removeEventListener('money-honey-debts-updated', refreshDebts)
+      window.removeEventListener('storage', refreshDebts)
+    }
+  }, [])
+
+  useEffect(() => {
+    const refreshBudgets = () => setBudgetRevision(value => value + 1)
+    const refreshBudgetSettings = () => setBudgetSettings(loadBudgetSettings())
+    window.addEventListener('money-honey-budgets-updated', refreshBudgets)
+    window.addEventListener('money-honey-budget-settings-updated', refreshBudgetSettings)
+    window.addEventListener('storage', refreshBudgetSettings)
+    return () => {
+      window.removeEventListener('money-honey-budgets-updated', refreshBudgets)
+      window.removeEventListener('money-honey-budget-settings-updated', refreshBudgetSettings)
+      window.removeEventListener('storage', refreshBudgetSettings)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activePage !== 'Home') return
+    setIsForecastOpen(false)
+    setIsEditingPaySchedule(false)
+  }, [activePage])
 
   useEffect(() => {
     const refreshAccountData = () => setAccountData(loadSavedAccountData())
@@ -68,18 +179,80 @@ function App() {
     setIsEditingPaySchedule(false)
   }
 
+  function updateSettingsTransactions(nextTransactions) {
+    setAccountData(current => ({ ...current, transactions: nextTransactions }))
+    saveAccountData(accountData.accounts, nextTransactions)
+  }
+
+  const settingsMenuItems = [
+    {
+      key: 'themes',
+      icon: '◉',
+      title: 'Themes & Fonts',
+      description: 'Change colors, background, accent, and font.'
+    },
+    {
+      key: 'categories',
+      icon: '☷',
+      title: 'Categories & Payees',
+      description: 'Edit categories, stores, and payees.'
+    },
+    {
+      key: 'backup',
+      icon: '☁',
+      title: 'Backup & Transfer',
+      description: 'Export, import, or move your data from another file.'
+    },
+    {
+      key: 'security',
+      icon: '↻',
+      title: 'Security & PIN',
+      description: 'Protect your account with a reset PIN.'
+    },
+    {
+      key: 'reset',
+      icon: '↶',
+      title: 'Reset App Data',
+      description: 'Clear app data while preserving your account records.'
+    },
+    {
+      key: 'delete',
+      icon: '♙',
+      title: 'Delete Profile',
+      description: 'Permanently delete your profile and associated data.'
+    }
+  ]
+
   return (
-    <div style={{
+    <div
+      className={`app-shell appearance-${appearanceSize} theme-${activeTheme.themeId} theme-typography theme-customized`}
+      style={{
       minHeight: '100vh',
-      background: '#FFF8ED',
-      color: '#493320',
+      background: activeTheme.colors.background,
+      color: activeTheme.colors.text,
       fontFamily: 'Arial, sans-serif',
+      '--theme-background': activeTheme.colors.background,
+      '--theme-card': activeTheme.colors.card,
+      '--theme-accent': activeTheme.colors.accent,
+      '--theme-text': activeTheme.colors.text,
+      '--theme-border': `${activeTheme.colors.accent}66`,
+      '--theme-heading-font': FONT_STYLES[activeTheme.headingFont].family,
+      '--theme-body-font': FONT_STYLES[activeTheme.bodyFont].family,
+      '--theme-line-spacing': LINE_SPACING[activeTheme.lineSpacing ?? 'normal'],
+      '--theme-radius': themeStyle.radius,
+      '--theme-shadow': themeStyle.shadow,
+      '--theme-pattern': themeStyle.pattern,
+      '--theme-pattern-size': themeStyle.patternSize,
+      '--theme-nav': themeStyle.nav,
+      '--theme-button-text': themeStyle.buttonText,
       padding: '24px 24px calc(112px + env(safe-area-inset-bottom))'
-    }}>
+    }}
+    >
       
 {activePage === 'Home' ? (
       <main style={{ maxWidth: 460, margin: 'auto' }}>
         <h1 style={{
+          margin: '0 0 6px',
           color: '#B87522',
           fontFamily: 'Georgia, serif',
           fontStyle: 'italic',
@@ -88,123 +261,143 @@ function App() {
           Money, Honey 🍯
         </h1>
 
-        <p>Good morning! Here's your financial snapshot.</p>
+        <p style={{ margin: '0 0 14px', textAlign: 'center', color: '#79502A', fontSize: 13 }}>
+          Your financial snapshot
+        </p>
 
         <section style={{
           background: '#F5D6A5',
-          padding: 24,
-          borderRadius: 20,
-          marginBottom: 18
+          padding: '16px 18px',
+          borderRadius: 16,
+          marginBottom: 12
         }}>
-          <p>LEFT UNTIL PAYDAY</p>
-          <h2 style={{ fontSize: 38, margin: '8px 0' }}>
-            $1,284
+          <p style={{ margin: 0, color: '#79502A', fontSize: 11, fontWeight: 'bold', letterSpacing: 0.5 }}>
+            LEFT UNTIL PAYDAY
+          </p>
+          <h2 style={{ fontSize: 32, lineHeight: 1.1, margin: '5px 0 3px', color: '#493320' }}>
+            {hasPaycheckForecast
+              ? money(paycheckForecast.projectedRemainingFunds)
+              : 'Set up income'}
           </h2>
-          <p>Example paycheck plan</p>
+          <p style={{ margin: 0, color: '#79502A', fontSize: 12 }}>
+            {hasPaycheckForecast
+              ? `Next payday · ${formatForecastDate(paycheckForecast.nextPayday)}`
+              : 'Set up income to see your forecast'}
+          </p>
+          <details
+            open={isForecastOpen}
+            onToggle={event => setIsForecastOpen(event.currentTarget.open)}
+            style={{ marginTop: 12, color: '#79502A', fontSize: 12 }}
+          >
+            <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>
+              Paycheck-to-Paycheck Forecast
+            </summary>
+            {hasPaycheckForecast ? (
+              <div style={{ display: 'grid', gap: 6, marginTop: 9 }}>
+                {[
+                  ['Available Funds', money(paycheckForecast.availableFunds)],
+                  ['Upcoming Income', money(paycheckForecast.upcomingIncome)],
+                  ['Scheduled Bills', money(paycheckForecast.scheduledBills)],
+                  ['Projected Remaining Funds', money(paycheckForecast.projectedRemainingFunds)]
+                ].map(([label, value]) => (
+                  <div key={label} style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                    paddingBottom: 5,
+                    borderBottom: '1px solid #D8B87F'
+                  }}>
+                    <span>{label}</span>
+                    <strong style={{ color: '#493320', whiteSpace: 'nowrap' }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ margin: '9px 0 0' }}>Set up income to see your forecast</p>
+            )}
+          </details>
         </section>
 
         <section style={{
           background: '#FFFFFF',
-          padding: 20,
-          borderRadius: 20,
-          marginBottom: 18
+          padding: '14px 16px',
+          borderRadius: 16,
+          marginBottom: 12
         }}>
           <div style={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             gap: 8,
-            marginBottom: 16
+            marginBottom: 10
           }}>
-            <h2 style={{ margin: 0 }}>Bills Before Payday</h2>
-            {paySchedule && !isEditingPaySchedule && (
-              <button
-                type="button"
-                onClick={() => setIsEditingPaySchedule(true)}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: '#B87522',
-                  fontSize: 12,
-                  cursor: 'pointer'
-                }}
-              >
-                Edit schedule
-              </button>
-            )}
+            <h2 style={{ margin: 0, fontSize: 18 }}>Bills Before Payday</h2>
+            <button
+              type="button"
+              onClick={() => setIsEditingPaySchedule(value => !value)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: '#B87522',
+                fontSize: 11,
+                cursor: 'pointer',
+                padding: 4
+              }}
+            >
+              {isEditingPaySchedule ? 'Close settings' : 'Payday settings'}
+            </button>
           </div>
 
-          {!paySchedule || isEditingPaySchedule ? (
-            <div>
-              <p style={{ margin: '0 0 12px', color: '#79502A', fontSize: 13 }}>
-                {paySchedule
-                  ? 'Update your payday schedule to calculate this period’s bill summary.'
-                  : 'Set up your payday schedule to see bills due during your current pay period.'}
-              </p>
-              <form onSubmit={savePaydaySchedule} style={{ display: 'grid', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 5, color: '#79502A', fontSize: 12 }}>
+          {isEditingPaySchedule ? (
+            <form onSubmit={savePaydaySchedule} style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 11 }}>
                   Pay frequency
                   <select
                     value={payFrequency}
                     onChange={event => setPayFrequency(event.target.value)}
-                    style={{ padding: 9, border: '1px solid #E9D6B7', borderRadius: 10, background: '#FFFFFF' }}
+                    style={{ padding: 7, border: '1px solid #E9D6B7', borderRadius: 8, background: '#FFFFFF' }}
                   >
                     <option value="weekly">Weekly</option>
                     <option value="biweekly">Every two weeks</option>
                     <option value="monthly">Monthly</option>
                   </select>
                 </label>
-                <label style={{ display: 'grid', gap: 5, color: '#79502A', fontSize: 12 }}>
+                <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 11 }}>
                   Next payday
                   <input
                     type="date"
                     value={nextPayday}
                     onChange={event => setNextPayday(event.target.value)}
                     required
-                    style={{ padding: 9, border: '1px solid #E9D6B7', borderRadius: 10, background: '#FFFFFF' }}
+                    style={{ padding: 7, border: '1px solid #E9D6B7', borderRadius: 8, background: '#FFFFFF' }}
                   />
                 </label>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  {paySchedule && (
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingPaySchedule(false)}
-                      style={{
-                        border: '1px solid #E9D6B7',
-                        borderRadius: 10,
-                        padding: '8px 12px',
-                        background: '#FFFFFF',
-                        color: '#79502A',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    style={{
-                      border: 'none',
-                      borderRadius: 10,
-                      padding: '8px 12px',
-                      background: '#B87522',
-                      color: '#FFFFFF',
-                      fontWeight: 'bold',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Save schedule
-                  </button>
-                </div>
-              </form>
-            </div>
+              </div>
+              <button
+                type="submit"
+                style={{
+                  justifySelf: 'end',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '7px 10px',
+                  background: '#B87522',
+                  color: '#FFFFFF',
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Save schedule
+              </button>
+            </form>
           ) : paydaySummary ? (
             <>
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
                 gap: 8,
-                marginBottom: 14
+                marginBottom: 10
               }}>
                 {[
                   ['TOTAL DUE', paydaySummary.totalDue, '#B87522'],
@@ -217,7 +410,7 @@ function App() {
                     </div>
                     <strong style={{
                       display: 'block',
-                      marginTop: 5,
+                      marginTop: 3,
                       color,
                       fontSize: 15,
                       whiteSpace: 'nowrap',
@@ -246,13 +439,13 @@ function App() {
                   transition: 'width 160ms ease'
                 }} />
               </div>
-              <p style={{ margin: '7px 0 0', color: '#79502A', fontSize: 12 }}>
+              <p style={{ margin: '6px 0 0', color: '#79502A', fontSize: 11 }}>
                 {paydaySummary.clearedCount} of {paydaySummary.totalCount} bills cleared
               </p>
-              {paydayIncome && paydayIncome.totalCount > 0 && (
+              {hasPaycheckForecast && paycheckForecast.nextPaydayIncome > 0 && (
                 <div style={{
-                  marginTop: 14,
-                  paddingTop: 12,
+                  marginTop: 10,
+                  paddingTop: 9,
                   borderTop: '1px solid #EEE5D9',
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -260,42 +453,250 @@ function App() {
                   color: '#79502A',
                   fontSize: 12
                 }}>
-                  <span>Income this pay period <small>(received {money(paydayIncome.received)} of {money(paydayIncome.totalExpected)})</small></span>
+                  <span>Income expected · {formatForecastDate(paycheckForecast.nextPayday)}</span>
                   <strong style={{ color: '#21834B', whiteSpace: 'nowrap' }}>
-                    {money(paydayIncome.stillExpected)} expected
+                    {money(paycheckForecast.nextPaydayIncome)}
                   </strong>
                 </div>
               )}
             </>
           ) : (
-            <p style={{ margin: 0, color: '#79502A', fontSize: 13 }}>
-              Your payday schedule is invalid. Edit it to refresh this summary.
+            <p style={{ margin: 0, color: '#79502A', fontSize: 12 }}>
+              Set up a payday schedule to see this summary.
             </p>
           )}
         </section>
 
-        <section style={{
+        <button
+          type="button"
+          aria-label="Open daily spending allowance explanation"
+          onClick={() => setIsDailyAllowanceOpen(true)}
+          style={{
+            display: 'block',
+            width: '100%',
+            border: 'none',
           background: '#FFFFFF',
-          padding: 20,
-          borderRadius: 20,
-          marginBottom: 18
-        }}>
-          <h2>Everyday Spending</h2>
-          <p>Groceries: $420</p>
-          <p>Gas: $160</p>
-        </section>
+          padding: '14px 16px',
+          borderRadius: 16,
+            marginBottom: 12,
+            color: '#493320',
+            textAlign: 'left',
+            cursor: 'pointer',
+            transition: 'box-shadow 120ms ease, transform 120ms ease'
+          }}
+          onMouseDown={event => {
+            event.currentTarget.style.transform = 'scale(0.995)'
+            event.currentTarget.style.boxShadow = '0 2px 8px rgba(73, 51, 32, 0.12)'
+          }}
+          onMouseUp={event => {
+            event.currentTarget.style.transform = ''
+            event.currentTarget.style.boxShadow = ''
+          }}
+          onMouseLeave={event => {
+            event.currentTarget.style.transform = ''
+            event.currentTarget.style.boxShadow = ''
+          }}
+        >
+          <h2 style={{ margin: '0 0 10px', fontSize: 18 }}>Daily Spending</h2>
+          <div style={{ display: 'grid', gap: 7 }}>
+            {[
+              ['Average daily spending', dailyValue(dailySpending.averageDailySpending)],
+              ['Today’s spending', money(dailySpending.todaySpending)],
+              ['Available to spend today', remainingDailyValue]
+            ].map(([label, value]) => {
+              const row = {
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 10,
+                color: '#79502A',
+                fontSize: 12
+              }
+              return (
+                <div key={label} style={row}>
+                  <span>{label}</span>
+                  <strong style={{
+                    color: label === 'Available to spend today' && dailySpending.remainingToday < 0
+                      ? '#9B463E'
+                      : '#493320',
+                    whiteSpace: 'nowrap'
+                  }}>{value}</strong>
+                </div>
+              )
+            })}
+          </div>
+        </button>
+
+        {isDailyAllowanceOpen && (
+          <div
+            role="presentation"
+            onClick={() => setIsDailyAllowanceOpen(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 20,
+              background: 'rgba(73, 51, 32, 0.28)',
+              display: 'flex',
+              alignItems: 'flex-end'
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="daily-allowance-title"
+              onClick={event => event.stopPropagation()}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '16px 18px 20px',
+                borderRadius: '18px 18px 0 0',
+                background: '#FFF9EF',
+                color: '#493320',
+                boxShadow: '0 -6px 24px rgba(73, 51, 32, 0.18)'
+              }}
+            >
+              <h2 id="daily-allowance-title" style={{ margin: '0 0 10px', fontSize: 18 }}>
+                Your Daily Allowance
+              </h2>
+              <div style={{
+                marginBottom: 10,
+                padding: '13px 15px',
+                borderRadius: 12,
+                background: '#F6D58A',
+                color: '#493320',
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 'bold' }}>Available to spend today</div>
+                <strong style={{ display: 'block', marginTop: 4, fontSize: 28 }}>
+                  {remainingDailyValue}
+                </strong>
+              </div>
+              <div style={{ display: 'grid', gap: 6, color: '#79502A', fontSize: 12 }}>
+                {[
+                  ['Available funds', dailySpending.explanation.currentAvailableFunds],
+                  ['Expected income over the next 30 days', dailySpending.explanation.expectedIncome],
+                  ['Upcoming bills and debt payments', dailySpending.explanation.upcomingBills],
+                  ['Protected funds', dailySpending.explanation.protectedFunds]
+                ].map(([label, amount]) => amount == null ? null : (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>{label}</span>
+                    <strong style={{ color: '#493320', whiteSpace: 'nowrap' }}>{money(amount)}</strong>
+                  </div>
+                ))}
+              </div>
+              <p style={{ margin: '11px 0', color: '#79502A', fontSize: 12 }}>
+                {dailySpending.explanation.limitingConstraint}
+              </p>
+              <p style={{ margin: '-4px 0 0', color: '#9A7652', fontSize: 11 }}>
+                Protected funds are reserved by the forecast, not a separate bank account.
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsDailyAllowanceOpen(false)}
+                style={{
+                  width: '100%',
+                  marginTop: 13,
+                  padding: '9px 12px',
+                  border: 'none',
+                  borderRadius: 9,
+                  background: '#B87522',
+                  color: '#FFFFFF',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+            </section>
+          </div>
+        )}
 
         <section style={{
           background: '#FFFFFF',
-          padding: 20,
-          borderRadius: 20
+          padding: '14px 16px',
+          borderRadius: 16,
+          marginBottom: 12
         }}>
-          <h2>Debt Journey</h2>
-          <progress value="68" max="100" style={{ width: '100%' }} />
-          <p>68% complete</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Budget Snapshot</h2>
+            <button
+              type="button"
+              onClick={() => setActivePage('Budgets')}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: '#B87522',
+                fontSize: 11,
+                cursor: 'pointer',
+                padding: 4
+              }}
+            >
+              View Budgets
+            </button>
+          </div>
+          {budgetSettings.mode === 'smart' && !budgetSnapshot.hasBudgets ? (
+            <p style={{ margin: '8px 0 0', color: '#79502A', fontSize: 12 }}>
+              Smart Budget is learning your spending.
+            </p>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gap: 5, marginTop: 8, color: '#79502A', fontSize: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span>{budgetSettings.mode === 'smart' ? 'Smart Budget' : 'Manual Budget'}</span>
+                  <strong style={{ color: '#493320' }}>
+                    {budgetSnapshot.hasBudgets ? money(budgetSnapshot.budgetTotal) : 'Not set'}
+                  </strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span>Spent this month</span>
+                  <strong style={{ color: '#493320' }}>{money(budgetSnapshot.actualSpending)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span>Remaining</span>
+                  <strong style={{ color: budgetSnapshot.actualSpending > budgetSnapshot.budgetTotal ? '#9B463E' : '#493320' }}>
+                    {budgetSnapshot.hasBudgets
+                      ? budgetSnapshot.actualSpending > budgetSnapshot.budgetTotal
+                        ? `${money(budgetSnapshot.actualSpending - budgetSnapshot.budgetTotal)} over budget`
+                        : money(budgetSnapshot.remaining)
+                      : 'Not set'}
+                  </strong>
+                </div>
+              </div>
+              {budgetSnapshot.hasBudgets && (
+                <div role="progressbar" aria-label="Budget snapshot spending progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={budgetSnapshot.progress} style={{
+                  height: 5, marginTop: 8, overflow: 'hidden', borderRadius: 999, background: '#F1EEE9'
+                }}>
+                  <div style={{ width: `${budgetSnapshot.progress}%`, height: '100%', borderRadius: 999, background: budgetSnapshot.progress >= 100 ? '#9B463E' : '#B87522' }} />
+                </div>
+              )}
+            </>
+          )}
         </section>
 
-        <p style={{ textAlign: 'center', marginTop: 24 }}>
+        <button
+          type="button"
+          onClick={() => setActivePage('Debt')}
+          style={{
+            display: 'block',
+            width: '100%',
+            border: 'none',
+            background: '#FFFFFF',
+            color: '#493320',
+            padding: '14px 16px',
+            borderRadius: 16,
+            textAlign: 'left',
+            cursor: 'pointer'
+          }}
+        >
+          <h2 style={{ margin: '0 0 10px', fontSize: 18 }}>Debt Journey</h2>
+          <progress value={debtProgress} max="100" style={{ width: '100%' }} />
+          <p style={{ margin: '7px 0 0', color: '#79502A', fontSize: 12 }}>
+            {activeDebts.length && totalStartingDebt > 0
+              ? `${debtProgress}% paid off`
+              : 'Set up a debt to track progress'}
+          </p>
+        </button>
+
+        <p style={{ textAlign: 'center', margin: '18px 0 0', color: '#79502A', fontSize: 12 }}>
           Made with a little buzz and a lot of honey. 🐝
         </p>
       </main>
@@ -307,6 +708,254 @@ function App() {
   <Bills />
 ) : activePage === 'Debt' ? (
   <Debt />
+) : activePage === 'Settings' ? (
+  settingsView === 'categories' ? (
+    <Settings
+      transactions={transactions}
+      onTransactionsChange={updateSettingsTransactions}
+      onBack={() => {
+        setSettingsView('menu')
+        setActivePage('More')
+      }}
+    />
+  ) : settingsView === 'themes' ? (
+    <Themes
+      settings={themePreview ?? themeSettings}
+      onPreview={setThemePreview}
+      onSave={settings => {
+        const saved = saveThemeSettings(settings)
+        setThemeSettings(saved)
+        setThemePreview(null)
+        setSettingsView('menu')
+      }}
+      onBack={() => {
+        setThemePreview(null)
+        setSettingsView('menu')
+      }}
+    />
+  ) : settingsView !== 'menu' ? (
+    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+      <button
+        type="button"
+        onClick={() => setSettingsView('menu')}
+        style={{
+          padding: '9px 11px',
+          border: '1px solid #E9D6B7',
+          borderRadius: 9,
+          background: '#FFFFFF',
+          color: '#79502A',
+          cursor: 'pointer'
+        }}
+      >
+        ‹ Settings
+      </button>
+      <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>
+        {settingsMenuItems.find(item => item.key === settingsView)?.title ?? 'Settings'}
+      </h1>
+      <section style={{
+        padding: 16,
+        border: '1px solid #E9D6B7',
+        borderRadius: 14,
+        background: '#FFFFFF',
+        color: '#79502A'
+      }}>
+        <strong style={{ color: '#493320' }}>Coming Soon</strong>
+        <p style={{ margin: '7px 0 0', fontSize: 13, lineHeight: 1.5 }}>
+          This Settings feature is planned but is not available yet.
+        </p>
+      </section>
+    </main>
+  ) : (
+    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+      <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>Settings</h1>
+      <section style={{
+        marginBottom: 12,
+        padding: 14,
+        border: '1px solid #E9D6B7',
+        borderRadius: 14,
+        background: '#FFFFFF',
+        color: '#493320'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span aria-hidden="true" style={{
+            display: 'grid',
+            placeItems: 'center',
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            background: '#EEF1DF',
+            color: '#493320',
+            fontSize: 20,
+            fontWeight: 'bold'
+          }}>T</span>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 17 }}>Appearance Size</h2>
+            <p style={{ margin: '2px 0 0', color: '#79502A', fontSize: 12 }}>
+              Make everything smaller or larger.
+            </p>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
+          {[
+            ['small', 'Small'],
+            ['medium', 'Medium'],
+            ['large', 'Large']
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={appearanceSize === value}
+              onClick={() => setAppearanceSize(saveAppearanceSize(value))}
+              style={{
+                minHeight: 44,
+                padding: '9px 8px',
+                border: `1px solid ${appearanceSize === value ? '#8FA06C' : '#E9D6B7'}`,
+                borderRadius: 999,
+                background: appearanceSize === value ? '#8FA06C' : '#FFFFFF',
+                color: appearanceSize === value ? '#1F291A' : '#79502A',
+                fontSize: 12,
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {settingsMenuItems.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setSettingsView(item.key)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              width: '100%',
+              padding: 14,
+              border: '1px solid #E9D6B7',
+              borderRadius: 14,
+              background: '#FFFFFF',
+              color: '#493320',
+              textAlign: 'left',
+              cursor: 'pointer'
+            }}
+          >
+            <span aria-hidden="true" style={{
+              display: 'grid',
+              placeItems: 'center',
+              flex: '0 0 34px',
+              width: 34,
+              height: 34,
+              borderRadius: 10,
+              background: '#EEF1DF',
+              color: '#493320',
+              fontSize: 20,
+              fontWeight: 'bold'
+            }}>
+              {item.icon}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <strong style={{ display: 'block', fontSize: 15 }}>{item.title}</strong>
+              <span style={{ display: 'block', marginTop: 3, color: '#79502A', fontSize: 12 }}>
+                {item.description}
+              </span>
+              {item.key !== 'categories' && (
+                <span style={{ display: 'inline-block', marginTop: 5, color: '#9A7652', fontSize: 10 }}>
+                  Coming Soon
+                </span>
+              )}
+            </span>
+            <span aria-hidden="true" style={{ color: '#B87522', fontSize: 20 }}>›</span>
+          </button>
+        ))}
+      </div>
+    </main>
+  )
+) : activePage === 'Budgets' ? (
+  <Budgets
+    transactions={transactions}
+    today={today}
+    onBack={() => setActivePage('More')}
+  />
+) : activePage === 'More' ? (
+  <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+    <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>More</h1>
+    <button
+      type="button"
+      onClick={() => {
+        setSettingsView('menu')
+        setActivePage('Settings')
+      }}
+      style={{
+        width: '100%',
+        padding: 16,
+        border: '1px solid #E9D6B7',
+        borderRadius: 14,
+        background: '#FFFFFF',
+        color: '#493320',
+        textAlign: 'left',
+        fontSize: 15,
+        cursor: 'pointer'
+      }}
+    >
+      Settings
+      <span style={{ float: 'right', color: '#B87522' }}>›</span>
+    </button>
+    <button
+      type="button"
+      onClick={() => setActivePage('Ask Honey')}
+      style={{
+        width: '100%',
+        marginTop: 10,
+        padding: 16,
+        border: '1px solid #E9D6B7',
+        borderRadius: 14,
+        background: '#FFFFFF',
+        color: '#493320',
+        textAlign: 'left',
+        fontSize: 15,
+        cursor: 'pointer'
+      }}
+    >
+      Ask Honey
+      <span style={{ float: 'right', color: '#B87522' }}>›</span>
+    </button>
+    <section style={{
+      marginTop: 10,
+      padding: 14,
+      border: '1px solid #E9D6B7',
+      borderRadius: 14,
+      background: '#FFF8ED',
+      color: '#79502A'
+    }}>
+      <h2 style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        margin: '0 0 8px',
+        color: '#493320',
+        fontSize: 15
+      }}>
+        <span aria-hidden="true" style={{ color: '#B87522' }}>ⓘ</span>
+        Financial Disclaimer
+      </h2>
+      <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5 }}>
+        Money Honey&apos;s financial forecasts, daily spending allowances, Smart Budgets, and automated suggestions are estimates based on the information you enter.
+      </p>
+      <p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.5 }}>
+        Actual balances, payments, and expenses may differ. Predictions may improve as you use the app and build a more complete financial history, but accuracy is never guaranteed.
+      </p>
+      <p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.5 }}>
+        Always verify important financial decisions against your bank accounts and actual bills.
+      </p>
+      <p style={{ margin: '10px 0 0', color: '#9A7652', fontSize: 10, lineHeight: 1.45 }}>
+        Money Honey does not automatically verify your bank balances or transactions.
+      </p>
+    </section>
+  </main>
 ) : (
   <main style={{
     maxWidth: 460,
@@ -350,12 +999,13 @@ function App() {
     ['🏠', 'Home'],
     ['💰', 'Accounts'],
     ['📅', 'Bills'],
+    ['📊', 'Budgets'],
     ['💳', 'Debt'],
-    ['🐝', 'Ask Honey'],
     ['⚙️', 'More']
   ].map(([symbol, label]) => (
 <div
   key={label}
+  className={activePage === label ? 'theme-nav-item-active' : 'theme-nav-item'}
   onClick={() => setActivePage(label)}
   style={{
       textAlign: 'center',

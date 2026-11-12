@@ -297,7 +297,59 @@ test('payday summary counts each recurring occurrence once and enforces Total Du
     clearedCount: 2,
     totalCount: 4
   })
-  assert.equal(summary.totalDue, summary.cleared + summary.remaining)
+  assert.equal(summary.totalDue, 94.7)
+})
+
+test('payday summary separates paid, cleared, unpaid, and skipped occurrences', () => {
+  const bills = [
+    bill({
+      id: 1,
+      amount: 80,
+      dueDate: '2026-04-10',
+      accountId: 1,
+      paymentHistory: [{ dueDate: '2026-04-10', paid: true }]
+    }),
+    bill({
+      id: 2,
+      amount: 10,
+      dueDate: '2026-04-11',
+      accountId: 1,
+      debtId: 9,
+      paymentHistory: [{ dueDate: '2026-04-11', skipped: true }]
+    }),
+    bill({ id: 3, amount: 25, dueDate: '2026-04-12', accountId: 1 })
+  ]
+  const transactions = [{
+    id: 1,
+    accountId: 1,
+    name: bills[0].name,
+    amount: -80,
+    date: '2026-04-10',
+    cleared: false,
+    linkedOccurrenceType: 'bill',
+    linkedOccurrenceId: 'bill:1:2026-04-10'
+  }]
+  const summary = getPaydayBillSummary(
+    bills,
+    { startDate: '2026-04-10', endDate: '2026-04-12' },
+    transactions
+  )
+
+  assert.deepEqual({
+    totalDue: summary.totalDue,
+    paid: summary.paid,
+    cleared: summary.cleared,
+    remaining: summary.remaining,
+    totalCount: summary.totalCount,
+    skippedCount: summary.skippedCount
+  }, {
+    totalDue: 105,
+    paid: 80,
+    cleared: 0,
+    remaining: 25,
+    totalCount: 2,
+    skippedCount: 1
+  })
 })
 
 test('pay schedule persists and an unconfigured schedule remains unset', () => {

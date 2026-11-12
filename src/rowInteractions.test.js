@@ -35,10 +35,11 @@ const vite = await createServer({
   appType: 'custom',
   logLevel: 'silent'
 })
-const [{ default: Bills }, { default: Accounts }, { default: Debt }] = await Promise.all([
+const [{ default: Bills }, { default: Accounts }, { default: Debt }, { default: App }] = await Promise.all([
   vite.ssrLoadModule('/src/Bills.jsx'),
   vite.ssrLoadModule('/src/Accounts.jsx'),
-  vite.ssrLoadModule('/src/Debt.jsx')
+  vite.ssrLoadModule('/src/Debt.jsx'),
+  vite.ssrLoadModule('/src/App.jsx')
 ])
 const roots = new Set()
 const rootContainers = new Map()
@@ -170,6 +171,31 @@ function button(container, label) {
 function readAccountData() {
   return JSON.parse(browser.localStorage.getItem('money-honey-account-data'))
 }
+
+test('More opens Settings and Categories & Payees has a back path', async () => {
+  const container = await render(App)
+  const more = container.querySelector('nav')?.lastElementChild
+  assert.ok(more)
+  await click(more)
+  assert.match(container.textContent, /More/)
+  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Settings')))
+  assert.match(container.textContent, /Categories & Payees/)
+  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Categories & Payees')))
+  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Settings')))
+  assert.match(container.textContent, /More/)
+})
+
+test('bottom navigation opens Budgets and keeps Ask Honey under More', async () => {
+  const container = await render(App)
+  const nav = container.querySelector('nav')
+  assert.equal(nav.children[3].textContent.includes('Budgets'), true)
+  await click(nav.children[3])
+  assert.match(container.textContent, /Budgets/)
+
+  await click(nav.lastElementChild)
+  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Ask Honey')))
+  assert.match(container.textContent, /Ask Honey/)
+})
 
 beforeEach(() => {
   seedData()

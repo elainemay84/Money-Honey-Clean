@@ -616,6 +616,7 @@ export function createDebtPayment(debtId, paymentId, details, storage = localSto
       amount: -total,
       date: details.date,
       cleared: false,
+      category: 'Debt Payments',
       linkedDebtId: debt.id,
       linkedDebtPaymentId: paymentId,
       transactionType: 'debt-payment'

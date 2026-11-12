@@ -10,6 +10,13 @@ import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { BILL_STORAGE_KEY, loadBillData, saveBillData } from './billData.js'
 import { loadDebts, reconcileDebtPaymentForTransaction, removeDebtPaymentForTransaction } from './debtData.js'
+import {
+  getCategories,
+  getDefaultCategoryForFlow,
+  loadCategoryConfig,
+  suggestTransactionCategory
+} from './categoryData.js'
+import { loadPayees } from './payeeData.js'
 
 const todayDate = new Date().toLocaleDateString('en-CA')
 
@@ -46,6 +53,13 @@ export default function Accounts() {
   const [newAmount, setNewAmount] = useState('')
   const [newDate, setNewDate] = useState(todayDate)
   const [kind, setKind] = useState('expense')
+  const [category, setCategory] = useState(getDefaultCategoryForFlow('out'))
+  const [categoryWasChosen, setCategoryWasChosen] = useState(false)
+  const [categoryConfig] = useState(() => loadCategoryConfig())
+  const customCategories = categoryConfig.customCategories
+  const builtInNames = categoryConfig.builtInNames
+  const disabledBuiltIns = categoryConfig.disabledBuiltIns
+  const [payees] = useState(() => loadPayees())
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false)
   const [editingTransactionId, setEditingTransactionId] = useState(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState(null)
@@ -177,8 +191,11 @@ export default function Accounts() {
     setNewAmount(String(Math.abs(transaction.amount)))
     setNewDate(transaction.date)
     setKind(transaction.amount < 0 ? 'expense' : 'income')
+    setCategory(transaction.category || getDefaultCategoryForFlow(transaction.amount < 0 ? 'out' : 'in'))
+    setCategoryWasChosen(true)
     setIsAddTransactionOpen(true)
   }
+
 
   function getTransactionAssociations(transaction) {
     const billData = localStorage.getItem(BILL_STORAGE_KEY) === null
@@ -270,7 +287,8 @@ export default function Accounts() {
             sequence,
             name: newName.trim(),
             amount: normalizeTransactionAmount(amount, kind),
-            date: newDate
+            date: newDate,
+            category: category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out')
           }
           : item
       ))
@@ -283,7 +301,8 @@ export default function Accounts() {
         name: newName.trim(),
         amount: normalizeTransactionAmount(amount, kind),
         date: newDate,
-        cleared: account.defaultCleared
+        cleared: account.defaultCleared,
+        category: category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out')
       }])
     }
 
@@ -428,6 +447,7 @@ export default function Accounts() {
             </form>
           </section>
         )}
+
 
         {activeAccounts.length === 0 && (
           <section style={card}>No active accounts. Add or restore an account to get started.</section>
@@ -904,6 +924,8 @@ export default function Accounts() {
           setNewAmount('')
           setNewDate(todayDate)
           setKind('expense')
+          setCategory(getDefaultCategoryForFlow('out'))
+          setCategoryWasChosen(false)
           setIsAddTransactionOpen(true)
         }}
         style={{
@@ -992,7 +1014,15 @@ export default function Accounts() {
               <select
                 aria-label="Transaction type"
                 value={kind}
-                onChange={event => setKind(event.target.value)}
+                onChange={event => {
+                  const nextKind = event.target.value
+                  setKind(nextKind)
+                  setCategory(
+                    suggestTransactionCategory(transactions, newName, nextKind, customCategories, builtInNames, disabledBuiltIns)
+                    || getDefaultCategoryForFlow(nextKind === 'income' ? 'in' : 'out')
+                  )
+                  setCategoryWasChosen(false)
+                }}
                 style={field}
               >
                 <option value="expense">Expense</option>
@@ -1001,10 +1031,23 @@ export default function Accounts() {
               <input
                 placeholder="Payee or description"
                 aria-label="Payee or description"
+                list="saved-payees"
                 value={newName}
-                onChange={event => setNewName(event.target.value)}
+                onChange={event => {
+                  const value = event.target.value
+                  setNewName(value)
+                  if (!categoryWasChosen) {
+                    setCategory(
+                      suggestTransactionCategory(transactions, value, kind, customCategories, builtInNames, disabledBuiltIns)
+                      || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out')
+                    )
+                  }
+                }}
                 style={field}
               />
+              <datalist id="saved-payees">
+                {payees.map(payee => <option key={payee} value={payee} />)}
+              </datalist>
               <input
                 type="number"
                 step="0.01"
@@ -1021,6 +1064,22 @@ export default function Accounts() {
                 onChange={event => setNewDate(event.target.value)}
                 style={field}
               />
+              <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 12 }}>
+                Category
+                <select
+                  aria-label="Transaction category"
+                  value={category}
+                  onChange={event => {
+                    setCategory(event.target.value)
+                    setCategoryWasChosen(true)
+                  }}
+                  style={field}
+                >
+                  {getCategories(customCategories, kind, builtInNames, disabledBuiltIns).map(item => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
                 <button
                   type="button"

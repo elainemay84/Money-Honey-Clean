@@ -1,3 +1,6 @@
+@import url('https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bree+Serif&family=Caveat:wght@400;600&family=Cormorant+Garamond:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&family=Dancing+Script:wght@500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Josefin+Sans:wght@500;600;700&family=Libre+Baskerville:wght@400;700&family=Montserrat:wght@500;600;700&family=Nunito:wght@400;600;700&family=Outfit:wght@400;500;600;700&family=Pacifico&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=Poppins:wght@400;500;600;700&family=Quicksand:wght@400;500;600;700&family=Sora:wght@400;500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Amatic+SC:wght@400;700&family=Berkshire+Swash&family=Great+Vibes&family=IM+Fell+English&family=Marcellus&family=Parisienne&family=Poiret+One&family=Rye&family=Shrikhand&display=swap');
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
@@ -64,6 +67,128 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+}
+
+.appearance-small {
+  zoom: 0.94;
+}
+
+.appearance-large {
+  zoom: 1.06;
+}
+
+.theme-typography {
+  font-family: var(--theme-body-font) !important;
+  line-height: var(--theme-line-spacing) !important;
+}
+
+.theme-typography h1,
+.theme-typography h2,
+.theme-typography h3 {
+  font-family: var(--theme-heading-font) !important;
+}
+
+.theme-customized {
+  background-image: var(--theme-pattern) !important;
+  background-size: var(--theme-pattern-size) !important;
+}
+
+.theme-typography h1,
+.theme-typography h2,
+.theme-typography h3 {
+  font-family: var(--theme-heading-font) !important;
+}
+
+.theme-customized h1,
+.theme-customized h2,
+.theme-customized h3 {
+  color: var(--theme-text) !important;
+}
+
+.theme-typography h1,
+.theme-typography h2,
+.theme-typography h3,
+.theme-typography p,
+.theme-typography span,
+.theme-typography strong,
+.theme-typography label,
+.theme-typography button,
+.theme-typography input,
+.theme-typography select {
+  line-height: var(--theme-line-spacing) !important;
+}
+
+.theme-customized h1,
+.theme-customized h2,
+.theme-customized h3,
+.theme-customized p,
+.theme-customized span,
+.theme-customized strong,
+.theme-customized label,
+.theme-customized button,
+.theme-customized input,
+.theme-customized select {
+  line-height: var(--theme-line-spacing) !important;
+}
+
+.theme-typography .theme-preview > strong {
+  font-family: var(--preview-heading-font) !important;
+}
+
+.theme-customized section {
+  background: var(--theme-card) !important;
+  border-color: var(--theme-border) !important;
+  border-radius: var(--theme-radius) !important;
+  box-shadow: var(--theme-shadow) !important;
+  color: var(--theme-text) !important;
+}
+
+.theme-customized section p,
+.theme-customized section label,
+.theme-customized section span,
+.theme-customized section strong {
+  color: var(--theme-text) !important;
+}
+
+.theme-customized section button:not(.theme-preview) {
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text) !important;
+}
+
+.theme-customized nav {
+  background: var(--theme-nav) !important;
+  border-color: var(--theme-border) !important;
+  box-shadow: var(--theme-shadow) !important;
+}
+
+.theme-customized nav > div {
+  border-radius: calc(var(--theme-radius) - 4px);
+  color: var(--theme-button-text) !important;
+}
+
+.theme-customized nav > .theme-nav-item-active {
+  background: var(--theme-accent) !important;
+  color: var(--theme-button-text) !important;
+  opacity: 1 !important;
+}
+
+.theme-customized input,
+.theme-customized select {
+  background: var(--theme-card) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text) !important;
+}
+
+.theme-customized .theme-preview {
+  background-color: var(--preview-background) !important;
+  background-image: var(--preview-pattern) !important;
+  background-size: var(--preview-pattern-size) !important;
+  color: var(--preview-text) !important;
+}
+
+.theme-customized .theme-preview > strong,
+.theme-customized .theme-preview > span:not(:first-child) {
+  color: var(--preview-text) !important;
 }
 
 h1,

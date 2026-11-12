@@ -1,5 +1,6 @@
 export const ACCOUNT_STORAGE_KEY = 'money-honey-account-data'
 export const ACCOUNT_STORAGE_VERSION = 1
+import { getDefaultCategoryForFlow } from './categoryData.js'
 
 function assertAccountData(data) {
   if (!data || !Array.isArray(data.accounts) || !Array.isArray(data.transactions)) {
@@ -126,6 +127,7 @@ export function createOccurrenceTransaction(flow, occurrence, actualDate, storag
     amount: flow === 'out' ? -Math.abs(occurrence.amount) : Math.abs(occurrence.amount),
     date: actualDate,
     cleared: false,
+    category: occurrence.category ?? getDefaultCategoryForFlow(flow),
     ...linkedFields
   }
   data.transactions.push(transaction)

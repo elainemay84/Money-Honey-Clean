@@ -1,4 +1,5 @@
 import { getLinkedOccurrenceTransaction } from './accountStorage.js'
+import { getDefaultCategoryForFlow } from './categoryData.js'
 
 export const BILL_STORAGE_KEY = 'money-honey-bills'
 export const BILL_STORAGE_VERSION = 1
@@ -35,16 +36,20 @@ function isIncomeOccurrenceReceived(occurrence) {
   )
 }
 
-function isBillOccurrenceCleared(bill) {
-  if (!Object.hasOwn(bill, 'linkedTransaction')) return Boolean(bill.cleared)
+export function isBillOccurrencePaid(bill) {
+  if (!Object.hasOwn(bill, 'linkedTransaction')) return Boolean(bill.paid)
   const transaction = bill.linkedTransaction
   return Boolean(
     transaction
-    && transaction.cleared
     && transaction.amount === -Math.abs(bill.amount)
     && transaction.accountId === bill.accountId
     && transaction.name === bill.name
   )
+}
+
+function isBillOccurrenceCleared(bill) {
+  if (!Object.hasOwn(bill, 'linkedTransaction')) return Boolean(bill.cleared)
+  return isBillOccurrencePaid(bill) && bill.linkedTransaction.cleared
 }
 
 export function getTodayDate() {
@@ -483,24 +488,41 @@ export function getPaydayBillSummary(bills, period, transactions = []) {
   if (!period) return null
   const occurrences = getBillOccurrencesInRange(bills, period.startDate, period.endDate, transactions)
   const summary = occurrences.reduce((totals, bill) => {
-    totals.totalCount += 1
-    if (isBillOccurrenceCleared(bill)) {
-      totals.clearedCents += Math.round(bill.amount * 100)
-      totals.clearedCount += 1
-    } else {
-      totals.remainingCents += Math.round(bill.amount * 100)
+    if (bill.skipped) {
+      totals.skippedCount += 1
+      return totals
     }
-    return totals
-  }, { clearedCents: 0, remainingCents: 0, clearedCount: 0, totalCount: 0 })
 
+    totals.totalCount += 1
+    const cents = Math.round(bill.amount * 100)
+    const paid = isBillOccurrencePaid(bill)
+    if (paid) totals.paidCents += cents
+    if (isBillOccurrenceCleared(bill)) {
+      totals.clearedCents += cents
+      totals.clearedCount += 1
+    }
+    if (!paid) totals.remainingCents += cents
+    return totals
+  }, {
+    paidCents: 0,
+    clearedCents: 0,
+    remainingCents: 0,
+    clearedCount: 0,
+    skippedCount: 0,
+    totalCount: 0
+  })
+
+  const paid = summary.paidCents / 100
   const cleared = summary.clearedCents / 100
   const remaining = summary.remainingCents / 100
   return {
-    totalDue: cleared + remaining,
+    totalDue: paid + remaining,
+    paid,
     cleared,
     remaining,
     clearedCount: summary.clearedCount,
     totalCount: summary.totalCount,
+    skippedCount: summary.skippedCount,
     occurrences
   }
 }
@@ -779,6 +801,7 @@ export function createIncomeTransaction(income, dueDate, storage = localStorage,
     amount: Math.abs(income.amount),
     date: transactionDate,
     cleared: false,
+    category: income.category ?? getDefaultCategoryForFlow('in'),
     linkedIncomeOccurrenceId: occurrenceId
   }
   accountData.transactions.push(transaction)
