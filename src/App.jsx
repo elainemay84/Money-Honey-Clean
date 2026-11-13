@@ -153,9 +153,6 @@ function App() {
 
     const themeColorMeta = document.querySelector('meta[name="theme-color"]')
     if (themeColorMeta) themeColorMeta.setAttribute('content', themeColor)
-
-    const statusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
-    if (statusBarMeta) statusBarMeta.setAttribute('content', isDarkTheme ? 'black-translucent' : 'default')
   }, [isDarkTheme, themeBackground, themeColor])
 
   useEffect(() => {
@@ -209,6 +206,19 @@ function App() {
     setIsForecastOpen(false)
     setIsEditingPaySchedule(false)
   }, [activePage])
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
+
+    const appRoot = document.getElementById('root')
+    if (!appRoot) return
+    const scrollableElements = [appRoot, ...appRoot.querySelectorAll('[role="dialog"]')]
+    scrollableElements.forEach(element => {
+      element.scrollTop = 0
+    })
+  }, [activePage, settingsView])
 
   useEffect(() => {
     const refreshAccountData = () => setAccountData(loadSavedAccountData())
@@ -954,7 +964,6 @@ function App() {
   <Budgets
     transactions={transactions}
     today={today}
-    onBack={() => setActivePage('More')}
   />
 ) : activePage === 'Reports' ? (
   <Reports

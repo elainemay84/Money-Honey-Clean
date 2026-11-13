@@ -168,6 +168,12 @@ function button(container, label) {
   return found
 }
 
+function buttonContaining(container, label) {
+  const found = [...container.querySelectorAll('button')].find(item => item.textContent.includes(label))
+  assert.ok(found, `Expected button containing "${label}"`)
+  return found
+}
+
 function readAccountData() {
   return JSON.parse(browser.localStorage.getItem('money-honey-account-data'))
 }
@@ -191,11 +197,36 @@ test('bottom navigation opens Budgets and More shows Settings and Reports', asyn
   assert.equal(nav.children[3].textContent.includes('Budgets'), true)
   await click(nav.children[3])
   assert.match(container.textContent, /Budgets/)
+  assert.equal([...container.querySelectorAll('button')].some(item => item.classList.contains('page-back')), false)
+  assert.ok(button(container, 'Budget settings'))
 
   await click(nav.lastElementChild)
   assert.equal([...container.querySelectorAll('button')].some(item => item.textContent.includes('Ask Honey')), false)
   await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Reports')))
   assert.match(container.textContent, /Reports/)
+})
+
+test('selected preset theme persists when leaving Themes and across app reload', async () => {
+  const container = await render(App)
+  const nav = container.querySelector('nav')
+  await click(nav.lastElementChild)
+  await click(buttonContaining(container, 'Settings'))
+  await click(buttonContaining(container, 'Themes & Fonts'))
+  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Moody Plum')))
+
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-theme-settings')).themeId, 'moody-plum')
+  await click(button(container, '‹ Settings'))
+  assert.match(container.textContent, /Settings/)
+
+  const reloaded = await reload(App, container)
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-theme-settings')).themeId, 'moody-plum')
+  await click(reloaded.querySelector('nav').lastElementChild)
+  await click(buttonContaining(reloaded, 'Settings'))
+  await click(buttonContaining(reloaded, 'Themes & Fonts'))
+  assert.equal(
+    [...reloaded.querySelectorAll('button[aria-pressed="true"]')].some(item => item.textContent.includes('Moody Plum')),
+    true
+  )
 })
 
 beforeEach(() => {

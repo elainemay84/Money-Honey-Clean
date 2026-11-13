@@ -172,7 +172,7 @@ export default function Themes({
   }
 
   function chooseTheme(theme) {
-    onPreview({
+    const nextSettings = {
       ...settings,
       themeId: theme.id,
       headingFont: theme.headingFont,
@@ -181,7 +181,9 @@ export default function Themes({
       lineSpacing: theme.lineSpacing ?? 'normal',
       backgroundStyle: undefined,
       colors: colorsFor({ colors: theme.colors })
-    })
+    }
+    onPreview(nextSettings)
+    onSave(nextSettings)
     setEditingCustomId(theme.id.startsWith('custom-') ? theme.id : null)
     setCustomName(theme.id.startsWith('custom-') ? theme.name : '')
   }

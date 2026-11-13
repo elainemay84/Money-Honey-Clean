@@ -33,7 +33,7 @@ const button = {
   cursor: 'pointer'
 }
 
-export default function Budgets({ transactions, today, onBack }) {
+export default function Budgets({ transactions, today }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [budgetSettings, setBudgetSettings] = useState(() => loadBudgetSettings())
   const [draftBudgetSettings, setDraftBudgetSettings] = useState(null)
@@ -262,8 +262,7 @@ export default function Budgets({ transactions, today, onBack }) {
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
       <PageHeader
-        backLabel="More"
-        onBack={onBack}
+        showBack={false}
         action={(
           <button type="button" aria-label="Budget settings" onClick={openBudgetSettings} style={{ ...button, padding: 8, fontSize: 17 }}>
             ⚙
