@@ -77,6 +77,10 @@ function App() {
   const isCustomTheme = activeTheme.themeId.startsWith('custom-')
   const themeBackground = getThemeBackground(activeTheme)
   const isGradientBackground = activeTheme.backgroundStyle?.type === 'gradient'
+  const themeBackgroundImage = isGradientBackground
+    ? themeBackground
+    : isCustomTheme ? 'none' : themeStyle.pattern
+  const themeBackgroundSize = isGradientBackground || isCustomTheme ? 'auto' : themeStyle.patternSize
   const themeNavigation = isCustomTheme
     ? activeTheme.colors.tabs ?? activeTheme.colors.accent
     : themeStyle.nav
@@ -86,6 +90,7 @@ function App() {
   const themeColor = activeTheme.backgroundStyle?.type === 'gradient'
     ? activeTheme.backgroundStyle.color1 ?? activeTheme.colors.background
     : activeTheme.colors.background
+  const themeStatusColor = themeStyle.statusBar ?? themeColor
   const isDarkTheme = previewTextColor(themeColor) === '#fffaf2'
   const paydayPeriod = getPaySchedulePeriod(paySchedule, today)
   const transactions = accountData?.transactions ?? []
@@ -149,11 +154,13 @@ function App() {
   useEffect(() => {
     const root = document.documentElement
     root.style.setProperty('--app-background', themeBackground)
+    root.style.setProperty('--app-background-image', themeBackgroundImage)
+    root.style.setProperty('--app-background-size', themeBackgroundSize)
     root.style.colorScheme = isDarkTheme ? 'dark' : 'light'
 
     const themeColorMeta = document.querySelector('meta[name="theme-color"]')
-    if (themeColorMeta) themeColorMeta.setAttribute('content', themeColor)
-  }, [isDarkTheme, themeBackground, themeColor])
+    if (themeColorMeta) themeColorMeta.setAttribute('content', themeStatusColor)
+  }, [isDarkTheme, themeBackground, themeBackgroundImage, themeBackgroundSize, themeStatusColor])
 
   useEffect(() => {
     const refreshData = () => {
@@ -310,6 +317,8 @@ function App() {
       '--theme-status-text': '#304035',
       '--theme-status-success-text': '#1D6339',
       '--theme-danger-text': '#8F302D',
+      '--theme-page-background-image': themeBackgroundImage,
+      '--theme-page-background-size': themeBackgroundSize,
       padding: 'calc(24px + env(safe-area-inset-top)) 24px calc(112px + env(safe-area-inset-bottom))'
     }}
     >

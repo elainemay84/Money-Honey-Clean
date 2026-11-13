@@ -15,6 +15,9 @@ for (const key of ['window', 'document', 'navigator', 'localStorage', 'Event', '
   })
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+const themeMeta = browser.document.createElement('meta')
+themeMeta.setAttribute('name', 'theme-color')
+browser.document.head.append(themeMeta)
 
 const React = await import('react')
 const { act } = React
@@ -71,6 +74,15 @@ test('Themes back button returns to Settings without resetting the selected them
   const themes = findButton(container, 'Themes & Fonts')
   assert.ok(themes)
   await click(themes)
+  const header = container.querySelector('.themes-page-header')
+  assert.ok(header)
+  assert.equal(header.querySelector('h1').textContent, 'Themes & Fonts')
+
+  await click(findButton(container, 'Funky Pop'))
+  assert.match(browser.document.documentElement.style.getPropertyValue('--app-background-image'), /linear-gradient/)
+  assert.match(container.querySelector('.app-shell').style.getPropertyValue('--theme-page-background-image'), /linear-gradient/)
+  assert.equal(browser.document.querySelector('meta[name="theme-color"]').content, '#F33C9A')
+
   const midnight = findButton(container, 'Midnight')
   assert.ok(midnight)
   await click(midnight)

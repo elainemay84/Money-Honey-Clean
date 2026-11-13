@@ -111,6 +111,7 @@ export const THEME_STYLES = {
     nav: 'linear-gradient(135deg, #FF55B5 0%, #9C40B9 100%)',
     navActive: '#FFF08A',
     navInactive: '#FFFFFF',
+    statusBar: '#F33C9A',
     buttonText: '#FFFFFF'
   },
   'pink-sugar': {

@@ -293,7 +293,7 @@ export default function Themes({
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
       <PageHeader
-        className={manualMode ? 'manual-theme-header' : ''}
+        className={manualMode ? 'manual-theme-header' : 'themes-page-header'}
         backLabel={manualMode ? 'Themes & Fonts' : 'Settings'}
         onBack={onBack}
       >
