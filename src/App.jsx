@@ -978,25 +978,6 @@ function App() {
     </button>
     <button
       type="button"
-      onClick={() => setActivePage('Ask Honey')}
-      style={{
-        width: '100%',
-        marginTop: 10,
-        padding: 16,
-        border: '1px solid #E9D6B7',
-        borderRadius: 14,
-        background: '#FFFFFF',
-        color: '#493320',
-        textAlign: 'left',
-        fontSize: 15,
-        cursor: 'pointer'
-      }}
-    >
-      Ask Honey
-      <span style={{ float: 'right', color: '#B87522' }}>›</span>
-    </button>
-    <button
-      type="button"
       onClick={() => setActivePage('Reports')}
       style={{
         width: '100%',
@@ -1047,25 +1028,7 @@ function App() {
       </p>
     </section>
   </main>
-) : (
-  <main style={{
-    maxWidth: 460,
-    margin: 'auto',
-    minHeight: '65vh',
-    padding: '30px 10px',
-    textAlign: 'center'
-  }}>
-    <h1 style={{
-      fontFamily: 'Georgia, serif',
-      color: '#B87522'
-    }}>
-      {activePage === 'Ask Honey' ? '🐝 Ask Honey' : activePage}
-    </h1>
-    <p style={{ color: '#79502A' }}>
-      Your {activePage} page is coming together! 🍯
-    </p>
-  </main>
-)}
+) : null}
 
 
 

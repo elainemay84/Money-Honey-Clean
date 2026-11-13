@@ -185,7 +185,7 @@ test('More opens Settings and Categories & Payees has a back path', async () => 
   assert.equal(container.querySelector('h1')?.textContent, 'Settings')
 })
 
-test('bottom navigation opens Budgets and keeps Ask Honey under More', async () => {
+test('bottom navigation opens Budgets and More shows Settings and Reports', async () => {
   const container = await render(App)
   const nav = container.querySelector('nav')
   assert.equal(nav.children[3].textContent.includes('Budgets'), true)
@@ -193,8 +193,9 @@ test('bottom navigation opens Budgets and keeps Ask Honey under More', async () 
   assert.match(container.textContent, /Budgets/)
 
   await click(nav.lastElementChild)
-  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Ask Honey')))
-  assert.match(container.textContent, /Ask Honey/)
+  assert.equal([...container.querySelectorAll('button')].some(item => item.textContent.includes('Ask Honey')), false)
+  await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Reports')))
+  assert.match(container.textContent, /Reports/)
 })
 
 beforeEach(() => {

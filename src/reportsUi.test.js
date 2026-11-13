@@ -101,7 +101,7 @@ test('Reports is an option on More, the six bottom tabs are unchanged, and Back 
 
   await click([...container.querySelectorAll('nav > div')].find(item => item.textContent.includes('More')))
   assert.ok(buttonWithText(container, 'Settings'))
-  assert.ok(buttonWithText(container, 'Ask Honey'))
+  assert.equal(buttonWithText(container, 'Ask Honey'), undefined)
   await click(buttonWithText(container, 'Reports'))
 
   assert.equal(container.querySelector('h1').textContent, 'Reports')
