@@ -5,6 +5,7 @@ import {
   DEBT_STORAGE_KEY,
   applyPrincipalOnlyToReviewPayments,
   calculateDebtDueDate,
+  calculateOverallDebtSummary,
   createDebtPayment,
   debtPaymentNeedsBalanceReview,
   getDebtPaymentCalculationMethod,
@@ -655,4 +656,47 @@ test('retry after a debt-save interruption reuses the already-created transactio
   assert.equal(loadSavedAccountData(storage).transactions.length, 1)
   assert.equal(loadDebts(storage)[0].paymentHistory.length, 1)
   assert.equal(loadDebts(storage)[0].currentBalance, 7750)
+})
+
+test('calculateOverallDebtSummary computes total remaining, paid off, and progress percent correctly', () => {
+  assert.deepEqual(calculateOverallDebtSummary([]), {
+    totalStarting: 0,
+    totalRemaining: 0,
+    totalPaidOff: 0,
+    progressPercent: 0
+  })
+
+  const debts = [
+    { id: 1, startingBalance: 1000, currentBalance: 400 },
+    { id: 2, startingBalance: 2000, currentBalance: 1100 }
+  ]
+  assert.deepEqual(calculateOverallDebtSummary(debts), {
+    totalStarting: 3000,
+    totalRemaining: 1500,
+    totalPaidOff: 1500,
+    progressPercent: 50
+  })
+
+  // Overpaid edge case
+  const overpaid = [
+    { id: 1, startingBalance: 100, currentBalance: 0 },
+    { id: 2, startingBalance: 50, currentBalance: 0 }
+  ]
+  assert.deepEqual(calculateOverallDebtSummary(overpaid), {
+    totalStarting: 150,
+    totalRemaining: 0,
+    totalPaidOff: 150,
+    progressPercent: 100
+  })
+
+  // Balance increased
+  const increased = [
+    { id: 1, startingBalance: 100, currentBalance: 120 }
+  ]
+  assert.deepEqual(calculateOverallDebtSummary(increased), {
+    totalStarting: 100,
+    totalRemaining: 120,
+    totalPaidOff: 0,
+    progressPercent: 0
+  })
 })

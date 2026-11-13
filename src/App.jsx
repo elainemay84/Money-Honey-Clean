@@ -25,7 +25,7 @@ import {
   savePaySchedule
 } from './billData.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
-import { loadDebts } from './debtData.js'
+import { calculateOverallDebtSummary, loadDebts } from './debtData.js'
 import { calculatePaycheckForecast } from './paycheckForecast.js'
 import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budgetData.js'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
@@ -101,11 +101,9 @@ function App() {
     transactions
   )
   const activeDebts = debts.filter(debt => !debt.archived)
-  const totalStartingDebt = activeDebts.reduce((total, debt) => total + debt.startingBalance, 0)
-  const totalCurrentDebt = activeDebts.reduce((total, debt) => total + debt.currentBalance, 0)
-  const debtProgress = totalStartingDebt > 0
-    ? Math.round((1 - totalCurrentDebt / totalStartingDebt) * 100)
-    : 0
+  const debtSummary = calculateOverallDebtSummary(activeDebts)
+  const totalStartingDebt = debtSummary.totalStarting
+  const debtProgress = debtSummary.progressPercent
   const categoryConfig = loadCategoryConfig()
   const budgetCategories = getCategories(
     categoryConfig.customCategories,

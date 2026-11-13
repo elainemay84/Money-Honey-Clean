@@ -3,6 +3,7 @@ import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
 import {
   applyPrincipalOnlyToReviewPayments,
+  calculateOverallDebtSummary,
   DEBT_PAYMENT_CALCULATION_METHODS,
   createDebtId,
   debtPaymentNeedsBalanceReview,
@@ -103,8 +104,8 @@ export default function Debt() {
   const [formValues, setFormValues] = useState(blankDebt)
   const [paymentMethodWasSelected, setPaymentMethodWasSelected] = useState(false)
   const [formError, setFormError] = useState('')
-  const totalDebt = debts.reduce((sum, debt) => sum + debt.currentBalance, 0)
   const visibleDebts = debts.filter(debt => showArchived || !debt.archived)
+  const debtSummary = calculateOverallDebtSummary(visibleDebts)
   const editingDebt = debts.find(debt => debt.id === editingDebtId) ?? null
   const selectedDebt = debts.find(debt => debt.id === selectedDebtId) ?? null
   const selectedDebtBill = selectedDebt
@@ -271,15 +272,46 @@ export default function Debt() {
         textAlign: 'center'
       }}>Debt 🍯</h1>
 
-      <section aria-label="Total debt remaining" style={{
+      <section aria-label="Overall debt progress" style={{
         marginBottom: 10,
-        padding: '10px 14px',
+        padding: '12px 14px',
         borderRadius: 14,
         background: '#F5D6A5',
         color: '#79502A'
       }}>
-        <div style={{ fontSize: 10, fontWeight: 'bold', letterSpacing: 0.35 }}>TOTAL DEBT REMAINING</div>
-        <strong style={{ display: 'block', marginTop: 2, fontSize: 21, lineHeight: 1.15 }}>{money(totalDebt)}</strong>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 'bold', letterSpacing: 0.35 }}>TOTAL DEBT REMAINING</div>
+            <strong style={{ display: 'block', marginTop: 2, fontSize: 21, lineHeight: 1.15 }}>{money(debtSummary.totalRemaining)}</strong>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, fontWeight: 'bold', letterSpacing: 0.35 }}>TOTAL PAID OFF</div>
+            <strong style={{ display: 'block', marginTop: 2, fontSize: 17, lineHeight: 1.15, color: '#493320' }}>{money(debtSummary.totalPaidOff)}</strong>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 11, fontWeight: 'bold' }}>
+          <span>Overall progress</span>
+          <span>{debtSummary.progressPercent}% paid off</span>
+        </div>
+
+        <div
+          role="progressbar"
+          aria-label="Overall debt progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={debtSummary.progressPercent}
+          title={`${debtSummary.progressPercent}% paid off`}
+          style={{ height: 6, marginTop: 5, overflow: 'hidden', borderRadius: 99, background: 'var(--theme-border, #E8CA97)' }}
+        >
+          <div style={{
+            width: `${debtSummary.progressPercent}%`,
+            height: '100%',
+            borderRadius: 99,
+            background: '#6E9A72',
+            transition: 'width 0.2s ease'
+          }} />
+        </div>
       </section>
 
       <section style={{

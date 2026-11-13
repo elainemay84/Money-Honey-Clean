@@ -119,6 +119,21 @@ export function getDebtPrincipalPaid(debt) {
     .reduce((sum, payment) => sum + payment.principal, 0))
 }
 
+export function calculateOverallDebtSummary(debts) {
+  const totalStarting = roundMoney(debts.reduce((sum, debt) => sum + (Number(debt.startingBalance) || 0), 0))
+  const totalRemaining = roundMoney(debts.reduce((sum, debt) => sum + (Number(debt.currentBalance) || 0), 0))
+  const totalPaidOff = roundMoney(Math.max(0, totalStarting - totalRemaining))
+  const progressPercent = totalStarting > 0
+    ? Math.min(100, Math.max(0, Math.round(((totalStarting - totalRemaining) / totalStarting) * 100)))
+    : 0
+  return {
+    totalStarting,
+    totalRemaining,
+    totalPaidOff,
+    progressPercent
+  }
+}
+
 export function calculateDebtDueDate(nextPaymentDue, monthsAhead = 0) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nextPaymentDue ?? '') || !Number.isInteger(monthsAhead)) {
     return null

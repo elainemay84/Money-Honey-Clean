@@ -1332,3 +1332,52 @@ test('Debt links a matching monthly bill instead of duplicating its schedule', a
   assert.equal(debts[0].billId, bills[0].id)
   assert.equal(bills[0].debtManaged, false)
 })
+
+test('Debt page displays overall summary with remaining, paid off, progress percent, and progress bar above cards', async () => {
+  seedData()
+  const date = localDate()
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify({
+    version: 1,
+    debts: [
+      {
+        id: 1,
+        name: 'Auto loan',
+        type: 'Auto Loan',
+        startingBalance: 1000,
+        currentBalance: 400,
+        minimumPayment: 100,
+        nextPaymentDue: date,
+        paymentCalculationMethod: 'principal-only',
+        paymentHistory: []
+      },
+      {
+        id: 2,
+        name: 'Credit card',
+        type: 'Credit Card',
+        startingBalance: 500,
+        currentBalance: 200,
+        minimumPayment: 50,
+        nextPaymentDue: date,
+        paymentCalculationMethod: 'principal-only',
+        paymentHistory: []
+      }
+    ]
+  }))
+
+  const container = await render(Debt)
+  const summary = container.querySelector('[aria-label="Overall debt progress"]')
+  assert.ok(summary)
+  assert.match(summary.textContent, /TOTAL DEBT REMAINING/)
+  assert.match(summary.textContent, /\$600\.00/)
+  assert.match(summary.textContent, /TOTAL PAID OFF/)
+  assert.match(summary.textContent, /\$900\.00/)
+  assert.match(summary.textContent, /60% paid off/)
+
+  const progressbar = summary.querySelector('[role="progressbar"]')
+  assert.ok(progressbar)
+  assert.equal(progressbar.getAttribute('aria-valuenow'), '60')
+
+  // Individual cards directly underneath
+  assert.ok(container.querySelector('[aria-label="Debt row: Auto loan"]'))
+  assert.ok(container.querySelector('[aria-label="Debt row: Credit card"]'))
+})
