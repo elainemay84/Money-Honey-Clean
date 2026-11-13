@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { saveAccountData } from './accountStorage.js'
-import { saveBillData, savePaySchedule } from './billData.js'
-import { saveBudgets } from './budgetData.js'
-import { saveCategories } from './categoryData.js'
-import { savePayees } from './payeeData.js'
+import { ACCOUNT_STORAGE_KEY, saveAccountData } from './accountStorage.js'
+import { BILL_STORAGE_KEY, PAY_SCHEDULE_STORAGE_KEY, saveBillData, savePaySchedule } from './billData.js'
+import { BUDGET_MODE_STORAGE_KEY, BUDGET_SETTINGS_STORAGE_KEY, BUDGET_STORAGE_KEY, MANUAL_BUDGET_STORAGE_KEY, SMART_BUDGET_STORAGE_KEY, SMART_DISMISSED_STORAGE_KEY, saveBudgets } from './budgetData.js'
+import { CATEGORY_STORAGE_KEY, saveCategories } from './categoryData.js'
+import { DEBT_STORAGE_KEY } from './debtData.js'
+import { APPEARANCE_SIZE_STORAGE_KEY } from './appearanceData.js'
+import { PAYEE_STORAGE_KEY, savePayees } from './payeeData.js'
 import {
   BACKUP_STORAGE_KEYS,
   BACKUP_CATEGORIES,
@@ -18,8 +20,27 @@ import {
   parseBackup,
   restoreBackup
 } from './backupData.js'
-import { isSensitiveKey } from './backupSanitize.js'
+import { isSensitiveKey, TRANSACTION_SORT_STORAGE_KEY } from './backupSanitize.js'
 import { CUSTOM_THEME_STORAGE_KEY, THEME_STORAGE_KEY } from './themeData.js'
+
+const PERSISTENT_STORAGE_KEY_CONTRACT = [
+  ACCOUNT_STORAGE_KEY,
+  BILL_STORAGE_KEY,
+  PAY_SCHEDULE_STORAGE_KEY,
+  DEBT_STORAGE_KEY,
+  BUDGET_STORAGE_KEY,
+  MANUAL_BUDGET_STORAGE_KEY,
+  SMART_BUDGET_STORAGE_KEY,
+  SMART_DISMISSED_STORAGE_KEY,
+  BUDGET_MODE_STORAGE_KEY,
+  BUDGET_SETTINGS_STORAGE_KEY,
+  CATEGORY_STORAGE_KEY,
+  PAYEE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+  CUSTOM_THEME_STORAGE_KEY,
+  APPEARANCE_SIZE_STORAGE_KEY,
+  TRANSACTION_SORT_STORAGE_KEY
+]
 
 function withStorage(values = {}) {
   const data = new Map(Object.entries(values))
@@ -162,6 +183,79 @@ test('every supported storage key belongs to exactly one preview category and no
   const categorized = BACKUP_CATEGORIES.flatMap(category => category.keys)
   assert.deepEqual([...categorized].sort(), [...BACKUP_STORAGE_KEYS].sort())
   assert.equal(BACKUP_STORAGE_KEYS.some(isSensitiveKey), false)
+})
+
+test('the backup allowlist covers the explicit persistent storage key contract', () => {
+  assert.deepEqual(BACKUP_STORAGE_KEYS, PERSISTENT_STORAGE_KEY_CONTRACT)
+})
+
+test('backup sanitization preserves financial record fields used for restoration', () => {
+  const { storage } = withStorage({
+    [ACCOUNT_STORAGE_KEY]: JSON.stringify({
+      version: 1,
+      accounts: [{ id: 1, name: 'Checking', defaultCleared: true }],
+      transactions: [{
+        id: 2,
+        accountId: 1,
+        name: 'Rent',
+        amount: -900,
+        date: '2026-11-01',
+        cleared: true,
+        category: 'Housing & Utilities',
+        linkedOccurrenceType: 'bill',
+        linkedOccurrenceId: 'bill-occurrence-1'
+      }]
+    }),
+    [BILL_STORAGE_KEY]: JSON.stringify({
+      version: 1,
+      bills: [{
+        id: 3,
+        name: 'Rent',
+        amount: 900,
+        paymentHistory: [{ dueDate: '2026-11-01', paidDate: '2026-11-01', transactionId: 2 }]
+      }],
+      incomes: [{
+        id: 4,
+        name: 'Paycheck',
+        amount: 2000,
+        paymentHistory: [{ dueDate: '2026-11-15', receivedDate: '2026-11-15', transactionId: 5 }]
+      }]
+    }),
+    [DEBT_STORAGE_KEY]: JSON.stringify({
+      version: 1,
+      debts: [{
+        id: 6,
+        name: 'Card',
+        startingBalance: 1000,
+        currentBalance: 800,
+        paymentHistory: [{ date: '2026-11-05', amount: 200, principal: 180, interest: 20 }]
+      }]
+    })
+  })
+
+  const { backup } = parseBackup(JSON.stringify(createBackupSnapshot(storage)), storage)
+  const accounts = JSON.parse(backup.data[ACCOUNT_STORAGE_KEY])
+  const bills = JSON.parse(backup.data[BILL_STORAGE_KEY])
+  const debts = JSON.parse(backup.data[DEBT_STORAGE_KEY])
+
+  assert.equal(accounts.transactions[0].cleared, true)
+  assert.equal(accounts.transactions[0].linkedOccurrenceId, 'bill-occurrence-1')
+  assert.deepEqual(bills.bills[0].paymentHistory[0], {
+    dueDate: '2026-11-01',
+    paidDate: '2026-11-01',
+    transactionId: 2
+  })
+  assert.deepEqual(bills.incomes[0].paymentHistory[0], {
+    dueDate: '2026-11-15',
+    receivedDate: '2026-11-15',
+    transactionId: 5
+  })
+  assert.deepEqual(debts.debts[0].paymentHistory[0], {
+    date: '2026-11-05',
+    amount: 200,
+    principal: 180,
+    interest: 20
+  })
 })
 
 test('importing replaces supported data and clears absent keys, leaving credentials untouched', () => {
