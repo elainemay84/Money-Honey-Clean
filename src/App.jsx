@@ -10,6 +10,7 @@ import Themes from './Themes'
 import Backup from './Backup'
 import DeleteConfirmation from './DeleteConfirmation'
 import PendingOperationNotice from './PendingOperationNotice'
+import Reports from './Reports'
 import { clearProfileActionNotice, getProfileActionNotice } from './profileActionNotice.js'
 import { clearRestoreNotice, hasRestoreNotice } from './backupRestoreNotice.js'
 import PageHeader from './PageHeader'
@@ -932,6 +933,13 @@ function App() {
     today={today}
     onBack={() => setActivePage('More')}
   />
+) : activePage === 'Reports' ? (
+  <Reports
+    transactions={transactions}
+    today={today}
+    cardColor={activeTheme.colors.card}
+    onBack={() => setActivePage('More')}
+  />
 ) : activePage === 'More' ? (
   <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
     <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>More</h1>
@@ -973,6 +981,25 @@ function App() {
       }}
     >
       Ask Honey
+      <span style={{ float: 'right', color: '#B87522' }}>›</span>
+    </button>
+    <button
+      type="button"
+      onClick={() => setActivePage('Reports')}
+      style={{
+        width: '100%',
+        marginTop: 10,
+        padding: 16,
+        border: '1px solid #E9D6B7',
+        borderRadius: 14,
+        background: '#FFFFFF',
+        color: '#493320',
+        textAlign: 'left',
+        fontSize: 15,
+        cursor: 'pointer'
+      }}
+    >
+      Reports
       <span style={{ float: 'right', color: '#B87522' }}>›</span>
     </button>
     <section style={{
