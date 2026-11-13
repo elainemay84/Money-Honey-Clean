@@ -1,19 +1,3 @@
-                  {category === '' && <option value="">Uncategorized</option>}
-                  {category !== '' && !categoryOptions.includes(category) && !refundOptions.includes(category) && (
-                    <option value={category}>{category} (not an active category)</option>
-                  )}
-                  {kind === 'income' ? (
-                    <>
-                      <optgroup label="Income">
-                        {categoryOptions.map(item => <option key={item} value={item}>{item}</option>)}
-                      </optgroup>
-                      <optgroup label="Refund of an expense">
-                        {refundOptions.map(item => <option key={`refund-${item}`} value={item}>{item}</option>)}
-                      </optgroup>
-                    </>
-                  ) : categoryOptions.map(item => (
-                    <option key={item} value={item}>{item}</option>
-                  ))}
 
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -49,7 +33,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const [startEdit] = useState(() => {
     if (!editRequest) return null
     const transaction = initialAccountData.transactions.find(item =>
-      item.id === editRequest.transactionId && item.accountId === editRequest.accountId)
+      String(item.id) === String(editRequest.transactionId) &&
+      (editRequest.accountId == null || String(item.accountId) === String(editRequest.accountId)))
     return transaction ? { transaction } : null
   })
   const openedFromRequest = useRef(Boolean(startEdit))
@@ -106,14 +91,6 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
       window.removeEventListener('money-honey-accounts-updated', refreshAccountData)
       window.removeEventListener('storage', refreshAccountData)
     }
-  }, [])
-
-  useEffect(() => {
-    if (!editRequest) return
-    onEditConsumed?.()
-    if (!startEdit) onEditFinished?.()
-  // The request is read once, when the screen opens.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -242,6 +219,24 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     setIsAddTransactionOpen(true)
   }
 
+  useEffect(() => {
+    if (!editRequest) return
+    const currentTransactions = loadSavedAccountData()?.transactions || initialAccountData.transactions
+    const target = currentTransactions.find(item =>
+      String(item.id) === String(editRequest.transactionId) &&
+      (editRequest.accountId == null || String(item.accountId) === String(editRequest.accountId)))
+    if (target) {
+      openedFromRequest.current = true
+      setSelectedAccount(target.accountId)
+      setScreen('register')
+      openEditTransaction(target)
+    } else {
+      onEditFinished?.()
+    }
+    onEditConsumed?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequest])
+
 
   function getTransactionAssociations(transaction) {
     const billData = localStorage.getItem(BILL_STORAGE_KEY) === null
@@ -334,7 +329,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             name: newName.trim(),
             amount: normalizeTransactionAmount(amount, kind),
             date: newDate,
-            category: category === '' ? item.category : category
+            category
           }
           : item
       ))
@@ -348,7 +343,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
         amount: normalizeTransactionAmount(amount, kind),
         date: newDate,
         cleared: account.defaultCleared,
-        category: category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out')
+        category: categoryWasChosen ? category : (category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out'))
       }])
     }
 
@@ -1095,7 +1090,20 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   }}
                   style={field}
                 >
-                  {getCategories(customCategories, kind, builtInNames, disabledBuiltIns).map(item => (
+                  <option value="">Uncategorized</option>
+                  {category !== '' && !categoryOptions.includes(category) && !refundOptions.includes(category) && (
+                    <option value={category}>{category} (not an active category)</option>
+                  )}
+                  {kind === 'income' ? (
+                    <>
+                      <optgroup label="Income">
+                        {categoryOptions.map(item => <option key={item} value={item}>{item}</option>)}
+                      </optgroup>
+                      <optgroup label="Refund of an expense">
+                        {refundOptions.map(item => <option key={`refund-${item}`} value={item}>{item}</option>)}
+                      </optgroup>
+                    </>
+                  ) : categoryOptions.map(item => (
                     <option key={item} value={item}>{item}</option>
                   ))}
                 </select>

@@ -65,6 +65,7 @@ function App() {
   const [payFrequency, setPayFrequency] = useState(paySchedule?.frequency ?? 'biweekly')
   const [nextPayday, setNextPayday] = useState(paySchedule?.nextPayday ?? today)
   const [activePage, setActivePage] = useState(() => hasRestoreNotice() || getProfileActionNotice() ? 'Settings' : 'Home')
+  const [editRequest, setEditRequest] = useState(null)
   const [budgetSettings, setBudgetSettings] = useState(() => loadBudgetSettings())
   const [, setBudgetRevision] = useState(0)
   const [settingsView, setSettingsView] = useState(() => hasRestoreNotice() ? 'backup' : getProfileActionNotice() ?? 'menu')
@@ -743,7 +744,15 @@ function App() {
 
 
 ) : activePage === 'Accounts' ? (
-  <Accounts />
+<Accounts
+  editRequest={editRequest}
+  onEditConsumed={() => setEditRequest(null)}
+  onEditFinished={() => {
+    setEditRequest(null)
+    setAccountData(loadAccountData(startingAccounts, startingTransactions))
+    setActivePage('Reports')
+  }}
+/>
 ) : activePage === 'Bills' ? (
   <Bills />
 ) : activePage === 'Debt' ? (
@@ -940,6 +949,10 @@ function App() {
     today={today}
     cardColor={activeTheme.colors.card}
     onBack={() => setActivePage('More')}
+    onEditTransaction={request => {
+      setEditRequest(request)
+      setActivePage('Accounts')
+    }}
   />
 ) : activePage === 'More' ? (
   <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>

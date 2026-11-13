@@ -13,7 +13,13 @@ const card = {
 
 // Lists transactions whose classification is a safe default rather than a certainty. They stay exactly as
 // recorded; the user decides what they are by editing them under Accounts.
-export default function ClassificationReviewReport({ transactions, categories, accounts, month }) {
+export default function ClassificationReviewReport({
+  transactions,
+  categories,
+  accounts,
+  month,
+  onEditTransaction
+}) {
   const flags = getReportFlags({ transactions, month, categories, accounts })
   if (flags.length === 0) return null
 
@@ -38,12 +44,35 @@ export default function ClassificationReviewReport({ transactions, categories, a
               data-review-item={transaction.id}
               style={{ padding: '5px 0', borderTop: '1px solid var(--theme-border, #EADBC8)', textAlign: 'left' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => onEditTransaction?.({
+                  transactionId: transaction.id,
+                  accountId: transaction.accountId
+                })}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'inherit',
+                  font: 'inherit',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  padding: 0
+                }}
+              >
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {transaction.date} · {transaction.name ?? 'Transaction'}
                 </span>
-                <strong>{money(transaction.amount)}</strong>
-              </div>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <strong>{money(transaction.amount)}</strong>
+                  <span aria-hidden="true" style={{ color: '#B87522', fontSize: 13, lineHeight: 1 }}>✎</span>
+                </span>
+              </button>
               {reasons.map(reason => (
                 <div key={reason} style={{ opacity: 0.85 }}>{FLAG_REASONS[reason]}</div>
               ))}

@@ -497,3 +497,163 @@ test('no review card appears when every transaction is clearly classified', asyn
   await openReports(container)
   assert.equal(reviewCard(container), null)
 })
+
+async function changeValue(element, value) {
+  await act(async () => {
+    const prototype = element instanceof browser.HTMLSelectElement
+      ? browser.HTMLSelectElement.prototype
+      : browser.HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+    setter?.call(element, value)
+    element.dispatchEvent(new browser.Event('input', { bubbles: true }))
+    element.dispatchEvent(new browser.Event('change', { bubbles: true }))
+  })
+}
+
+async function submit(form) {
+  await act(async () => {
+    form.dispatchEvent(new browser.Event('submit', { bubbles: true, cancelable: true }))
+  })
+}
+
+test('clicking a flagged transaction opens the editor for that exact transaction with a pencil icon', async () => {
+  seed([
+    txn(undefined, -35, day(currentMonth, 5), { id: 101, accountId: 1, name: 'Target run' })
+  ])
+  const container = await renderApp()
+  await openReports(container)
+
+  const card = reviewCard(container)
+  const itemBtn = card.querySelector('[data-review-item="101"] button')
+  assert.ok(itemBtn)
+  assert.match(itemBtn.textContent, /✎/)
+
+  await click(itemBtn)
+
+  const dialog = container.querySelector('[role="dialog"]')
+  assert.ok(dialog)
+  assert.equal(dialog.querySelector('#add-transaction-title').textContent, 'Edit Transaction')
+  assert.equal(dialog.querySelector('input[aria-label="Payee or description"]').value, 'Target run')
+  assert.equal(dialog.querySelector('input[aria-label="Amount"]').value, '35')
+  assert.equal(dialog.querySelector('input[aria-label="Transaction date"]').value, day(currentMonth, 5))
+  assert.equal(dialog.querySelector('select[aria-label="Transaction category"]').value, '')
+})
+
+test('saving a category change updates transaction and returns to Reports with refreshed totals and warnings', async () => {
+  seed([
+    txn(undefined, -45, day(currentMonth, 5), { id: 102, accountId: 1, name: 'Market' })
+  ])
+  const container = await renderApp()
+  await openReports(container)
+
+  assert.equal(barAmount(container, 'Expenses'), '$45.00')
+  assert.deepEqual(rows(container).map(row => row.name), ['Uncategorized'])
+
+  const card = reviewCard(container)
+  await click(card.querySelector('[data-review-item="102"] button'))
+
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('select[aria-label="Transaction category"]'), 'Groceries')
+  await submit(dialog.querySelector('form'))
+
+  assert.equal(container.querySelector('h1').textContent, 'Reports')
+  assert.equal(reviewCard(container), null)
+  assert.deepEqual(rows(container).map(row => row.name), ['Groceries'])
+  assert.equal(barAmount(container, 'Expenses'), '$45.00')
+
+  const stored = JSON.parse(browser.localStorage.getItem('money-honey-account-data'))
+  const updatedTxn = stored.transactions.find(t => t.id === 102)
+  assert.equal(updatedTxn.category, 'Groceries')
+})
+
+test('canceling the edit returns to Reports without changing data', async () => {
+  seed([
+    txn(undefined, -25, day(currentMonth, 4), { id: 103, accountId: 1, name: 'Bakery' })
+  ])
+  const before = browser.localStorage.getItem('money-honey-account-data')
+  const container = await renderApp()
+  await openReports(container)
+
+  const card = reviewCard(container)
+  await click(card.querySelector('[data-review-item="103"] button'))
+
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('select[aria-label="Transaction category"]'), 'Groceries')
+  await click(buttonWithText(dialog, 'Cancel'))
+
+  assert.equal(container.querySelector('h1').textContent, 'Reports')
+  assert.ok(reviewCard(container))
+  assert.equal(browser.localStorage.getItem('money-honey-account-data'), before)
+})
+
+test('transactions with the same description and amount open the correct transaction by ID and account', async () => {
+  const storedAccounts = [
+    { id: 1, name: 'Checking', type: 'Checking', openingBalance: 1000, openingDate: '2020-01-01', color: '#B87522', defaultCleared: false, archived: false },
+    { id: 2, name: 'Savings', type: 'Savings', openingBalance: 500, openingDate: '2020-01-01', color: '#6E9A72', defaultCleared: false, archived: false }
+  ]
+  const storedTransactions = [
+    txn(undefined, -50, day(currentMonth, 1), { id: 201, accountId: 1, name: 'Hardware' }),
+    txn(undefined, -50, day(currentMonth, 2), { id: 202, accountId: 2, name: 'Hardware' })
+  ]
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify({ version: 1, accounts: storedAccounts, transactions: storedTransactions }))
+  browser.localStorage.setItem('money-honey-bills', '{"version":1,"bills":[],"incomes":[]}')
+
+  const container = await renderApp()
+  await openReports(container)
+
+  const card = reviewCard(container)
+  await click(card.querySelector('[data-review-item="202"] button'))
+
+  const dialog = container.querySelector('[role="dialog"]')
+  assert.equal(container.querySelector('h1').textContent, 'Savings')
+  assert.equal(dialog.querySelector('input[aria-label="Transaction date"]').value, day(currentMonth, 2))
+  await click(buttonWithText(dialog, 'Cancel'))
+})
+
+test('refunds can be associated with an expense category, reducing category spending and clearing warnings', async () => {
+  seed([
+    txn('Shopping', -100, day(currentMonth, 1), { id: 301, accountId: 1, name: 'Clothing store' }),
+    txn('Other Income', 40, day(currentMonth, 3), { id: 302, accountId: 1, name: 'Refund from clothing store' })
+  ])
+  const container = await renderApp()
+  await openReports(container)
+
+  assert.equal(barAmount(container, 'Income'), '$40.00')
+  assert.equal(barAmount(container, 'Expenses'), '$100.00')
+  const card = reviewCard(container)
+  assert.ok(card)
+  await click(card.querySelector('[data-review-item="302"] button'))
+
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('select[aria-label="Transaction category"]'), 'Shopping')
+  await submit(dialog.querySelector('form'))
+
+  assert.equal(container.querySelector('h1').textContent, 'Reports')
+  assert.equal(reviewCard(container), null)
+  assert.equal(barAmount(container, 'Income'), '$0.00')
+  assert.equal(barAmount(container, 'Expenses'), '$60.00')
+  assert.match(spendingCard(container).textContent, /Net of \$40\.00 in refunds\./)
+})
+
+test('suspected card payments can be classified as Debt Payments, updating net cash flow and clearing warnings', async () => {
+  seed([
+    txn('Other', -200, day(currentMonth, 6), { id: 401, accountId: 1, name: 'Chase Visa payment' })
+  ])
+  const container = await renderApp()
+  await openReports(container)
+
+  assert.equal(barAmount(container, 'Expenses'), '$200.00')
+  const card = reviewCard(container)
+  assert.ok(card)
+  await click(card.querySelector('[data-review-item="401"] button'))
+
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('select[aria-label="Transaction category"]'), 'Debt Payments')
+  await submit(dialog.querySelector('form'))
+
+  assert.equal(container.querySelector('h1').textContent, 'Reports')
+  assert.equal(reviewCard(container), null)
+  assert.equal(barAmount(container, 'Expenses'), '$0.00')
+  assert.match(flowCard(container).textContent, /Debt payments \(\$200\.00\) are not counted as expenses\./)
+})
+

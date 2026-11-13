@@ -33,7 +33,7 @@ const REPORT_SECTIONS = [
   { id: 'needs-classification', Component: ClassificationReviewReport }
 ]
 
-export default function Reports({ transactions, accounts = [], today, cardColor = '#FFFFFF', onBack }) {
+export default function Reports({ transactions, accounts = [], today, cardColor = '#FFFFFF', onBack, onEditTransaction }) {
   const currentMonth = today.slice(0, 7)
   const [month, setMonth] = useState(currentMonth)
   const { customCategories, builtInNames, disabledBuiltIns } = loadCategoryConfig()
@@ -74,6 +74,7 @@ export default function Reports({ transactions, accounts = [], today, cardColor 
           accounts={accounts}
           month={month}
           cardColor={cardColor}
+onEditTransaction={onEditTransaction}
         />
       ))}
     </main>
