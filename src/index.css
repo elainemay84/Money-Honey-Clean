@@ -14,6 +14,7 @@
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
   --app-background: #fff8ed;
+  --app-status-background: #fff8ed;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
@@ -37,7 +38,7 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: var(--app-background);
+  background-color: var(--app-status-background);
   background-image: var(--app-background-image);
   background-size: var(--app-background-size);
 }
@@ -52,7 +53,7 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background: var(--app-background);
+  background-color: var(--app-status-background);
   background-image: var(--app-background-image);
   background-size: var(--app-background-size);
 }

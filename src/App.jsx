@@ -154,6 +154,7 @@ function App() {
   useEffect(() => {
     const root = document.documentElement
     root.style.setProperty('--app-background', themeBackground)
+    root.style.setProperty('--app-status-background', themeStatusColor)
     root.style.setProperty('--app-background-image', themeBackgroundImage)
     root.style.setProperty('--app-background-size', themeBackgroundSize)
     root.style.colorScheme = isDarkTheme ? 'dark' : 'light'
@@ -289,7 +290,7 @@ function App() {
       className={`app-shell appearance-${appearanceSize} theme-${activeTheme.themeId} theme-typography theme-customized`}
       style={{
       minHeight: '100vh',
-      background: themeBackground,
+      backgroundColor: themeStatusColor,
       color: activeTheme.colors.text,
       fontFamily: 'Arial, sans-serif',
       '--theme-background': themeBackground,

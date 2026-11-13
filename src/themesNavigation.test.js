@@ -80,6 +80,7 @@ test('Themes back button returns to Settings without resetting the selected them
 
   await click(findButton(container, 'Funky Pop'))
   assert.match(browser.document.documentElement.style.getPropertyValue('--app-background-image'), /linear-gradient/)
+  assert.equal(browser.document.documentElement.style.getPropertyValue('--app-status-background'), '#F33C9A')
   assert.match(container.querySelector('.app-shell').style.getPropertyValue('--theme-page-background-image'), /linear-gradient/)
   assert.equal(browser.document.querySelector('meta[name="theme-color"]').content, '#F33C9A')
 
