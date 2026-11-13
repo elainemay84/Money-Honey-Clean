@@ -83,6 +83,10 @@ function App() {
   const navigationColors = themeStyle.navActive && themeStyle.navInactive
     ? { active: themeStyle.navActive, inactive: themeStyle.navInactive }
     : getNavigationColors(themeNavigation, activeTheme.colors.accent)
+  const themeColor = activeTheme.backgroundStyle?.type === 'gradient'
+    ? activeTheme.backgroundStyle.color1 ?? activeTheme.colors.background
+    : activeTheme.colors.background
+  const isDarkTheme = previewTextColor(themeColor) === '#fffaf2'
   const paydayPeriod = getPaySchedulePeriod(paySchedule, today)
   const transactions = accountData?.transactions ?? []
   const paycheckForecast = calculatePaycheckForecast({
@@ -141,6 +145,18 @@ function App() {
     : dailySpending.remainingToday < 0
       ? `${money(Math.abs(dailySpending.remainingToday))} over`
       : money(dailySpending.remainingToday)
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--app-background', themeBackground)
+    root.style.colorScheme = isDarkTheme ? 'dark' : 'light'
+
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]')
+    if (themeColorMeta) themeColorMeta.setAttribute('content', themeColor)
+
+    const statusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
+    if (statusBarMeta) statusBarMeta.setAttribute('content', isDarkTheme ? 'black-translucent' : 'default')
+  }, [isDarkTheme, themeBackground, themeColor])
 
   useEffect(() => {
     const refreshData = () => {
@@ -284,7 +300,7 @@ function App() {
       '--theme-status-text': '#304035',
       '--theme-status-success-text': '#1D6339',
       '--theme-danger-text': '#8F302D',
-      padding: '24px 24px calc(112px + env(safe-area-inset-bottom))'
+      padding: 'calc(24px + env(safe-area-inset-top)) 24px calc(112px + env(safe-area-inset-bottom))'
     }}
     >
       <PendingOperationNotice />
