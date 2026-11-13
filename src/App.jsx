@@ -802,7 +802,6 @@ function App() {
         return saved
       }}
       onBack={() => {
-        setThemePreview(null)
         setSettingsView('menu')
       }}
     />
