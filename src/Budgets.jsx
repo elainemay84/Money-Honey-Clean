@@ -11,6 +11,7 @@ import {
   saveBudgets,
   saveDismissedSmartSuggestion
 } from './budgetData.js'
+import PageHeader from './PageHeader'
 
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
@@ -196,12 +197,7 @@ export default function Budgets({ transactions, today, onBack }) {
   if (isSettingsOpen) {
     return (
       <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <button type="button" onClick={closeBudgetSettings} style={button}>‹ Budgets</button>
-          <h1 style={{ flex: 1, margin: 0, color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic', textAlign: 'right' }}>
-            Budget Settings
-          </h1>
-        </div>
+        <PageHeader backLabel="Budgets" onBack={closeBudgetSettings}>Budget Settings</PageHeader>
         <section style={{ ...card, padding: '12px 14px' }}>
           <h2 style={{ margin: '0 0 8px', fontSize: 17 }}>Budget Mode</h2>
           <div style={{ display: 'grid', gap: 6 }}>
@@ -264,15 +260,17 @@ export default function Budgets({ transactions, today, onBack }) {
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <button type="button" onClick={onBack} style={button}>‹ More</button>
-        <h1 style={{ flex: 1, margin: 0, color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic', textAlign: 'right' }}>
-          Budgets
-        </h1>
-        <button type="button" aria-label="Budget settings" onClick={openBudgetSettings} style={{ ...button, padding: 8, fontSize: 17 }}>
-          ⚙
-        </button>
-      </div>
+      <PageHeader
+        backLabel="More"
+        onBack={onBack}
+        action={(
+          <button type="button" aria-label="Budget settings" onClick={openBudgetSettings} style={{ ...button, padding: 8, fontSize: 17 }}>
+            ⚙
+          </button>
+        )}
+      >
+        Budgets
+      </PageHeader>
 
       <section style={{ ...card, padding: '10px 14px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, color: '#79502A', fontSize: 12 }}>

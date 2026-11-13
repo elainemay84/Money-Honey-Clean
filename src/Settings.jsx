@@ -8,6 +8,7 @@ import {
   saveCategoryConfig
 } from './categoryData.js'
 import { loadPayees, savePayees } from './payeeData.js'
+import PageHeader from './PageHeader'
 
 const field = {
   padding: 9,
@@ -139,14 +140,7 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-        <button type="button" onClick={onBack} style={{ ...field, color: '#79502A', cursor: 'pointer' }}>
-          ‹ Settings
-        </button>
-        <h1 style={{ flex: 1, margin: 0, color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic', textAlign: 'right' }}>
-          Categories &amp; Payees
-        </h1>
-      </div>
+      <PageHeader backLabel="Settings" onBack={onBack}>Categories &amp; Payees</PageHeader>
 
       <section style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>

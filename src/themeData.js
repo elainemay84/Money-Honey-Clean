@@ -108,7 +108,9 @@ export const THEME_STYLES = {
     shadow: '5px 5px 0 rgba(62, 33, 64, 0.16)',
     pattern: 'radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.42) 0 7px, transparent 8px), radial-gradient(circle at 82% 72%, rgba(151, 53, 190, 0.22) 0 12px, transparent 13px), linear-gradient(135deg, #F33C9A 0%, #FF8F68 48%, #FFF09A 100%)',
     patternSize: 'auto, auto, 100% 100%',
-    nav: '#6B216D',
+    nav: 'linear-gradient(135deg, #FF55B5 0%, #9C40B9 100%)',
+    navActive: '#FFF08A',
+    navInactive: '#FFFFFF',
     buttonText: '#FFFFFF'
   },
   'pink-sugar': {
@@ -116,7 +118,9 @@ export const THEME_STYLES = {
     shadow: '5px 5px 0 rgba(62, 33, 64, 0.16)',
     pattern: 'linear-gradient(135deg, rgba(216, 79, 139, 0.08) 25%, transparent 25% 50%, rgba(255, 190, 45, 0.08) 50% 75%, transparent 75%)',
     patternSize: '28px 28px',
-    nav: '#3E2140',
+    nav: '#F6BEDC',
+    navActive: '#662649',
+    navInactive: '#774760',
     buttonText: '#FFFFFF'
   },
   'moody-plum': {
@@ -140,7 +144,9 @@ export const THEME_STYLES = {
     shadow: '0 7px 18px rgba(36, 53, 42, 0.16)',
     pattern: 'radial-gradient(ellipse at 10px 8px, rgba(82, 116, 91, 0.14) 0 2px, transparent 2.5px), radial-gradient(ellipse at 28px 22px, rgba(36, 53, 42, 0.1) 0 3px, transparent 3.5px), linear-gradient(68deg, transparent 42%, rgba(82, 116, 91, 0.08) 43% 46%, transparent 47% 100%)',
     patternSize: '46px 38px, 62px 52px, 54px 58px',
-    nav: '#5A3A2A',
+    nav: '#2F4938',
+    navActive: '#F0DCB4',
+    navInactive: '#E8E9DC',
     buttonText: '#F7F1E5'
   },
   bookstore: {
@@ -228,7 +234,9 @@ export const THEME_STYLES = {
     shadow: '0 6px 16px rgba(36, 67, 70, 0.12)',
     pattern: 'radial-gradient(ellipse at 50% 100%, transparent 0 18px, rgba(76, 154, 153, 0.1) 19px 20px, transparent 21px 30px)',
     patternSize: '64px 32px',
-    nav: '#244346',
+    nav: '#D6F0F0',
+    navActive: '#144F5D',
+    navInactive: '#436F79',
     buttonText: '#FFFFFF'
   },
   'sunflower-farmhouse': {
@@ -259,6 +267,25 @@ export const THEME_STYLES = {
 
 export function getThemeStyle(themeId) {
   return THEME_STYLES[themeId] ?? THEME_STYLES['honey-classic']
+}
+
+const BACKGROUND_DIRECTIONS = {
+  'left-to-right': 'to right',
+  'top-to-bottom': 'to bottom',
+  diagonal: '135deg'
+}
+
+export function getThemeBackground(theme) {
+  const backgroundStyle = theme?.backgroundStyle
+  if (
+    backgroundStyle?.type === 'gradient'
+    && backgroundStyle.color1
+    && backgroundStyle.color2
+  ) {
+    const direction = BACKGROUND_DIRECTIONS[backgroundStyle.direction] ?? BACKGROUND_DIRECTIONS.diagonal
+    return `linear-gradient(${direction}, ${backgroundStyle.color1}, ${backgroundStyle.color2})`
+  }
+  return theme?.colors?.background
 }
 
 const PREVIEW_DARK_TEXT = '#241b14'
@@ -299,6 +326,14 @@ export function previewTextColor(background) {
   return contrastRatio(PREVIEW_DARK_TEXT, background) >= contrastRatio(PREVIEW_LIGHT_TEXT, background)
     ? PREVIEW_DARK_TEXT
     : PREVIEW_LIGHT_TEXT
+}
+
+export function getNavigationColors(background, accent) {
+  const inactive = previewTextColor(background)
+  const active = contrastRatio(accent, background) >= 4.5
+    ? accent
+    : inactive
+  return { active, inactive }
 }
 
 const extraPresets = [
@@ -447,9 +482,16 @@ export function loadThemeSettings() {
       ...saved,
       themeId: preset.id,
       headingFont: FONT_STYLES[saved?.headingFont] ? saved.headingFont : preset.headingFont,
-      bodyFont: FONT_STYLES[saved?.bodyFont] ? saved.bodyFont : preset.bodyFont,
+      bodyFont: FONT_STYLES[saved?.bodyFont]
+        ? saved.bodyFont
+        : (FONT_STYLES[saved?.appFont] ? saved.appFont : preset.bodyFont),
       appFont: FONT_STYLES[saved?.appFont] ? saved.appFont : (preset.bodyFont ?? defaultTheme.bodyFont),
       lineSpacing: LINE_SPACING[saved?.lineSpacing] ? saved.lineSpacing : 'normal',
+      backgroundStyle: saved?.backgroundStyle?.type === 'gradient'
+        ? { ...saved.backgroundStyle }
+        : saved?.backgroundStyle?.type === 'solid'
+        ? { ...saved.backgroundStyle }
+        : undefined,
       colors: { ...preset.colors, ...(saved?.colors ?? {}) }
     }
   } catch {
@@ -468,6 +510,9 @@ export function saveThemeSettings(settings) {
     bodyFont: FONT_STYLES[settings.bodyFont] ? settings.bodyFont : preset.bodyFont,
     appFont: FONT_STYLES[settings.appFont] ? settings.appFont : (settings.bodyFont ?? preset.bodyFont),
     lineSpacing: LINE_SPACING[settings.lineSpacing] ? settings.lineSpacing : 'normal',
+    backgroundStyle: settings.backgroundStyle?.type === 'gradient' || settings.backgroundStyle?.type === 'solid'
+      ? { ...settings.backgroundStyle }
+      : undefined,
     colors: { ...preset.colors, ...(settings.colors ?? {}) }
   }
   localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(value))

@@ -8,6 +8,7 @@ import {
 } from './accountBalances.js'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import PageHeader from './PageHeader'
 import { BILL_STORAGE_KEY, loadBillData, saveBillData } from './billData.js'
 import { loadDebts, reconcileDebtPaymentForTransaction, removeDebtPaymentForTransaction } from './debtData.js'
 import {
@@ -645,6 +646,7 @@ export default function Accounts() {
               )}
               <button
                 type="button"
+                className="theme-danger-action"
                 onClick={() => {
                   if (window.confirm(`Permanently delete ${item.name} and its transactions?`)) {
                     deleteAccount(item.id)
@@ -664,36 +666,9 @@ export default function Accounts() {
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 210 }}>
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        marginBottom: 18
-      }}>
-        <button
-          type="button"
-          onClick={() => setScreen('overview')}
-          aria-label="Back to Accounts Overview"
-          style={{
-            ...field,
-            background: '#FFFFFF',
-            color: '#79502A',
-            cursor: 'pointer'
-          }}
-        >
-          ‹ Accounts
-        </button>
-        <h1 style={{
-          flex: 1,
-          margin: 0,
-          fontFamily: 'Georgia, serif',
-          fontStyle: 'italic',
-          color: '#B87522',
-          textAlign: 'right'
-        }}>
-          {account.name}
-        </h1>
-      </div>
+      <PageHeader backLabel="Accounts" onBack={() => setScreen('overview')}>
+        {account.name}
+      </PageHeader>
 
       <section style={{ ...card, background: '#F5D6A5', padding: 14 }}>
         <div style={{
@@ -1099,7 +1074,7 @@ export default function Accounts() {
                 >
                   Cancel
                 </button>
-                <button type="submit" style={{
+                <button type="submit" className="theme-primary-action" style={{
                   background: '#B87522',
                   color: 'white',
                   border: 'none',
@@ -1189,6 +1164,7 @@ export default function Accounts() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <button
                 type="button"
+                className="theme-secondary-action"
                 onClick={() => setDeleteConfirmation(null)}
                 style={{
                   background: '#FFFFFF',
@@ -1204,6 +1180,7 @@ export default function Accounts() {
               </button>
               <button
                 type="button"
+                className="theme-danger-action"
                 onClick={deleteTransaction}
                 style={{
                   background: '#9B463E',

@@ -898,7 +898,7 @@ export default function Bills() {
         )}
         {view === 'calendar' ? (
           <>
-            <div style={{
+            <div className="theme-month-separator" style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -1159,6 +1159,7 @@ export default function Bills() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <button
                 type="button"
+                className="theme-secondary-action"
                 onClick={() => setSelectedOccurrence(null)}
                 style={{ ...field, color: '#79502A', fontWeight: 'bold', cursor: 'pointer' }}
               >
@@ -1166,6 +1167,7 @@ export default function Bills() {
               </button>
               <button
                 type="button"
+                className="theme-primary-action"
                 onClick={confirmOccurrencePayment}
                 style={{
                   ...field,
@@ -1414,7 +1416,7 @@ export default function Bills() {
                   : 'Marking Received records one uncleared deposit in the associated account.'}
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <button type="button" onClick={() => setIsFormOpen(false)} style={{
+                <button type="button" className="theme-secondary-action" onClick={() => setIsFormOpen(false)} style={{
                   ...field,
                   color: '#79502A',
                   fontWeight: 'bold',
@@ -1422,7 +1424,7 @@ export default function Bills() {
                 }}>
                   Cancel
                 </button>
-                <button type="submit" style={{
+                <button type="submit" className="theme-primary-action" style={{
                   ...field,
                   border: 'none',
                   background: '#B87522',
@@ -1512,8 +1514,8 @@ export default function Bills() {
                 </button>
               )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <button type="button" onClick={() => setIsLinkDialogOpen(false)} style={smallAction}>Cancel</button>
-                <button type="submit" disabled={!selectedTransactionId} style={{
+                <button type="button" className="theme-secondary-action" onClick={() => setIsLinkDialogOpen(false)} style={smallAction}>Cancel</button>
+                <button type="submit" className="theme-primary-action" disabled={!selectedTransactionId} style={{
                   ...smallAction,
                   border: 'none',
                   background: '#B87522',
@@ -1596,6 +1598,7 @@ function renderOccurrenceRow(
         </strong>
         <button
           type="button"
+          className={`theme-status-action ${isRecorded ? 'theme-status-action-recorded' : ''}`}
           aria-label={`${isRecorded ? recordedLabel : actionLabel} ${occurrence.name}`}
           aria-pressed={isRecorded}
           onClick={event => {

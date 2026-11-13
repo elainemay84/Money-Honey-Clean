@@ -7,6 +7,12 @@ import Bills from './Bills'
 import Settings from './Settings'
 import Budgets from './Budgets'
 import Themes from './Themes'
+import Backup from './Backup'
+import DeleteConfirmation from './DeleteConfirmation'
+import PendingOperationNotice from './PendingOperationNotice'
+import { clearProfileActionNotice, getProfileActionNotice } from './profileActionNotice.js'
+import { clearRestoreNotice, hasRestoreNotice } from './backupRestoreNotice.js'
+import PageHeader from './PageHeader'
 import {
   createDemoBills,
   getTodayDate,
@@ -24,7 +30,16 @@ import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budg
 import { getCategories, loadCategoryConfig } from './categoryData.js'
 import { calculateDailySpending } from './dailySpending.js'
 import { loadAppearanceSize, saveAppearanceSize } from './appearanceData.js'
-import { FONT_STYLES, getThemeStyle, LINE_SPACING, loadThemeSettings, saveThemeSettings } from './themeData.js'
+import {
+  FONT_STYLES,
+  getNavigationColors,
+  getThemeBackground,
+  getThemeStyle,
+  LINE_SPACING,
+  loadThemeSettings,
+  previewTextColor,
+  saveThemeSettings
+} from './themeData.js'
 
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const formatForecastDate = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
@@ -48,15 +63,24 @@ function App() {
   const [isEditingPaySchedule, setIsEditingPaySchedule] = useState(false)
   const [payFrequency, setPayFrequency] = useState(paySchedule?.frequency ?? 'biweekly')
   const [nextPayday, setNextPayday] = useState(paySchedule?.nextPayday ?? today)
-  const [activePage, setActivePage] = useState('Home')
+  const [activePage, setActivePage] = useState(() => hasRestoreNotice() || getProfileActionNotice() ? 'Settings' : 'Home')
   const [budgetSettings, setBudgetSettings] = useState(() => loadBudgetSettings())
   const [, setBudgetRevision] = useState(0)
-  const [settingsView, setSettingsView] = useState('menu')
+  const [settingsView, setSettingsView] = useState(() => hasRestoreNotice() ? 'backup' : getProfileActionNotice() ?? 'menu')
   const [appearanceSize, setAppearanceSize] = useState(() => loadAppearanceSize())
   const [themeSettings, setThemeSettings] = useState(() => loadThemeSettings())
   const [themePreview, setThemePreview] = useState(null)
   const activeTheme = themePreview ?? themeSettings
   const themeStyle = getThemeStyle(activeTheme.themeId)
+  const isCustomTheme = activeTheme.themeId.startsWith('custom-')
+  const themeBackground = getThemeBackground(activeTheme)
+  const isGradientBackground = activeTheme.backgroundStyle?.type === 'gradient'
+  const themeNavigation = isCustomTheme
+    ? activeTheme.colors.tabs ?? activeTheme.colors.accent
+    : themeStyle.nav
+  const navigationColors = themeStyle.navActive && themeStyle.navInactive
+    ? { active: themeStyle.navActive, inactive: themeStyle.navInactive }
+    : getNavigationColors(themeNavigation, activeTheme.colors.accent)
   const paydayPeriod = getPaySchedulePeriod(paySchedule, today)
   const transactions = accountData?.transactions ?? []
   const paycheckForecast = calculatePaycheckForecast({
@@ -154,6 +178,16 @@ function App() {
     }
   }, [])
 
+  const isBackupOpen = activePage === 'Settings' && settingsView === 'backup'
+  useEffect(() => {
+    if (!isBackupOpen) clearRestoreNotice()
+  }, [isBackupOpen])
+
+  const isProfileActionOpen = activePage === 'Settings' && (settingsView === 'reset' || settingsView === 'delete')
+  useEffect(() => {
+    if (!isProfileActionOpen) clearProfileActionNotice()
+  }, [isProfileActionOpen])
+
   useEffect(() => {
     if (activePage !== 'Home') return
     setIsForecastOpen(false)
@@ -204,12 +238,6 @@ function App() {
       description: 'Export, import, or move your data from another file.'
     },
     {
-      key: 'security',
-      icon: '↻',
-      title: 'Security & PIN',
-      description: 'Protect your account with a reset PIN.'
-    },
-    {
       key: 'reset',
       icon: '↶',
       title: 'Reset App Data',
@@ -228,10 +256,10 @@ function App() {
       className={`app-shell appearance-${appearanceSize} theme-${activeTheme.themeId} theme-typography theme-customized`}
       style={{
       minHeight: '100vh',
-      background: activeTheme.colors.background,
+      background: themeBackground,
       color: activeTheme.colors.text,
       fontFamily: 'Arial, sans-serif',
-      '--theme-background': activeTheme.colors.background,
+      '--theme-background': themeBackground,
       '--theme-card': activeTheme.colors.card,
       '--theme-accent': activeTheme.colors.accent,
       '--theme-text': activeTheme.colors.text,
@@ -241,14 +269,25 @@ function App() {
       '--theme-line-spacing': LINE_SPACING[activeTheme.lineSpacing ?? 'normal'],
       '--theme-radius': themeStyle.radius,
       '--theme-shadow': themeStyle.shadow,
-      '--theme-pattern': themeStyle.pattern,
-      '--theme-pattern-size': themeStyle.patternSize,
-      '--theme-nav': themeStyle.nav,
+      '--theme-pattern': isGradientBackground
+        ? themeBackground
+        : isCustomTheme ? 'none' : themeStyle.pattern,
+      '--theme-pattern-size': isGradientBackground || isCustomTheme ? 'auto' : themeStyle.patternSize,
+      '--theme-nav': themeNavigation,
+      '--theme-nav-text': navigationColors.inactive,
+      '--theme-nav-active': navigationColors.active,
       '--theme-button-text': themeStyle.buttonText,
+      '--theme-secondary-text': previewTextColor(activeTheme.colors.card),
+      '--theme-muted-text': previewTextColor(activeTheme.colors.card),
+      '--theme-modal-text': activeTheme.colors.text,
+      '--theme-separator-text': previewTextColor('#F5D6A5'),
+      '--theme-status-text': '#304035',
+      '--theme-status-success-text': '#1D6339',
+      '--theme-danger-text': '#8F302D',
       padding: '24px 24px calc(112px + env(safe-area-inset-bottom))'
     }}
     >
-      
+      <PendingOperationNotice />
 {activePage === 'Home' ? (
       <main style={{ maxWidth: 460, margin: 'auto' }}>
         <h1 style={{
@@ -715,43 +754,61 @@ function App() {
       onTransactionsChange={updateSettingsTransactions}
       onBack={() => {
         setSettingsView('menu')
-        setActivePage('More')
       }}
     />
   ) : settingsView === 'themes' ? (
     <Themes
       settings={themePreview ?? themeSettings}
       onPreview={setThemePreview}
+      onManualTheme={() => setSettingsView('manual-theme')}
       onSave={settings => {
         const saved = saveThemeSettings(settings)
         setThemeSettings(saved)
         setThemePreview(null)
-        setSettingsView('menu')
+        return saved
       }}
       onBack={() => {
         setThemePreview(null)
         setSettingsView('menu')
       }}
     />
+  ) : settingsView === 'manual-theme' ? (
+    <Themes
+      settings={themePreview ?? themeSettings}
+      onPreview={setThemePreview}
+      manualMode
+      appearanceSize={appearanceSize}
+      onAppearanceSizeChange={size => setAppearanceSize(saveAppearanceSize(size))}
+      onSave={settings => {
+        const saved = saveThemeSettings(settings)
+        setThemeSettings(saved)
+        setThemePreview(null)
+        return saved
+      }}
+      onBack={() => {
+        setThemePreview(null)
+        setSettingsView('themes')
+      }}
+    />
+  ) :   settingsView === 'backup' ? (
+    <Backup
+      onBack={() => setSettingsView('menu')}
+      onHome={() => {
+        setSettingsView('menu')
+        setActivePage('Home')
+      }}
+    />
+  ) : settingsView === 'reset' || settingsView === 'delete' ? (
+    <DeleteConfirmation
+      key={settingsView}
+      kind={settingsView}
+      onBack={() => setSettingsView('menu')}
+    />
   ) : settingsView !== 'menu' ? (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-      <button
-        type="button"
-        onClick={() => setSettingsView('menu')}
-        style={{
-          padding: '9px 11px',
-          border: '1px solid #E9D6B7',
-          borderRadius: 9,
-          background: '#FFFFFF',
-          color: '#79502A',
-          cursor: 'pointer'
-        }}
-      >
-        ‹ Settings
-      </button>
-      <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>
+      <PageHeader backLabel="Settings" onBack={() => setSettingsView('menu')}>
         {settingsMenuItems.find(item => item.key === settingsView)?.title ?? 'Settings'}
-      </h1>
+      </PageHeader>
       <section style={{
         padding: 16,
         border: '1px solid #E9D6B7',
@@ -862,11 +919,6 @@ function App() {
               <span style={{ display: 'block', marginTop: 3, color: '#79502A', fontSize: 12 }}>
                 {item.description}
               </span>
-              {item.key !== 'categories' && (
-                <span style={{ display: 'inline-block', marginTop: 5, color: '#9A7652', fontSize: 10 }}>
-                  Coming Soon
-                </span>
-              )}
             </span>
             <span aria-hidden="true" style={{ color: '#B87522', fontSize: 20 }}>›</span>
           </button>
@@ -1008,12 +1060,11 @@ function App() {
   className={activePage === label ? 'theme-nav-item-active' : 'theme-nav-item'}
   onClick={() => setActivePage(label)}
   style={{
+      flex: 1,
       textAlign: 'center',
       fontSize: 12,
-      color: '#79502A',
-cursor: 'pointer',
-fontWeight: activePage === label ? 'bold' : 'normal',
-opacity: activePage === label ? 1 : 0.6
+      cursor: 'pointer',
+      fontWeight: activePage === label ? 'bold' : 'normal'
     }}>
       <div style={{ fontSize: 22, marginBottom: 4 }}>
         {symbol}

@@ -182,7 +182,7 @@ test('More opens Settings and Categories & Payees has a back path', async () => 
   assert.match(container.textContent, /Categories & Payees/)
   await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Categories & Payees')))
   await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Settings')))
-  assert.match(container.textContent, /More/)
+  assert.equal(container.querySelector('h1')?.textContent, 'Settings')
 })
 
 test('bottom navigation opens Budgets and keeps Ask Honey under More', async () => {

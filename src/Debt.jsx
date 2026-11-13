@@ -631,8 +631,8 @@ export default function Debt() {
               </label>
               {formError && <p role="alert" style={{ margin: 0, color: '#9B463E', fontSize: 12 }}>{formError}</p>}
               <div style={{ position: 'sticky', bottom: -20, display: 'flex', justifyContent: 'flex-end', gap: 8, margin: '4px -20px -20px', padding: '12px 20px max(12px, env(safe-area-inset-bottom))', background: '#FFF8ED', borderTop: '1px solid #E9D6B7' }}>
-                  <button type="button" onClick={() => setIsFormOpen(false)} style={control}>Cancel</button>
-                  <button type="submit" style={{ ...control, minHeight: 42, border: 'none', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
+                  <button type="button" className="theme-secondary-action" onClick={() => setIsFormOpen(false)} style={control}>Cancel</button>
+                  <button type="submit" className="theme-primary-action" style={{ ...control, minHeight: 42, border: 'none', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
                     {editingDebtId === null ? 'Add Debt' : 'Save Debt'}
                   </button>
               </div>

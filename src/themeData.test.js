@@ -5,6 +5,8 @@ import {
   THEME_STORAGE_KEY,
   THEME_PRESETS,
   getDefaultThemeSettings,
+  getNavigationColors,
+  getThemeBackground,
   getThemeStyle,
   loadCustomThemes,
   loadThemeSettings,
@@ -12,6 +14,31 @@ import {
   saveCustomThemes,
   saveThemeSettings
 } from './themeData.js'
+
+test('focused themes use their coordinated navigation colors', () => {
+  const coastal = getThemeStyle('coastal-clean')
+  assert.equal(coastal.nav, '#D6F0F0')
+  assert.equal(coastal.navActive, '#144F5D')
+  assert.equal(coastal.navInactive, '#436F79')
+  assert.equal(getThemeStyle('forest-cabin').nav, '#2F4938')
+  assert.equal(getThemeStyle('forest-cabin').navActive, '#F0DCB4')
+  assert.equal(getThemeStyle('forest-cabin').navInactive, '#E8E9DC')
+  assert.equal(getThemeStyle('pink-sugar').nav, '#F6BEDC')
+  assert.equal(getThemeStyle('pink-sugar').navActive, '#662649')
+  assert.equal(getThemeStyle('pink-sugar').navInactive, '#774760')
+  assert.equal(getThemeStyle('funky-pop').nav, 'linear-gradient(135deg, #FF55B5 0%, #9C40B9 100%)')
+  assert.equal(getThemeStyle('funky-pop').navActive, '#FFF08A')
+  assert.equal(getThemeStyle('funky-pop').navInactive, '#FFFFFF')
+})
+
+test('navigation colors maintain contrast against light and dark theme nav backgrounds', () => {
+  const light = getNavigationColors('#FFF3DF', '#B87522')
+  const dark = getNavigationColors('#3E2140', '#D84F8B')
+  assert.equal(light.inactive, '#241b14')
+  assert.equal(dark.inactive, '#fffaf2')
+  assert.equal(light.active, '#241b14')
+  assert.equal(dark.active, '#fffaf2')
+})
 
 function withStorage(values = {}) {
   const original = globalThis.localStorage
@@ -50,6 +77,29 @@ test('invalid saved themes and fonts fall back safely', () => {
   assert.equal(settings.headingFont, 'breeSerif')
   assert.equal(settings.bodyFont, 'nunito')
   restore()
+})
+
+test('legacy app font migrates to body font without replacing an explicit body font', () => {
+  const restore = withStorage({
+    [THEME_STORAGE_KEY]: JSON.stringify({
+      themeId: 'honey-classic',
+      headingFont: 'greatVibes',
+      appFont: 'pacifico'
+    })
+  })
+  assert.equal(loadThemeSettings().bodyFont, 'pacifico')
+  restore()
+
+  const restoreExplicit = withStorage({
+    [THEME_STORAGE_KEY]: JSON.stringify({
+      themeId: 'honey-classic',
+      headingFont: 'greatVibes',
+      appFont: 'pacifico',
+      bodyFont: 'nunito'
+    })
+  })
+  assert.equal(loadThemeSettings().bodyFont, 'nunito')
+  restoreExplicit()
 })
 
 test('theme preview text chooses readable colors for light, dark, and invalid backgrounds', () => {
@@ -138,4 +188,55 @@ test('named custom themes persist independently and can be edited or removed', (
   assert.deepEqual(loadCustomThemes(), [])
   assert.ok(globalThis.localStorage.getItem(CUSTOM_THEME_STORAGE_KEY))
   restore()
+})
+
+test('custom theme saves persist the custom theme as active', () => {
+  const restore = withStorage()
+  const customTheme = {
+    id: 'custom-active',
+    name: 'Active Theme',
+    colors: { background: '#111111', card: '#222222', accent: '#DDAA44', text: '#FFFFFF' },
+    headingFont: 'sora',
+    bodyFont: 'dmSans',
+    appFont: 'dmSans',
+    lineSpacing: 'normal'
+  }
+  saveCustomThemes([customTheme])
+  const saved = saveThemeSettings({ ...customTheme, themeId: customTheme.id })
+  assert.equal(saved.themeId, customTheme.id)
+  assert.equal(loadThemeSettings().themeId, customTheme.id)
+  restore()
+})
+
+test('background styles preserve legacy solids and render explicit gradients', () => {
+  assert.equal(getThemeBackground({
+    colors: { background: '#FDF744' }
+  }), '#FDF744')
+  assert.equal(getThemeBackground({
+    colors: { background: '#111111' },
+    backgroundStyle: {
+      type: 'gradient',
+      color1: '#FF55B5',
+      color2: '#FFF08A',
+      direction: 'left-to-right'
+    }
+  }), 'linear-gradient(to right, #FF55B5, #FFF08A)')
+  assert.equal(getThemeBackground({
+    colors: { background: '#111111' },
+    backgroundStyle: {
+      type: 'gradient',
+      color1: '#FF55B5',
+      color2: '#FFF08A',
+      direction: 'top-to-bottom'
+    }
+  }), 'linear-gradient(to bottom, #FF55B5, #FFF08A)')
+  assert.equal(getThemeBackground({
+    colors: { background: '#111111' },
+    backgroundStyle: {
+      type: 'gradient',
+      color1: '#FF55B5',
+      color2: '#FFF08A',
+      direction: 'diagonal'
+    }
+  }), 'linear-gradient(135deg, #FF55B5, #FFF08A)')
 })
