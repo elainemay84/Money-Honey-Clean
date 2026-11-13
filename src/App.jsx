@@ -936,6 +936,7 @@ function App() {
 ) : activePage === 'Reports' ? (
   <Reports
     transactions={transactions}
+    accounts={accountData?.accounts ?? []}
     today={today}
     cardColor={activeTheme.colors.card}
     onBack={() => setActivePage('More')}

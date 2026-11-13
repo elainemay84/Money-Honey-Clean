@@ -6,7 +6,11 @@ import {
   MAX_CHART_SLICES,
   contrastRatio,
   formatMonthLabel,
+  getBarShares,
   getChartColors,
+  getIncomeExpenseColors,
+  getIncomeVsExpenses,
+  getReportFlags,
   getDoughnutSegments,
   getMonthBounds,
   getSpendingByCategory,
@@ -57,13 +61,15 @@ test('money is added in cents so floating-point errors never appear', () => {
   assert.equal(result.total, 0.37)
 })
 
-test('the totals equal the Budgets calculation for the same month', () => {
+test('the totals equal the Budgets calculation for the same month, including refunds and uncategorized spending', () => {
   const transactions = [
     expense('Groceries', 40),
     expense('Groceries', 12.34, '2026-11-02', { cleared: false }),
     expense('Housing & Utilities', 900, '2026-11-01', { linkedOccurrenceId: 'bill:1:2026-11-01' }),
     expense('Housing & Utilities', 900, '2026-11-01', { linkedOccurrenceId: 'bill:1:2026-11-01' }),
     expense('Debt Payments', 214),
+    expense('Shopping', 14, '2026-11-09', { linkedDebtId: 3, linkedDebtPaymentId: 'p2' }),
+    expense(undefined, 18.5),
     expense('Shopping', 75, '2026-10-30'),
     credit('Groceries', 10),
     credit('Paycheck', 1500)
@@ -73,10 +79,11 @@ test('the totals equal the Budgets calculation for the same month', () => {
 
   assert.deepEqual(Object.fromEntries(result.items.map(item => [item.category, item.amount])), {
     'Housing & Utilities': 900,
-    Groceries: 52.34
+    Groceries: 42.34,
+    Uncategorized: 18.5
   })
-  for (const item of result.items) assert.equal(item.amount, Math.round(budgets[item.category] * 100) / 100)
-  assert.equal(result.items.length, Object.keys(budgets).length)
+  assert.deepEqual(Object.fromEntries(result.items.map(item => [item.category, item.amount])), budgets)
+  assert.equal(result.total, 960.84)
 })
 
 test('empty months and months with no expenses give an empty report', () => {
@@ -98,18 +105,29 @@ test('income and unrelated months are never counted as spending', () => {
   assert.deepEqual(result.items.map(item => item.category), ['Groceries'])
 })
 
-test('refunds never inflate spending; they are reported separately and not subtracted', () => {
+test('refunds reduce the spending of their own category and never add to it', () => {
   const result = report([
     expense('Shopping', 100),
     credit('Shopping', 40),
+    expense('Groceries', 60),
     credit('Paycheck', 1500),
     credit('Shopping', 15, '2026-10-02')
   ])
 
-  assert.equal(result.total, 100)
-  assert.equal(result.items[0].amount, 100)
+  assert.equal(result.total, 120)
+  assert.deepEqual(result.items.map(item => [item.category, item.amount]), [['Groceries', 60], ['Shopping', 60]])
   assert.equal(result.refundTotal, 40)
+  assert.equal(result.unmatchedRefundTotal, 0)
   assert.equal(report([expense('Shopping', 100)]).refundTotal, 0)
+})
+
+test('a refund larger than the category spending never shows negative spending and is reported as unmatched', () => {
+  const result = report([expense('Shopping', 30), credit('Shopping', 80), expense('Groceries', 20)])
+  assert.deepEqual(result.items.map(item => [item.category, item.amount]), [['Groceries', 20], ['Shopping', 0]].filter(([, amount]) => amount > 0))
+  assert.equal(result.total, 20)
+  assert.equal(result.refundTotal, 30)
+  assert.equal(result.unmatchedRefundTotal, 50)
+  assert.equal(report([credit('Shopping', 25)]).total, 0)
 })
 
 test('transfers between accounts are excluded however they are marked', () => {
@@ -149,13 +167,14 @@ test('cleared and pending transactions both count, matching Budgets', () => {
   assert.equal(result.total, 15)
 })
 
-test('expenses outside the active expense categories are left out, as Budgets does', () => {
+test('expenses with no usable category are shown as Uncategorized instead of being dropped', () => {
   const result = getSpendingByCategory({
-    transactions: [expense('Groceries', 10), expense('Old Category', 90), expense(undefined, 5)],
+    transactions: [expense('Groceries', 10), expense('Old Category', 90), expense(undefined, 5), expense('   ', 1)],
     month: '2026-11',
     categories: ['Groceries']
   })
-  assert.equal(result.total, 10)
+  assert.equal(result.total, 106)
+  assert.deepEqual(result.items.map(item => [item.category, item.amount]), [['Uncategorized', 96], ['Groceries', 10]])
 })
 
 test('custom categories appear in the report', () => {
@@ -243,4 +262,244 @@ test('building a report never changes the transactions it reads', () => {
   const before = JSON.stringify(transactions)
   report(transactions)
   assert.equal(JSON.stringify(transactions), before)
+})
+
+// ---- Income vs. Expenses ----
+const cashFlow = (transactions, month = '2026-11', cats = categories) => getIncomeVsExpenses({ transactions, month, categories: cats })
+
+test('income, expenses, and net cash flow come from the month\'s recorded transactions', () => {
+  const result = cashFlow([
+    credit('Paycheck', 2000, '2026-11-01'),
+    credit('Other Income', 250.5, '2026-11-15'),
+    expense('Groceries', 120.25),
+    expense('Housing & Utilities', 900),
+    expense('Paycheck', 0, '2026-11-02'),
+    credit('Paycheck', 5000, '2026-10-31'),
+    expense('Groceries', 70, '2026-12-01')
+  ])
+
+  assert.equal(result.income, 2250.5)
+  assert.equal(result.expenses, 1020.25)
+  assert.equal(result.net, 1230.25)
+  assert.equal(result.refundTotal, 0)
+  assert.equal(result.hasActivity, true)
+})
+
+test('negative net cash flow is reported when expenses exceed income', () => {
+  const result = cashFlow([credit('Paycheck', 500), expense('Housing & Utilities', 900)])
+  assert.equal(result.net, -400)
+  assert.equal(cashFlow([credit('Paycheck', 500), expense('Groceries', 500)]).net, 0)
+})
+
+test('empty months and months of only excluded items have no activity', () => {
+  assert.deepEqual(cashFlow([]), {
+    month: '2026-11', income: 0, expenses: 0, net: 0, debtPayments: 0, refundTotal: 0, unmatchedRefundTotal: 0, hasActivity: false
+  })
+  const onlyTransfers = cashFlow([expense('Other', 300, '2026-11-02', { type: 'transfer' }), credit('Other', 300, '2026-11-02', { type: 'transfer' })])
+  assert.equal(onlyTransfers.hasActivity, false)
+  assert.equal(cashFlow([credit('Paycheck', 100, '2026-10-02')]).hasActivity, false)
+})
+
+test('transfers are excluded on both the money-in and money-out side', () => {
+  const result = cashFlow([
+    expense('Other', 500, '2026-11-03', { type: 'transfer' }),
+    credit('Other Income', 500, '2026-11-03', { isTransfer: true }),
+    expense('Other', 500, '2026-11-03', { transferId: 't1' }),
+    credit('Other Income', 500, '2026-11-03', { transferId: 't1' }),
+    expense('Other', 500, '2026-11-03', { name: 'Transfer to Savings' }),
+    credit('Other Income', 500, '2026-11-03', { name: 'Transfer from Checking' }),
+    expense('Other', 500, '2026-11-03', { name: 'Payment to Credit Card' }),
+    credit('Paycheck', 1000),
+    expense('Groceries', 40)
+  ])
+  assert.equal(result.income, 1000)
+  assert.equal(result.expenses, 40)
+})
+
+test('uncategorized and unknown-category transactions count toward overall cash flow', () => {
+  const result = cashFlow([
+    expense(undefined, 30),
+    expense('Old Deleted Category', 70),
+    credit(undefined, 200),
+    credit('Mystery', 50),
+    expense('Groceries', 10)
+  ])
+  assert.equal(result.expenses, 110)
+  assert.equal(result.income, 250)
+  assert.equal(result.refundTotal, 0)
+})
+
+test('debt payments are reported separately and never counted as expenses or income', () => {
+  const result = cashFlow([
+    expense('Debt Payments', 214, '2026-11-10', { name: 'Debt payment · Card', linkedDebtId: 1, linkedDebtPaymentId: 'p1', transactionType: 'debt-payment' }),
+    expense('Housing & Utilities', 150, '2026-11-01', { linkedOccurrenceId: 'bill:1:2026-11-01', linkedDebtId: 2 }),
+    expense('Groceries', 50),
+    credit('Paycheck', 2000)
+  ])
+  assert.equal(result.expenses, 50)
+  assert.equal(result.debtPayments, 364)
+  assert.equal(result.income, 2000)
+  assert.equal(result.net, 1950)
+  assert.equal(result.hasActivity, true)
+  assert.equal(cashFlow([expense('Debt Payments', 214, '2026-11-10', { linkedDebtId: 1 })]).hasActivity, true)
+})
+
+test('credit card payments linked to a debt are not double counted when the card purchases are expenses', () => {
+  const result = cashFlow([
+    expense('Shopping', 120),
+    expense('Eating Out', 80),
+    expense('Other', 200, '2026-11-20', { name: 'Chase Visa payment', linkedDebtId: 4, linkedDebtPaymentId: 'p7', transactionType: 'debt-payment' })
+  ])
+  assert.equal(result.expenses, 200)
+  assert.equal(result.debtPayments, 200)
+  assert.equal(report([
+    expense('Shopping', 120), expense('Eating Out', 80),
+    expense('Other', 200, '2026-11-20', { name: 'Chase Visa payment', linkedDebtId: 4 })
+  ]).total, 200)
+})
+
+test('credits on a credit card account are not income, and card-account refunds still reduce spending', () => {
+  const accounts = [{ id: 1, type: 'Checking' }, { id: 2, type: 'Credit Card' }]
+  const result = getIncomeVsExpenses({
+    transactions: [
+      credit('Paycheck', 2000),
+      credit('Paycheck', 500, '2026-11-12', { accountId: 2, name: 'Payment received' }),
+      expense('Shopping', 100, '2026-11-05', { accountId: 2 }),
+      credit('Shopping', 25, '2026-11-06', { accountId: 2 })
+    ],
+    month: '2026-11',
+    categories,
+    accounts
+  })
+  assert.equal(result.income, 2000)
+  assert.equal(result.expenses, 75)
+})
+
+test('bills and income already represented by transactions are counted once, cleared or not', () => {
+  const bill = 'bill:3:2026-11-05'
+  const pay = 'income:1:2026-11-01'
+  const result = cashFlow([
+    expense('Subscriptions', 15.99, '2026-11-05', { linkedOccurrenceId: bill, cleared: false }),
+    expense('Subscriptions', 15.99, '2026-11-05', { linkedOccurrenceId: bill, cleared: true }),
+    credit('Paycheck', 1500, '2026-11-01', { linkedOccurrenceId: pay, cleared: false }),
+    credit('Paycheck', 1500, '2026-11-01', { linkedOccurrenceId: pay, cleared: true })
+  ])
+  assert.equal(result.expenses, 15.99)
+  assert.equal(result.income, 1500)
+})
+
+test('a duplicate link that straddles a month boundary is resolved the same way as Budgets', () => {
+  const link = 'bill:9:2026-11-30'
+  const transactions = [
+    expense('Subscriptions', 20, '2026-11-30', { linkedOccurrenceId: link }),
+    expense('Subscriptions', 20, '2026-12-01', { linkedOccurrenceId: link })
+  ]
+  assert.equal(cashFlow(transactions, '2026-11').expenses, 20)
+  assert.equal(cashFlow(transactions, '2026-12').expenses, 0)
+  assert.equal(report(transactions, '2026-12').total, 0)
+})
+
+test('refunds reduce expenses and are never counted as new income', () => {
+  const result = cashFlow([
+    expense('Shopping', 100),
+    credit('Shopping', 40),
+    credit('Paycheck', 1000)
+  ])
+  assert.equal(result.expenses, 60)
+  assert.equal(result.income, 1000)
+  assert.equal(result.refundTotal, 40)
+  assert.equal(result.net, 940)
+})
+
+test('an unmatched refund is neither income nor an expense reduction', () => {
+  const result = cashFlow([expense('Shopping', 10), credit('Shopping', 50), credit('Paycheck', 1000)])
+  assert.equal(result.expenses, 0)
+  assert.equal(result.income, 1000)
+  assert.equal(result.unmatchedRefundTotal, 40)
+  assert.equal(result.net, 1000)
+})
+
+test('a payment and its reversal both stay on the record and cancel out in net cash flow', () => {
+  const result = cashFlow([expense('Shopping', 60), credit('Shopping', 60), credit('Paycheck', 500)])
+  assert.equal(result.net, 500)
+})
+
+test('expenses always equal the Spending by Category total, because both use the same rules', () => {
+  const transactions = [
+    expense('Groceries', 80),
+    expense('Gas & Fuel', 20),
+    expense('Debt Payments', 214),
+    expense(undefined, 5),
+    expense('Old Category', 7),
+    credit('Gas & Fuel', 4),
+    credit('Paycheck', 900)
+  ]
+  const flow = cashFlow(transactions)
+  assert.equal(flow.expenses, report(transactions).total)
+  assert.equal(flow.expenses, 108)
+  assert.equal(flow.debtPayments, 214)
+})
+
+test('money is added in cents and invalid records are ignored', () => {
+  const result = cashFlow([
+    credit('Paycheck', 0.1),
+    credit('Paycheck', 0.2),
+    expense('Groceries', 0.07),
+    { id: 900, date: '2026-11-04', amount: 'abc', category: 'Groceries' },
+    { id: 901, date: 'bad-date', amount: -50, category: 'Groceries' },
+    { id: 902, amount: -50, category: 'Groceries' }
+  ])
+  assert.equal(result.income, 0.3)
+  assert.equal(result.expenses, 0.07)
+  assert.equal(result.net, 0.23)
+})
+
+test('switching months gives each month its own totals', () => {
+  const transactions = [
+    credit('Paycheck', 1000, '2026-09-30'), expense('Groceries', 100, '2026-09-30'),
+    credit('Paycheck', 2000, '2026-10-01'), expense('Groceries', 700, '2026-10-31'),
+    credit('Paycheck', 3000, '2026-11-01')
+  ]
+  assert.deepEqual(['2026-09', '2026-10', '2026-11', '2026-12'].map(month => cashFlow(transactions, month).net), [900, 1300, 3000, 0])
+})
+
+test('income vs expenses never changes the transactions it reads', () => {
+  const transactions = [credit('Paycheck', 5), expense('Groceries', 2, '2026-11-02', { linkedOccurrenceId: 'x' })]
+  const before = JSON.stringify(transactions)
+  cashFlow(transactions)
+  assert.equal(JSON.stringify(transactions), before)
+})
+
+test('bar lengths are relative to the larger amount and stay visible when small', () => {
+  assert.deepEqual(getBarShares(1000, 500), { income: 1, expenses: 0.5 })
+  assert.deepEqual(getBarShares(0, 0), { income: 0, expenses: 0 })
+  assert.deepEqual(getBarShares(0, 80), { income: 0, expenses: 1 })
+  assert.equal(getBarShares(10000, 1).expenses, 0.02)
+})
+
+test('income and expense bar colors are readable on every preset theme card and extremes', () => {
+  const cards = [...THEME_PRESETS.map(theme => theme.colors.card), '#000000', '#FFFFFF', '#808080', '#0F0']
+  for (const card of cards) {
+    const { income, expenses } = getIncomeExpenseColors(card)
+    assert.ok(contrastRatio(income, card) >= 3, `income ${income} on ${card}`)
+    assert.ok(contrastRatio(expenses, card) >= 3, `expenses ${expenses} on ${card}`)
+    assert.notEqual(income, expenses)
+  }
+})
+
+test('report flags list records that need a category or type without changing anything', () => {
+  const transactions = [
+    expense(undefined, 12, '2026-11-03'),
+    expense('Gone', 9, '2026-11-04'),
+    expense('Other', 300, '2026-11-05', { name: 'Chase Visa payment' }),
+    credit('Other Income', 35, '2026-11-06', { name: 'Refund from store' }),
+    credit('Shopping', 90, '2026-11-07'),
+    expense('Groceries', 40, '2026-10-02')
+  ]
+  const before = JSON.stringify(transactions)
+  const flags = getReportFlags({ transactions, month: '2026-11', categories })
+
+  assert.deepEqual(flags.map(flag => flag.reason), ['uncategorized', 'unknown-category', 'possible-card-payment', 'possible-refund', 'unmatched-refund'])
+  assert.equal(JSON.stringify(transactions), before)
+  assert.deepEqual(getReportFlags({ transactions, month: '2026-09', categories }), [])
 })

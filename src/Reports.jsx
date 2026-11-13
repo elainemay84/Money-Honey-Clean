@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
 import PageHeader from './PageHeader'
+import ClassificationReviewReport from './ClassificationReviewReport.jsx'
+import IncomeVsExpensesReport from './IncomeVsExpensesReport.jsx'
 import { formatMonthLabel, getMonthBounds, shiftMonth } from './reportData.js'
 import SpendingByCategoryReport from './SpendingByCategoryReport.jsx'
 
@@ -23,13 +25,15 @@ const arrowButton = {
   cursor: 'pointer'
 }
 
-// Add future reports (Income vs. Expenses, Cash Flow, Debt Progress, Spending Trends) here. Each section
+// Add future reports (Cash Flow, Debt Progress, Spending Trends) here. Each section
 // receives the same inputs and is rendered in order under the shared month selector.
 const REPORT_SECTIONS = [
-  { id: 'spending-by-category', Component: SpendingByCategoryReport }
+  { id: 'spending-by-category', Component: SpendingByCategoryReport },
+  { id: 'income-vs-expenses', Component: IncomeVsExpensesReport },
+  { id: 'needs-classification', Component: ClassificationReviewReport }
 ]
 
-export default function Reports({ transactions, today, cardColor = '#FFFFFF', onBack }) {
+export default function Reports({ transactions, accounts = [], today, cardColor = '#FFFFFF', onBack }) {
   const currentMonth = today.slice(0, 7)
   const [month, setMonth] = useState(currentMonth)
   const { customCategories, builtInNames, disabledBuiltIns } = loadCategoryConfig()
@@ -67,6 +71,7 @@ export default function Reports({ transactions, today, cardColor = '#FFFFFF', on
           key={id}
           transactions={transactions}
           categories={categories}
+          accounts={accounts}
           month={month}
           cardColor={cardColor}
         />

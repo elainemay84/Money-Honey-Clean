@@ -1,4 +1,5 @@
-import { getBudgetEligibleTransactions } from './budgetData.js'
+import { getBudgetSpendingEntries } from './budgetData.js'
+import { netSpending } from './transactionRules.js'
 
 function addDays(date, days) {
   const value = new Date(`${date}T00:00:00Z`)
@@ -19,29 +20,21 @@ export function calculateDailySpending({
   categories = [],
   budgets = {}
 }) {
-  const eligibleTransactions = getBudgetEligibleTransactions({ transactions, categories })
-  const todaySpending = eligibleTransactions
-    .filter(transaction => transaction.date === today)
-    .reduce((total, transaction) => total + Math.abs(transaction.amount), 0)
+  const entries = getBudgetSpendingEntries({ transactions, categories })
+  const spendingIn = predicate => netSpending(entries.filter(predicate)).totalCents / 100
+  const todaySpending = spendingIn(entry => entry.date === today)
 
   const historyStart = addDays(today, -29)
-  const historicalTransactions = eligibleTransactions.filter(transaction =>
-    transaction.date >= historyStart
-      && transaction.date <= today
-  )
-  const historicalDates = new Set(historicalTransactions.map(transaction => transaction.date))
-  const averageDailySpending = historicalDates.size >= 3
-    ? historicalTransactions.reduce((total, transaction) => total + Math.abs(transaction.amount), 0) / 30
-    : null
+  const inHistory = entry => entry.date >= historyStart && entry.date <= today
+  const historicalDates = new Set(entries.filter(entry => entry.kind === 'purchase' && inHistory(entry)).map(entry => entry.date))
+  const averageDailySpending = historicalDates.size >= 3 ? spendingIn(inHistory) / 30 : null
 
   const budgetTotal = Object.values(budgets).reduce((total, amount) => {
     const value = Number(amount)
     return Number.isFinite(value) && value >= 0 ? total + value : total
   }, 0)
   const currentMonth = today.slice(0, 7)
-  const currentMonthSpending = eligibleTransactions
-    .filter(transaction => transaction.date.slice(0, 7) === currentMonth)
-    .reduce((total, transaction) => total + Math.abs(transaction.amount), 0)
+  const currentMonthSpending = spendingIn(entry => entry.date?.slice(0, 7) === currentMonth)
   const remainingBudget = Object.keys(budgets).length
     ? Math.max(0, budgetTotal - currentMonthSpending)
     : null

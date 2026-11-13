@@ -22,8 +22,8 @@ function formatPercent(item) {
   return item.percent === 0 ? '<1%' : `${item.percent}%`
 }
 
-export default function SpendingByCategoryReport({ transactions, categories, month, cardColor }) {
-  const report = getSpendingByCategory({ transactions, month, categories })
+export default function SpendingByCategoryReport({ transactions, categories, accounts, month, cardColor }) {
+  const report = getSpendingByCategory({ transactions, month, categories, accounts })
   const label = formatMonthLabel(month)
   const colors = getChartColors(report.items, cardColor)
   const segments = getDoughnutSegments(report.items, RADIUS)
@@ -99,7 +99,7 @@ export default function SpendingByCategoryReport({ transactions, categories, mon
 
           {report.refundTotal > 0 && (
             <p style={{ margin: '8px 0 0', fontSize: 11, opacity: 0.8 }}>
-              {money(report.refundTotal)} in refunds this month are not subtracted, matching Budgets.
+              Net of {money(report.refundTotal)} in refunds.
             </p>
           )}
         </>

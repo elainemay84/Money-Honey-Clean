@@ -179,3 +179,33 @@ test('returns insufficient information without a forecast endpoint or history', 
   assert.equal(result.averageDailySpending, null)
   assert.equal(result.remainingToday, null)
 })
+
+test('daily spending uses the shared rules: refunds reduce it, uncategorized counts, debt-linked payments do not', () => {
+  const result = calculateDailySpending({
+    today: '2026-11-11',
+    categories: ['Shopping', 'Groceries'],
+    forecast: forecast('2026-11-12', 100),
+    transactions: [
+      { name: 'Shopping', category: 'Shopping', amount: -50, date: '2026-11-11' },
+      { name: 'Return', category: 'Shopping', amount: 20, date: '2026-11-11' },
+      { name: 'No category', amount: -15, date: '2026-11-11' },
+      { name: 'Card bill', category: 'Shopping', amount: -300, date: '2026-11-11', linkedDebtId: 1, transactionType: 'debt-payment' },
+      { name: 'Paycheck', category: 'Paycheck', amount: 900, date: '2026-11-11' }
+    ]
+  })
+
+  assert.equal(result.todaySpending, 45)
+})
+
+test('a refund larger than the day\'s spending never makes spending negative', () => {
+  const result = calculateDailySpending({
+    today: '2026-11-11',
+    categories: ['Shopping'],
+    forecast: forecast('2026-11-12', 100),
+    transactions: [
+      { name: 'Shopping', category: 'Shopping', amount: -10, date: '2026-11-11' },
+      { name: 'Return', category: 'Shopping', amount: 40, date: '2026-11-11' }
+    ]
+  })
+  assert.equal(result.todaySpending, 0)
+})

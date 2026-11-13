@@ -1,3 +1,5 @@
+import { classifyTransactions, getSpendingEntries, netSpending } from './transactionRules.js'
+
 export const BUDGET_STORAGE_KEY = 'money-honey-budgets'
 export const MANUAL_BUDGET_STORAGE_KEY = 'money-honey-manual-budgets'
 export const SMART_BUDGET_STORAGE_KEY = 'money-honey-smart-budgets'
@@ -165,35 +167,21 @@ export function getCompleteBudgetMonths(today, count) {
   })
 }
 
-export function getBudgetEligibleTransactions({ transactions, categories }) {
-  const allowedCategories = new Set(categories)
-  const seenLinkedTransactions = new Set()
-  return transactions
-    .filter(transaction =>
-      transaction.amount < 0
-      && allowedCategories.has(transaction.category)
-      && transaction.category !== 'Debt Payments'
-      && transaction.type !== 'transfer'
-      && transaction.isTransfer !== true
-      && !transaction.transferId
-      && !/^(transfer|payment to (credit card|debt))/i.test(transaction.name ?? '')
-    )
-    .filter(transaction => {
-      if (!transaction.linkedOccurrenceId) return true
-      if (seenLinkedTransactions.has(transaction.linkedOccurrenceId)) return false
-      seenLinkedTransactions.add(transaction.linkedOccurrenceId)
-      return true
-    })
+// Purchases (+) and refunds (-) by category, from the shared classification rules in transactionRules.js.
+// Budgets, Daily Spending, and Reports all read spending through this, so they always agree.
+export function getBudgetSpendingEntries({ transactions, categories }) {
+  return getSpendingEntries(classifyTransactions({ transactions, categories }))
 }
 
 export function analyzeSmartBudgets({ transactions, today, categories, historyMonths }) {
   const months = getCompleteBudgetMonths(today, historyMonths)
-  const monthSet = new Set(months)
   const totals = Object.fromEntries(categories.map(category => [category, 0]))
-  const eligibleTransactions = getBudgetEligibleTransactions({ transactions, categories })
-    .filter(transaction => monthSet.has(transaction.date?.slice(0, 7)))
-  for (const transaction of eligibleTransactions) {
-    totals[transaction.category] += Math.abs(transaction.amount)
+  const entries = getBudgetSpendingEntries({ transactions, categories })
+  for (const month of months) {
+    const { byCategory } = netSpending(entries.filter(entry => entry.date?.slice(0, 7) === month))
+    for (const [category, cents] of Object.entries(byCategory)) {
+      if (category in totals) totals[category] += cents / 100
+    }
   }
   return {
     months,
@@ -235,10 +223,8 @@ export function calculateBudgetSnapshot({ transactions, today, categories, mode,
 
 export function getBudgetSpendingByCategory({ transactions, today, categories }) {
   const month = today.slice(0, 7)
-  return getBudgetEligibleTransactions({ transactions, categories })
-    .filter(transaction => transaction.date?.slice(0, 7) === month)
-    .reduce((totals, transaction) => ({
-      ...totals,
-      [transaction.category]: (totals[transaction.category] ?? 0) + Math.abs(transaction.amount)
-    }), {})
+  const { byCategory } = netSpending(
+    getBudgetSpendingEntries({ transactions, categories }).filter(entry => entry.date?.slice(0, 7) === month)
+  )
+  return Object.fromEntries(Object.entries(byCategory).map(([category, cents]) => [category, cents / 100]))
 }

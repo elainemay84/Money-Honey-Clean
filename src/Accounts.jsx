@@ -1,3 +1,19 @@
+                  {category === '' && <option value="">Uncategorized</option>}
+                  {category !== '' && !categoryOptions.includes(category) && !refundOptions.includes(category) && (
+                    <option value={category}>{category} (not an active category)</option>
+                  )}
+                  {kind === 'income' ? (
+                    <>
+                      <optgroup label="Income">
+                        {categoryOptions.map(item => <option key={item} value={item}>{item}</option>)}
+                      </optgroup>
+                      <optgroup label="Refund of an expense">
+                        {refundOptions.map(item => <option key={`refund-${item}`} value={item}>{item}</option>)}
+                      </optgroup>
+                    </>
+                  ) : categoryOptions.map(item => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
 
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -24,10 +40,19 @@ const todayDate = new Date().toLocaleDateString('en-CA')
 const money = amount =>
   amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
-export default function Accounts() {
+// editRequest ({ transactionId, accountId }) opens the editor for that exact transaction, so other screens
+// (such as Reports) reuse this editor instead of duplicating it.
+export default function Accounts({ editRequest = null, onEditConsumed, onEditFinished }) {
   const [initialAccountData] = useState(() =>
     loadAccountData(startingAccounts, startingTransactions)
   )
+  const [startEdit] = useState(() => {
+    if (!editRequest) return null
+    const transaction = initialAccountData.transactions.find(item =>
+      item.id === editRequest.transactionId && item.accountId === editRequest.accountId)
+    return transaction ? { transaction } : null
+  })
+  const openedFromRequest = useRef(Boolean(startEdit))
   const [accounts, setAccounts] = useState(initialAccountData.accounts)
   const [transactions, setTransactions] = useState(initialAccountData.transactions)
   const nextAccountId = useRef(
@@ -39,8 +64,8 @@ export default function Accounts() {
   const nextTransactionSequence = useRef(
     getNextTransactionSequence(initialAccountData.transactions)
   )
-  const [selectedAccount, setSelectedAccount] = useState(null)
-  const [screen, setScreen] = useState('overview')
+  const [selectedAccount, setSelectedAccount] = useState(startEdit ? startEdit.transaction.accountId : null)
+  const [screen, setScreen] = useState(startEdit ? 'register' : 'overview')
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [newAccountName, setNewAccountName] = useState('')
   const [newAccountType, setNewAccountType] = useState('Checking')
@@ -50,19 +75,19 @@ export default function Accounts() {
   const [transactionSort, setTransactionSort] = useState(() =>
     localStorage.getItem('money-honey-transaction-sort') === 'asc' ? 'asc' : 'desc'
   )
-  const [newName, setNewName] = useState('')
-  const [newAmount, setNewAmount] = useState('')
-  const [newDate, setNewDate] = useState(todayDate)
-  const [kind, setKind] = useState('expense')
-  const [category, setCategory] = useState(getDefaultCategoryForFlow('out'))
-  const [categoryWasChosen, setCategoryWasChosen] = useState(false)
+  const [newName, setNewName] = useState(startEdit?.transaction.name ?? '')
+  const [newAmount, setNewAmount] = useState(startEdit ? String(Math.abs(startEdit.transaction.amount)) : '')
+  const [newDate, setNewDate] = useState(startEdit?.transaction.date ?? todayDate)
+  const [kind, setKind] = useState(startEdit && startEdit.transaction.amount > 0 ? 'income' : 'expense')
+  const [category, setCategory] = useState(startEdit ? startEdit.transaction.category ?? '' : getDefaultCategoryForFlow('out'))
+  const [categoryWasChosen, setCategoryWasChosen] = useState(Boolean(startEdit))
   const [categoryConfig] = useState(() => loadCategoryConfig())
   const customCategories = categoryConfig.customCategories
   const builtInNames = categoryConfig.builtInNames
   const disabledBuiltIns = categoryConfig.disabledBuiltIns
   const [payees] = useState(() => loadPayees())
-  const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false)
-  const [editingTransactionId, setEditingTransactionId] = useState(null)
+  const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(Boolean(startEdit))
+  const [editingTransactionId, setEditingTransactionId] = useState(startEdit ? startEdit.transaction.id : null)
   const [deleteConfirmation, setDeleteConfirmation] = useState(null)
 
   useEffect(() => {
@@ -83,6 +108,26 @@ export default function Accounts() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!editRequest) return
+    onEditConsumed?.()
+    if (!startEdit) onEditFinished?.()
+  // The request is read once, when the screen opens.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (openedFromRequest.current && !isAddTransactionOpen) {
+      openedFromRequest.current = false
+      onEditFinished?.()
+    }
+  }, [isAddTransactionOpen, onEditFinished])
+
+  const categoryOptions = getCategories(customCategories, kind, builtInNames, disabledBuiltIns)
+  // A credit can be tied to the expense category it refunds; Debt Payments is a different kind of record.
+  const refundOptions = kind === 'income'
+    ? getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns).filter(item => item !== 'Debt Payments')
+    : []
   const account = accounts.find(item => item.id === selectedAccount)
 
   const accountTransactions = account
@@ -192,7 +237,7 @@ export default function Accounts() {
     setNewAmount(String(Math.abs(transaction.amount)))
     setNewDate(transaction.date)
     setKind(transaction.amount < 0 ? 'expense' : 'income')
-    setCategory(transaction.category || getDefaultCategoryForFlow(transaction.amount < 0 ? 'out' : 'in'))
+    setCategory(transaction.category ?? '')
     setCategoryWasChosen(true)
     setIsAddTransactionOpen(true)
   }
@@ -289,7 +334,7 @@ export default function Accounts() {
             name: newName.trim(),
             amount: normalizeTransactionAmount(amount, kind),
             date: newDate,
-            category: category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out')
+            category: category === '' ? item.category : category
           }
           : item
       ))

@@ -5,6 +5,7 @@ import {
   loadBudgets,
   loadBudgetSettings,
   calculateBudgetSnapshot,
+  getBudgetSpendingByCategory,
   analyzeSmartBudgets,
   loadDismissedSmartSuggestions,
   saveDismissedSmartSuggestion,
@@ -192,4 +193,56 @@ test('dismissed smart suggestions persist independently from approved budgets', 
   assert.deepEqual(loadDismissedSmartSuggestions(storage), { Groceries: 'signature' })
   saveBudgets({ Groceries: 100 }, 'manual', storage)
   assert.deepEqual(loadBudgets('smart', storage), {})
+})
+
+const snapshotFor = (transactions, categories = ['Groceries', 'Shopping']) => calculateBudgetSnapshot({
+  today: '2026-11-11',
+  categories,
+  mode: 'manual',
+  budgets: { Groceries: 100 },
+  transactions
+})
+
+test('budget spending is reduced by refunds in the same category and never goes below zero', () => {
+  const groceries = (amount, extra = {}) => ({ name: 'Item', amount, date: '2026-11-04', category: 'Groceries', ...extra })
+  assert.equal(snapshotFor([groceries(-60), groceries(25)]).actualSpending, 35)
+  assert.equal(snapshotFor([groceries(-20), groceries(50)]).actualSpending, 0)
+  assert.equal(getBudgetSpendingByCategory({ today: '2026-11-11', categories: ['Groceries'], transactions: [groceries(-60), groceries(25)] }).Groceries, 35)
+})
+
+test('uncategorized and unknown-category purchases count toward budget spending instead of being dropped', () => {
+  const snapshot = snapshotFor([
+    { name: 'No category', amount: -12, date: '2026-11-04' },
+    { name: 'Old category', amount: -8, date: '2026-11-05', category: 'Deleted Category' },
+    { name: 'Groceries', amount: -30, date: '2026-11-06', category: 'Groceries' }
+  ])
+  assert.equal(snapshot.actualSpending, 50)
+  assert.deepEqual(
+    getBudgetSpendingByCategory({ today: '2026-11-11', categories: ['Groceries'], transactions: [{ name: 'x', amount: -12, date: '2026-11-04' }] }),
+    { Uncategorized: 12 }
+  )
+})
+
+test('transactions linked to a debt are excluded from budget spending by metadata, whatever their category', () => {
+  const snapshot = snapshotFor([
+    { name: 'Groceries', amount: -30, date: '2026-11-06', category: 'Groceries' },
+    { name: 'Card bill', amount: -200, date: '2026-11-06', category: 'Shopping', linkedDebtId: 2, linkedDebtPaymentId: 'p1', transactionType: 'debt-payment' },
+    { name: 'Loan', amount: -90, date: '2026-11-07', category: 'Shopping', linkedDebtPaymentId: 'p2' }
+  ])
+  assert.equal(snapshot.actualSpending, 30)
+})
+
+test('smart budget history is net of refunds and ignores debt-linked payments', () => {
+  const analysis = analyzeSmartBudgets({
+    today: '2026-11-11',
+    categories: ['Groceries'],
+    historyMonths: 3,
+    transactions: [
+      { name: 'a', amount: -100, date: '2026-10-05', category: 'Groceries' },
+      { name: 'refund', amount: 40, date: '2026-10-06', category: 'Groceries' },
+      { name: 'b', amount: -60, date: '2026-09-05', category: 'Groceries' },
+      { name: 'card', amount: -500, date: '2026-09-06', category: 'Groceries', linkedDebtId: 1 }
+    ]
+  })
+  assert.equal(analysis.categories[0].total, 120)
 })

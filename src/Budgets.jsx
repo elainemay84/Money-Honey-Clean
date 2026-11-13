@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
 import {
   analyzeSmartBudgets,
-  getBudgetEligibleTransactions,
+  getBudgetSpendingEntries,
   getBudgetSpendingByCategory,
   loadBudgetSettings,
   loadBudgets,
@@ -12,6 +12,7 @@ import {
   saveDismissedSmartSuggestion
 } from './budgetData.js'
 import PageHeader from './PageHeader'
+import { netSpending } from './transactionRules.js'
 
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
@@ -51,22 +52,22 @@ export default function Budgets({ transactions, today, onBack }) {
     : null
   const smartDetails = new Map(smartAnalysis?.categories.map(item => [item.category, item]) ?? [])
   const dismissedSuggestions = mode === 'smart' ? loadDismissedSmartSuggestions() : {}
-  const eligibleTransactions = getBudgetEligibleTransactions({ transactions, categories })
+  const spendingEntries = getBudgetSpendingEntries({ transactions, categories })
   const spending = categories.map(category => {
-    const expenses = eligibleTransactions.filter(transaction => transaction.category === category)
+    const expenses = spendingEntries.filter(entry => entry.category === category)
     const smartDetail = smartDetails.get(category)
-    const allMonths = [...new Set(expenses.map(transaction => transaction.date.slice(0, 7)))].sort()
+    const allMonths = [...new Set(expenses.map(entry => entry.date.slice(0, 7)))].sort()
     const months = mode === 'smart'
       ? allMonths.slice(-budgetSettings.historyMonths)
       : allMonths
-    const historicalExpenses = expenses.filter(transaction => months.includes(transaction.date.slice(0, 7)))
-    const total = historicalExpenses.reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0)
+    const total = months.reduce((sum, month) =>
+      sum + netSpending(expenses.filter(entry => entry.date.slice(0, 7) === month)).totalCents / 100, 0)
     return {
       category,
       average: smartDetail?.average ?? (months.length ? total / months.length : 0),
       spending: currentSpending[category] ?? 0,
       budget: Number.isFinite(Number(budgets[category])) ? Number(budgets[category]) : null,
-      hasSpending: expenses.length > 0,
+      hasSpending: expenses.some(entry => entry.kind === 'purchase'),
       hasEnoughHistory: smartDetail?.hasEnoughHistory ?? months.length >= 2,
       suggestedBudget: smartDetail?.suggestedBudget ?? (months.length >= 2 ? total / months.length : null),
       suggestionSignature: smartDetail?.signature
@@ -83,8 +84,8 @@ export default function Budgets({ transactions, today, onBack }) {
   const suggestionCategories = new Set(suggestionItems.map(item => item.category))
   const other = spending.filter(item => item.budget == null && !suggestionCategories.has(item.category))
   const configuredTotal = configured.reduce((sum, item) => sum + item.budget, 0)
-  const actualTotal = spending
-    .reduce((sum, item) => sum + item.spending, 0)
+  // Includes uncategorized spending, which has no budget line but is still real spending.
+  const actualTotal = Object.values(currentSpending).reduce((sum, amount) => sum + amount, 0)
 
   function updateBudgetSetting(key, value) {
     setDraftBudgetSettings(current => ({ ...current, [key]: value }))
