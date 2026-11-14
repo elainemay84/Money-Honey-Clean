@@ -198,6 +198,8 @@ test('bottom navigation opens Budgets and More shows Settings and Reports', asyn
   await click(nav.children[3])
   assert.match(container.textContent, /Budgets/)
   assert.equal([...container.querySelectorAll('button')].some(item => item.classList.contains('page-back')), false)
+  assert.equal(container.querySelector('.page-back-placeholder'), null)
+  assert.equal(container.querySelector('h1')?.textContent, 'Budgets')
   assert.ok(button(container, 'Budget settings'))
 
   await click(nav.lastElementChild)

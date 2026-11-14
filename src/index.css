@@ -83,10 +83,13 @@ body {
 }
 
 .page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  position: relative;
+  display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 10px;
+  min-height: 40px;
+  padding: 0 88px;
+  box-sizing: border-box;
   margin-bottom: 12px;
 }
 
@@ -192,7 +195,6 @@ body {
 }
 
 .page-header > h1 {
-  grid-column: 2;
   min-width: 0;
   width: 100%;
   margin: 0;
@@ -202,38 +204,22 @@ body {
   font-size: clamp(20px, 7vw, 30px);
   line-height: 1.15;
   text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.themes-page-header {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.themes-page-header > h1 {
   white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  overflow-wrap: normal;
-  font-size: clamp(15px, 5vw, 24px);
-}
-
-.page-header.page-header-full-title {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.page-header.page-header-full-title > h1 {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
   overflow-wrap: anywhere;
 }
 
+.themes-page-header {
+  padding-inline: 88px;
+}
+
+.themes-page-header > h1 {
+  font-size: clamp(15px, 5vw, 24px);
+}
+
 .page-back {
-  grid-column: 1;
-  justify-self: start;
-  align-self: start;
+  position: absolute;
+  top: 0;
+  left: 0;
   min-height: 40px;
   padding: 9px 11px;
   border: 1px solid #E9D6B7;
@@ -245,27 +231,17 @@ body {
 }
 
 .page-header-action {
-  grid-column: 3;
-  justify-self: end;
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 .manual-theme-header {
-  position: relative;
-  grid-template-columns: 1fr auto;
+  padding-inline: 72px;
 }
 
 .manual-theme-header > h1 {
-  position: absolute;
-  left: 50%;
-  grid-column: auto;
-  width: max-content;
-  max-width: calc(100% - 110px);
   font-size: clamp(15px, 4.2vw, 19px);
-  transform: translateX(-50%);
-}
-
-.manual-theme-header > .page-header-action {
-  grid-column: 2;
 }
 
 .manual-theme-header > .page-back {
@@ -276,10 +252,12 @@ body {
 }
 
 @media (max-width: 360px) {
+  .page-header,
   .themes-page-header {
-    gap: 6px;
+    padding-inline: 76px;
   }
 
+  .page-header > h1,
   .themes-page-header > h1 {
     font-size: 15px;
     line-height: 1.05;

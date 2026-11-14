@@ -31,6 +31,13 @@ test('focused themes use their coordinated navigation colors', () => {
   assert.equal(getThemeStyle('funky-pop').navInactive, '#FFFFFF')
 })
 
+test('Funky Pop keeps its gradient without decorative dot artifacts', () => {
+  const funkyPop = getThemeStyle('funky-pop')
+  assert.match(funkyPop.pattern, /^linear-gradient/)
+  assert.doesNotMatch(funkyPop.pattern, /radial-gradient/)
+  assert.equal(funkyPop.patternSize, '100% 100%')
+})
+
 test('navigation colors maintain contrast against light and dark theme nav backgrounds', () => {
   const light = getNavigationColors('#FFF3DF', '#B87522')
   const dark = getNavigationColors('#3E2140', '#D84F8B')
@@ -146,7 +153,7 @@ test('preset visual styles provide distinct coordinated treatments', () => {
 })
 
 test('protected presets retain their established visual treatments while named themes stay distinctive', () => {
-  assert.equal(getThemeStyle('funky-pop').patternSize, 'auto, auto, 100% 100%')
+  assert.equal(getThemeStyle('funky-pop').patternSize, '100% 100%')
   assert.equal(getThemeStyle('pink-sugar').patternSize, '28px 28px')
   assert.match(getThemeStyle('bookstore').pattern, /repeating-linear-gradient/)
   assert.match(getThemeStyle('desert-cactus').pattern, /conic-gradient/)

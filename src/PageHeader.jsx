@@ -5,7 +5,7 @@ export default function PageHeader({ backLabel, onBack, children, action = null,
         <button type="button" className="page-back" onClick={onBack}>
           ‹ {backLabel}
         </button>
-      ) : <span className="page-back page-back-placeholder" aria-hidden="true" />}
+      ) : null}
       <h1>{children}</h1>
       <div className="page-header-action">{action}</div>
     </div>

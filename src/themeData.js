@@ -106,8 +106,8 @@ export const THEME_STYLES = {
   'funky-pop': {
     radius: '18px',
     shadow: '5px 5px 0 rgba(62, 33, 64, 0.16)',
-    pattern: 'radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.42) 0 7px, transparent 8px), radial-gradient(circle at 82% 72%, rgba(151, 53, 190, 0.22) 0 12px, transparent 13px), linear-gradient(135deg, #F33C9A 0%, #FF8F68 48%, #FFF09A 100%)',
-    patternSize: 'auto, auto, 100% 100%',
+    pattern: 'linear-gradient(135deg, #F33C9A 0%, #FF8F68 48%, #FFF09A 100%)',
+    patternSize: '100% 100%',
     nav: 'linear-gradient(135deg, #FF55B5 0%, #9C40B9 100%)',
     navActive: '#FFF08A',
     navInactive: '#FFFFFF',
