@@ -9,6 +9,7 @@ import {
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import PageHeader from './PageHeader'
+import ResponsiveText from './ResponsiveText'
 import { BILL_STORAGE_KEY, loadBillData, saveBillData } from './billData.js'
 import { loadDebts, reconcileDebtPaymentForTransaction, removeDebtPaymentForTransaction } from './debtData.js'
 import {
@@ -370,21 +371,21 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
 
   if (screen === 'overview') {
     return (
-      <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-        <div style={{
+      <main className="accounts-overview" style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+        <div className="page-heading-row" style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           marginBottom: 18
         }}>
-          <h1 style={{
+          <ResponsiveText style={{
             margin: 0,
             fontFamily: 'Georgia, serif',
             fontStyle: 'italic',
             color: '#B87522'
           }}>
             Accounts 🍯
-          </h1>
+          </ResponsiveText>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               type="button"
@@ -505,39 +506,20 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             <button
               key={item.id}
               type="button"
-                      data-account-id={item.id}
-                      onClick={() => openRegister(item.id)}
-              style={{
-                ...card,
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                color: '#493320',
-                border: 'none',
-                borderLeft: `5px solid ${item.color}`,
-                cursor: 'pointer'
-              }}
+              className="account-overview-card"
+              data-account-id={item.id}
+              aria-label={`${item.name}, ${item.type}, Balance ${money(totals.balance)}, Available ${money(totals.available)}`}
+              onClick={() => openRegister(item.id)}
+              style={{ borderLeft: `5px solid ${item.color}` }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <div>
-                  <strong style={{ fontSize: 16 }}>{item.name}</strong>
-                  <div style={{ marginTop: 4, color: '#79502A', fontSize: 12 }}>{item.type}</div>
-                </div>
-                <span aria-hidden="true" style={{ color: '#B87522', fontSize: 20 }}>›</span>
-              </div>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                gap: 8,
-                marginTop: 14
-              }}>
-                <span style={{ fontSize: 12, color: '#79502A' }}>
-                  Balance <strong style={{ display: 'block', color: '#493320', fontSize: 15 }}>{money(totals.balance)}</strong>
-                </span>
-                <span style={{ fontSize: 12, color: '#79502A', textAlign: 'right' }}>
-                  Available <strong style={{ display: 'block', color: '#493320', fontSize: 15 }}>{money(totals.available)}</strong>
-                </span>
-              </div>
+              <span className="account-overview-identity">
+                <strong className="account-overview-name" title={item.name}>{item.name}</strong>
+                <span className="account-overview-type">{item.type}</span>
+              </span>
+              <span className="account-overview-totals">
+                <strong className="account-overview-balance">{money(totals.balance)}</strong>
+                <span className="account-overview-available">Available {money(totals.available)}</span>
+              </span>
             </button>
           )
         })}
@@ -548,20 +530,20 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   if (screen === 'manage') {
     return (
       <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-        <div style={{
+        <div className="page-heading-row" style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           marginBottom: 18
         }}>
-          <h1 style={{
+          <ResponsiveText style={{
             margin: 0,
             fontFamily: 'Georgia, serif',
             fontStyle: 'italic',
             color: '#B87522'
           }}>
             Manage Accounts
-          </h1>
+          </ResponsiveText>
           <button type="button" onClick={() => setScreen('overview')} style={{
             ...field,
             background: '#FFFFFF',
@@ -710,59 +692,33 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
         {account.name}
       </PageHeader>
 
-      <section style={{ ...card, background: '#F5D6A5', padding: 14 }}>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-          alignItems: 'start'
-        }}>
-          <div style={{ minWidth: 0, paddingRight: 7 }}>
+      <section className="account-summary-card" aria-label="Account balances" style={{ ...card, background: '#F5D6A5', padding: 14 }}>
+        <div className="account-balance-summary">
+          <div className="account-summary-item">
             <p style={{ margin: 0, fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>
               BALANCE
             </p>
-            <strong style={{
-              display: 'block',
-              marginTop: 4,
-              fontSize: 16,
-              whiteSpace: 'nowrap',
-              fontVariantNumeric: 'tabular-nums'
-            }}>
+            <ResponsiveText as="strong" className="account-summary-value">
               {money(balance)}
-            </strong>
+            </ResponsiveText>
           </div>
-          <div style={{
-            minWidth: 0,
-            padding: '0 7px',
-            borderLeft: '1px solid #D8B87F',
-            borderRight: '1px solid #D8B87F'
-          }}>
+          <div className="account-summary-item">
             <p style={{ margin: 0, fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>
               AVAILABLE
             </p>
-            <strong style={{
-              display: 'block',
-              marginTop: 4,
-              fontSize: 16,
-              whiteSpace: 'nowrap',
-              fontVariantNumeric: 'tabular-nums'
-            }}>
+            <ResponsiveText as="strong" className="account-summary-value">
               {money(available)}
-            </strong>
+            </ResponsiveText>
           </div>
-          <div style={{ minWidth: 0, paddingLeft: 7, textAlign: 'right' }}>
+          <div className="account-summary-item">
             <p style={{ margin: 0, fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>
               UNCLEARED
             </p>
-            <strong style={{
-              display: 'block',
-              marginTop: 4,
-              fontSize: 16,
-              whiteSpace: 'nowrap',
-              fontVariantNumeric: 'tabular-nums',
+            <ResponsiveText as="strong" className="account-summary-value" style={{
               color: unclearedBalance > 0 ? '#21834B' : unclearedBalance < 0 ? '#9B463E' : '#573B20'
             }}>
               {money(Math.abs(unclearedBalance))}
-            </strong>
+            </ResponsiveText>
             <span style={{
               display: 'block',
               marginTop: 3,
@@ -776,14 +732,14 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
       </section>
 
       <section style={{ ...card, padding: '10px 12px' }}>
-        <div style={{
+        <div className="page-heading-row" style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 8,
           marginBottom: 4
         }}>
-          <h2 style={{ margin: 0 }}>Transactions</h2>
+          <ResponsiveText as="h2" className="account-transactions-title" style={{ margin: 0 }}>Transactions</ResponsiveText>
           <select
             aria-label="Transaction sorting order"
             value={transactionSort}
@@ -804,6 +760,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
         {rows.map(item => (
           <div
             key={item.id}
+            className="account-transaction-row"
             data-transaction-id={item.id}
             data-transaction-sequence={item.sequence}
             role="group"
@@ -819,7 +776,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             }}
             style={{
               display: 'grid',
-              gridTemplateColumns: '24px minmax(0, 1fr) minmax(88px, 104px)',
+              gridTemplateColumns: '24px minmax(0, 1.15fr) minmax(0, 1fr)',
               alignItems: 'center',
               columnGap: 6,
               padding: '2px 0',
@@ -856,10 +813,10 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
 
             <div style={{
               minWidth: 0,
-              justifySelf: 'start',
+              justifySelf: 'stretch',
               textAlign: 'left'
             }}>
-              <strong style={{
+              <strong className="account-transaction-name" title={item.name} style={{
                 display: 'block',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -870,30 +827,25 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               }}>
                 {item.name}
               </strong>
-              <input
-                type="date"
-                aria-label={`Date for ${item.name}`}
-                value={item.date}
-                onClick={event => event.stopPropagation()}
-                onKeyDown={event => event.stopPropagation()}
-                onChange={event => updateDate(item.id, event.target.value)}
-                style={{
-                  display: 'block',
-                  boxSizing: 'border-box',
-                  width: 120,
-                  maxWidth: '100%',
-                  height: 16,
-                  marginTop: 0,
-                  padding: 0,
-                  border: 'none',
-                  borderRadius: 0,
-                  background: 'transparent',
-                  fontSize: 11,
-                  lineHeight: 1.1,
-                  color: '#79502A',
-                  textAlign: 'left'
-                }}
-              />
+              <span className="account-transaction-date">
+                <ResponsiveText as="time" dateTime={item.date} aria-hidden="true">
+                  {new Date(`${item.date}T00:00:00Z`).toLocaleDateString('en-US', {
+                    month: 'numeric', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+                  })}
+                </ResponsiveText>
+                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="5" width="18" height="16" rx="2" />
+                  <path d="M16 3v4M8 3v4M3 11h18" />
+                </svg>
+                <input
+                  type="date"
+                  aria-label={`Date for ${item.name}`}
+                  value={item.date}
+                  onClick={event => event.stopPropagation()}
+                  onKeyDown={event => event.stopPropagation()}
+                  onChange={event => updateDate(item.id, event.target.value)}
+                />
+              </span>
             </div>
 
             <div style={{
@@ -902,27 +854,25 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               textAlign: 'right',
               fontVariantNumeric: 'tabular-nums'
             }}>
-              <strong style={{
+              <ResponsiveText as="strong" className="account-transaction-amount" style={{
                 display: 'block',
-                fontSize: 14,
                 color: item.amount < 0 ? '#9B463E' : '#21834B',
                 textAlign: 'right',
                 whiteSpace: 'nowrap',
                 lineHeight: 1.1
               }}>
                 {money(item.amount)}
-              </strong>
-              <span style={{
+              </ResponsiveText>
+              <ResponsiveText as="span" className="account-transaction-running" style={{
                 display: 'block',
                 marginTop: 1,
-                fontSize: 11,
                 color: '#79502A',
                 textAlign: 'right',
                 whiteSpace: 'nowrap',
                 lineHeight: 1.1
               }}>
                 {money(item.runningBalance)}
-              </span>
+              </ResponsiveText>
             </div>
           </div>
         ))}

@@ -66,6 +66,91 @@ body {
   zoom: 1.06;
 }
 
+.app-shell:has(> .accounts-overview) {
+  /* #root already fills the viewport; avoid scaling another viewport plus padding. */
+  min-height: 0 !important;
+  box-sizing: border-box;
+}
+
+.account-overview-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 70px;
+  margin-bottom: 6px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--theme-radius, 16px);
+  background: var(--theme-card, #FFFFFF);
+  box-shadow: var(--theme-shadow, 0 3px 14px #76552212);
+  color: var(--theme-text, #493320);
+  font-family: var(--theme-body-font, Arial, sans-serif);
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-overview-card:last-child {
+  margin-bottom: 0;
+}
+
+.account-overview-identity,
+.account-overview-totals {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.account-overview-name,
+.account-overview-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-overview-name,
+.account-overview-balance {
+  font-size: 16px;
+}
+
+.account-overview-type {
+  font-size: 12px;
+}
+
+.account-overview-totals {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.account-overview-available {
+  font-size: 11px;
+}
+
+@media (max-width: 1024px) {
+  .appearance-small {
+    /* Keep rendered input text above 16px after the 0.94 appearance zoom. */
+    --mobile-input-font-size: 17.1px;
+  }
+
+  /* Override compact inline styles without triggering iOS focus zoom. */
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='button'], [type='submit'], [type='reset'], [type='image'], [type='hidden']),
+  select,
+  textarea,
+  [contenteditable]:not([contenteditable='false']) {
+    font-size: var(--mobile-input-font-size, 16px) !important;
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  input[type='date'] {
+    min-height: 1.5em;
+  }
+}
+
 .theme-typography {
   font-family: var(--theme-body-font) !important;
   line-height: var(--theme-line-spacing) !important;
@@ -82,15 +167,176 @@ body {
   background-size: var(--theme-pattern-size) !important;
 }
 
+.responsive-text {
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--responsive-font-size, var(--responsive-base-size, inherit));
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.responsive-page-title {
+  --responsive-base-size: 36px;
+  text-wrap: balance;
+}
+
+@media (min-width: 1025px) {
+  .responsive-page-title {
+    --responsive-base-size: 56px;
+  }
+}
+
+.page-heading-row > :is(h1, h2) {
+  flex: 1 1 0;
+}
+
+.page-heading-row > :not(h1, h2) {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
 .page-header {
-  position: relative;
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  gap: 6px 10px;
   min-height: 40px;
-  padding: 0 88px;
+  padding: 0;
   box-sizing: border-box;
   margin-bottom: 12px;
+}
+
+.account-summary-card {
+  container-type: inline-size;
+}
+
+.account-balance-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(128px, 1fr));
+  align-items: start;
+  gap: 8px;
+}
+
+.account-summary-item {
+  min-width: 0;
+}
+
+.account-summary-item + .account-summary-item {
+  padding-left: 8px;
+  border-left: 1px solid #D8B87F;
+}
+
+.account-summary-item:last-child {
+  text-align: right;
+}
+
+.account-summary-value {
+  --responsive-base-size: 16px;
+  display: block;
+  margin-top: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-transactions-title {
+  --responsive-base-size: 20px;
+}
+
+.account-transaction-row :is(.account-transaction-name, .responsive-text, .account-transaction-date) {
+  line-height: 1.2 !important;
+}
+
+.account-transaction-amount {
+  --responsive-base-size: 14px;
+}
+
+.account-transaction-running,
+.account-transaction-date time {
+  --responsive-base-size: 11px;
+}
+
+.account-transaction-date {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 120px;
+  max-width: 100%;
+  min-height: 24px;
+  color: var(--theme-muted-text, #79502A);
+  text-align: left;
+}
+
+.account-transaction-date time {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.account-transaction-date svg {
+  flex-shrink: 0;
+}
+
+.account-transaction-date:focus-within {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.account-transaction-date input {
+  /* The native picker stays zoom-safe; the visible date remains secondary text. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.account-transaction-date input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+@container (max-width: 400px) {
+  .account-balance-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-summary-item:nth-child(2) {
+    text-align: right;
+  }
+
+  .account-summary-item:last-child {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-column: 1 / -1;
+    align-items: center;
+    column-gap: 8px;
+    padding: 8px 0 0;
+    border-left: 0;
+    border-top: 1px solid #D8B87F;
+    text-align: left;
+  }
+
+  .account-summary-item:last-child > .account-summary-value {
+    margin-top: 0;
+    text-align: right;
+  }
+
+  .account-summary-item:last-child > span {
+    grid-column: 2;
+    text-align: right;
+  }
 }
 
 .font-picker-field {
@@ -195,53 +441,52 @@ body {
 }
 
 .page-header > h1 {
+  --responsive-base-size: clamp(20px, 7vw, 30px);
+  grid-column: 1 / -1;
+  grid-row: 2;
   min-width: 0;
   width: 100%;
   margin: 0;
   color: #B87522;
   font-family: Georgia, serif;
   font-style: italic;
-  font-size: clamp(20px, 7vw, 30px);
+  font-size: var(--responsive-font-size, var(--responsive-base-size));
   line-height: 1.15;
   text-align: center;
   white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.themes-page-header {
-  padding-inline: 88px;
+  overflow-wrap: normal;
 }
 
 .themes-page-header > h1 {
-  font-size: clamp(15px, 5vw, 24px);
+  --responsive-base-size: clamp(15px, 5vw, 24px);
 }
 
 .page-back {
-  position: absolute;
-  top: 0;
-  left: 0;
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
   min-height: 40px;
-  padding: 9px 11px;
+  padding: 7px 9px;
   border: 1px solid #E9D6B7;
   border-radius: 9px;
   background: #FFFFFF;
   color: #79502A;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
 }
 
 .page-header-action {
-  position: absolute;
-  top: 0;
-  right: 0;
-}
-
-.manual-theme-header {
-  padding-inline: 72px;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  max-width: 100%;
 }
 
 .manual-theme-header > h1 {
-  font-size: clamp(15px, 4.2vw, 19px);
+  --responsive-base-size: clamp(15px, 4.2vw, 19px);
 }
 
 .manual-theme-header > .page-back {
@@ -249,19 +494,6 @@ body {
   padding: 7px 6px;
   font-size: 11px;
   white-space: nowrap;
-}
-
-@media (max-width: 360px) {
-  .page-header,
-  .themes-page-header {
-    padding-inline: 76px;
-  }
-
-  .page-header > h1,
-  .themes-page-header > h1 {
-    font-size: 15px;
-    line-height: 1.05;
-  }
 }
 
 .theme-picker-page,

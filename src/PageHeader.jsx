@@ -1,3 +1,5 @@
+import ResponsiveText from './ResponsiveText'
+
 export default function PageHeader({ backLabel, onBack, children, action = null, className = '', showBack = true }) {
   return (
     <div className={`page-header ${className}`.trim()}>
@@ -6,8 +8,8 @@ export default function PageHeader({ backLabel, onBack, children, action = null,
           ‹ {backLabel}
         </button>
       ) : null}
-      <h1>{children}</h1>
-      <div className="page-header-action">{action}</div>
+      <ResponsiveText>{children}</ResponsiveText>
+      {action ? <div className="page-header-action">{action}</div> : null}
     </div>
   )
 }

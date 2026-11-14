@@ -399,6 +399,48 @@ test('recurring row offers occurrence or schedule scope and only changes the sel
   assert.equal(saved.bills[0].occurrenceOverrides[0].name, 'One-time change')
 })
 
+test('Bills List keeps rows and month headings inset inside rounded month containers without negative margins', async () => {
+  seedData({ recurring: true, recurringIncome: true })
+  const container = await render(Bills)
+  const before = [
+    browser.localStorage.getItem('money-honey-bills'),
+    browser.localStorage.getItem('money-honey-account-data')
+  ]
+
+  for (const flow of ['out', 'in']) {
+    if (flow === 'in') await click(button(container, 'Money In'))
+    const list = container.querySelector('.bills-list')
+    assert.ok(list)
+    const months = [...list.querySelectorAll('.bill-list-month')]
+    assert.equal(months.length, 12)
+    for (const month of months) {
+      const monthStyle = browser.getComputedStyle(month)
+      assert.ok(parseFloat(monthStyle.paddingLeft) >= 8)
+      assert.equal(monthStyle.paddingLeft, monthStyle.paddingRight)
+      assert.equal(monthStyle.boxSizing, 'border-box')
+      const heading = month.firstElementChild
+      const row = month.querySelector('[role="group"]')
+      const headingStyle = browser.getComputedStyle(heading)
+      const rowStyle = browser.getComputedStyle(row)
+      assert.ok(parseFloat(headingStyle.marginLeft) >= 0)
+      assert.ok(parseFloat(headingStyle.marginRight) >= 0)
+      assert.equal(headingStyle.paddingLeft, rowStyle.paddingLeft)
+      assert.equal(headingStyle.paddingRight, rowStyle.paddingRight)
+      assert.equal(rowStyle.boxSizing, 'border-box')
+      assert.ok(row.querySelector('button'))
+    }
+  }
+  assert.ok(container.querySelector('[aria-label="Show Completed"]'))
+  assert.ok(container.querySelector('[aria-label="Add income"]'))
+  await click(button(container, 'Calendar'))
+  assert.equal(container.querySelector('.bills-list'), null)
+  assert.equal(container.querySelector('.bill-list-month'), null)
+  assert.deepEqual([
+    browser.localStorage.getItem('money-honey-bills'),
+    browser.localStorage.getItem('money-honey-account-data')
+  ], before)
+})
+
 test('List groups a bounded year of recurring occurrences by month, and Calendar retains its controls', async () => {
   seedData({ recurring: true, recurringIncome: true })
   const container = await render(Bills)
@@ -584,6 +626,86 @@ test('paying one recurring bill hides only that occurrence; completed bills rema
   assert.equal(readAccountData().transactions[0].cleared, false)
 })
 
+test('compact overview pairs account identity with unchanged balances and opens each account without changing saved data', async () => {
+  const accounts = [
+    { name: 'Checking', type: 'Checking', openingBalance: 1000 },
+    { name: 'Credit card', type: 'Credit Card', openingBalance: -999.99 },
+    { name: 'A very long savings account name that should remain accessible on narrow screens', type: 'Savings', openingBalance: 500 },
+    { name: 'Cash', type: 'Cash', openingBalance: 0 },
+    { name: 'Investments', type: 'Investment', openingBalance: 1234567.89 },
+    { name: 'Archived account', type: 'Other', openingBalance: 100 }
+  ].map((account, index) => ({
+    ...account, id: index + 1, color: '#123456', openingDate: '2026-11-01',
+    defaultCleared: false, archived: index === 5
+  }))
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
+    version: 1,
+    accounts,
+    transactions: [
+      { id: 1, sequence: 1, accountId: 1, name: 'Cleared expense', amount: -50, date: '2026-11-02', cleared: true },
+      { id: 2, sequence: 2, accountId: 1, name: 'Pending expense', amount: -25, date: '2026-11-03', cleared: false }
+    ]
+  }))
+  const container = await render(Accounts)
+  const before = browser.localStorage.getItem('money-honey-account-data')
+  assert.ok(container.querySelector('.accounts-overview'))
+  const cards = [...container.querySelectorAll('.account-overview-card')]
+  assert.equal(cards.length, 5)
+  assert.doesNotMatch(container.textContent, /Archived account/)
+
+  for (const [index, card] of cards.entries()) {
+    assert.equal(card.children.length, 2)
+    const identity = card.querySelector('.account-overview-identity')
+    const totals = card.querySelector('.account-overview-totals')
+    assert.equal(identity.children.length, 2)
+    assert.equal(identity.querySelector('strong').textContent, accounts[index].name)
+    assert.equal(identity.lastElementChild.textContent, accounts[index].type)
+    assert.equal(identity.querySelector('strong').title, accounts[index].name)
+    assert.equal(totals.children.length, 2)
+    const format = value => value.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+    assert.equal(totals.querySelector('strong').textContent, format(index === 0 ? 950 : accounts[index].openingBalance))
+    assert.equal(totals.lastElementChild.textContent, `Available ${format(index === 0 ? 925 : accounts[index].openingBalance)}`)
+    assert.ok(card.getAttribute('aria-label').includes(accounts[index].name))
+    assert.equal(card.style.borderLeft, '5px solid #123456')
+  }
+
+  for (const account of accounts.filter(item => !item.archived)) {
+    await click(container.querySelector(`[data-account-id="${account.id}"]`))
+    assert.equal(container.querySelector('h1').textContent, account.name)
+    assert.ok(container.querySelector('[aria-label="Add transaction"]'))
+    assert.equal(container.querySelector('.accounts-overview'), null)
+    assert.equal(container.querySelector('.account-overview-card'), null)
+    assert.equal(browser.localStorage.getItem('money-honey-account-data'), before)
+    await click(buttonContaining(container, 'Accounts'))
+  }
+})
+
+test('account detail summary preserves all three large balances and the full account title', async () => {
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
+    version: 1,
+    accounts: [{
+      id: 1, name: 'Investments', type: 'Investment', openingBalance: 123456.78,
+      openingDate: '2026-11-01', color: '#B87522', defaultCleared: false, archived: false
+    }],
+    transactions: [
+      { id: 1, sequence: 1, accountId: 1, name: 'Deposit', amount: 1000000, date: '2026-11-02', cleared: true },
+      { id: 2, sequence: 2, accountId: 1, name: 'Pending expense', amount: -123456.78, date: '2026-11-03', cleared: false }
+    ]
+  }))
+  const container = await render(Accounts)
+  const before = browser.localStorage.getItem('money-honey-account-data')
+  await click(container.querySelector('[data-account-id="1"]'))
+  assert.equal(container.querySelector('.page-header h1').textContent, 'Investments')
+  const summary = container.querySelector('[aria-label="Account balances"]')
+  assert.deepEqual([...summary.querySelectorAll('p')].map(element => element.textContent), ['BALANCE', 'AVAILABLE', 'UNCLEARED'])
+  assert.deepEqual([...summary.querySelectorAll('.account-summary-value')].map(element => element.textContent), [
+    '$1,123,456.78', '$1,000,000.00', '$123,456.78'
+  ])
+  assert.equal(summary.querySelectorAll('.account-summary-item').length, 3)
+  assert.match(summary.textContent, /Going out/)
+  assert.equal(browser.localStorage.getItem('money-honey-account-data'), before)
+})
+
 test('transaction row edits directly; clearing and inline date changes do not open the editor', async () => {
   browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
     version: 1,
@@ -629,6 +751,8 @@ test('transaction row edits directly; clearing and inline date changes do not op
   await changeValue(date, '2026-11-08')
   data = readAccountData()
   assert.equal(data.transactions.find(item => item.id === 1).date, '2026-11-08')
+  assert.equal(editedRow.querySelector('time').textContent, '11/8/2026')
+  assert.equal(editedRow.querySelector('time').dateTime, '2026-11-08')
   assert.equal(container.querySelector('[role="dialog"]'), null)
 })
 

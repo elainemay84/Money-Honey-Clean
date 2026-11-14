@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import ResponsiveText from './ResponsiveText'
 import {
   createIncomeId,
   createBillId,
@@ -792,15 +793,15 @@ export default function Bills() {
       <header style={{
         marginBottom: 12
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <h1 style={{
+        <div className="page-heading-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <ResponsiveText style={{
             margin: 0,
             color: '#B87522',
             fontFamily: 'Georgia, serif',
             fontStyle: 'italic'
           }}>
             Bills 🍯
-          </h1>
+          </ResponsiveText>
           <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 10, background: '#F5D6A5' }}>
             {['out', 'in'].map(direction => (
               <button
@@ -875,7 +876,7 @@ export default function Bills() {
         </section>
       )}
 
-      <section style={{ ...card, padding: view === 'list' ? '10px 12px' : 14 }}>
+      <section className={view === 'list' ? 'bills-list' : undefined} style={{ ...card, padding: view === 'list' ? '10px 12px' : 14 }}>
         {view === 'list' && (
           <label style={{
             display: 'flex',
@@ -1000,22 +1001,25 @@ export default function Bills() {
             {listMonths.length ? listMonths.map(group => (
               <section
                 key={group.monthKey}
+                className="bill-list-month"
                 ref={group.monthKey === initialScrollMonthKey ? currentMonthRef : undefined}
                 aria-label={`${monthLabel(group.month)} ${flow === 'out' ? 'bills' : 'income'}`}
+                style={{ boxSizing: 'border-box', minWidth: 0, padding: '0 8px' }}
               >
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 8,
-                  margin: '0 -2px 1px',
-                  padding: '3px 6px',
+                  minWidth: 0,
+                  margin: '0 0 1px',
+                  padding: '3px 0',
                   borderRadius: 6,
                   background: '#F5D6A5',
                   color: '#79502A'
                 }}>
-                  <h2 style={{ margin: 0, fontSize: 13 }}>{monthLabel(group.month)}</h2>
-                  <strong style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+                  <h2 style={{ margin: 0, minWidth: 0, fontSize: 13, overflowWrap: 'anywhere' }}>{monthLabel(group.month)}</h2>
+                  <strong style={{ minWidth: 0, fontSize: 11, fontVariantNumeric: 'tabular-nums', textAlign: 'right', overflowWrap: 'anywhere' }}>
                     Total scheduled · {money(group.total)}
                   </strong>
                 </div>
@@ -1032,7 +1036,7 @@ export default function Bills() {
               </p>
             )}
             {inactiveSchedules.length > 0 && (
-              <section aria-label="Inactive schedules" style={{ marginTop: 12 }}>
+              <section className="bill-list-month" aria-label="Inactive schedules" style={{ boxSizing: 'border-box', minWidth: 0, padding: '0 8px', marginTop: 12 }}>
                 <h2 style={{ margin: '0 0 4px', color: '#79502A', fontSize: 13 }}>
                   Inactive schedules
                 </h2>
@@ -1566,6 +1570,7 @@ function renderOccurrenceRow(
       }}
       style={{
         display: 'grid',
+        boxSizing: 'border-box',
         gridTemplateColumns: 'minmax(0, 1fr) auto',
         gap: 8,
         alignItems: 'center',

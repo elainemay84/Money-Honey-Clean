@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import ResponsiveText from './ResponsiveText'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
 import {
@@ -264,13 +265,13 @@ export default function Debt() {
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 8 }}>
-      <h1 style={{
+      <ResponsiveText style={{
         margin: '0 0 14px',
         color: '#B87522',
         fontFamily: 'Georgia, serif',
         fontStyle: 'italic',
         textAlign: 'center'
-      }}>Debt 🍯</h1>
+      }}>Debt 🍯</ResponsiveText>
 
       <section aria-label="Overall debt progress" style={{
         marginBottom: 10,

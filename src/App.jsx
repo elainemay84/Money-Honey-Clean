@@ -14,6 +14,7 @@ import Reports from './Reports'
 import { clearProfileActionNotice, getProfileActionNotice } from './profileActionNotice.js'
 import { clearRestoreNotice, hasRestoreNotice } from './backupRestoreNotice.js'
 import PageHeader from './PageHeader'
+import ResponsiveText from './ResponsiveText'
 import {
   createDemoBills,
   getTodayDate,
@@ -326,7 +327,7 @@ function App() {
       <PendingOperationNotice />
 {activePage === 'Home' ? (
       <main style={{ maxWidth: 460, margin: 'auto' }}>
-        <h1 style={{
+        <ResponsiveText style={{
           margin: '0 0 6px',
           color: '#B87522',
           fontFamily: 'Georgia, serif',
@@ -334,7 +335,7 @@ function App() {
           textAlign: 'center'
         }}>
           Money, Honey 🍯
-        </h1>
+        </ResponsiveText>
 
         <p style={{ margin: '0 0 14px', textAlign: 'center', color: '#79502A', fontSize: 13 }}>
           Your financial snapshot
@@ -867,7 +868,7 @@ function App() {
     </main>
   ) : (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-      <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>Settings</h1>
+      <ResponsiveText style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>Settings</ResponsiveText>
       <section style={{
         marginBottom: 12,
         padding: 14,
@@ -988,7 +989,7 @@ function App() {
   />
 ) : activePage === 'More' ? (
   <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-    <h1 style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>More</h1>
+    <ResponsiveText style={{ color: '#B87522', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>More</ResponsiveText>
     <button
       type="button"
       onClick={() => {
