@@ -125,6 +125,55 @@ for (const [size, width] of [['small', 320], ['medium', 390], ['large', 932]]) {
   })
 }
 
+test('page titles stay centered in full-width rows independently of navigation and action controls', async () => {
+  browser.happyDOM.setWindowSize({ width: 320, height: 844 })
+  const container = browser.document.createElement('div')
+  browser.document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root.render(React.createElement(App)))
+
+  function checkTitle(text, separateControls = false) {
+    const title = container.querySelector('main h1')
+    assert.equal(title.textContent, text)
+    const style = browser.getComputedStyle(title)
+    assert.equal(style.textAlign, 'center')
+    assert.equal(style.overflowWrap, 'normal')
+    assert.equal(style.wordBreak, 'normal')
+    if (text !== 'Money, Honey 🍯') assert.doesNotMatch(title.textContent, /🍯/)
+    if (separateControls) {
+      assert.equal(browser.getComputedStyle(title.parentElement).display, 'grid')
+      assert.equal(style.gridRow, '2')
+      for (const control of [...title.parentElement.children].filter(element => element !== title)) {
+        assert.equal(browser.getComputedStyle(control).gridRow, '1')
+      }
+    }
+  }
+
+  checkTitle('Money, Honey 🍯')
+  await navigate('Accounts')
+  checkTitle('Accounts', true)
+  await click(button('Manage accounts'))
+  checkTitle('Manage Accounts', true)
+  await click(button('Done'))
+  await click(container.querySelector('[data-account-id]'))
+  checkTitle('Everyday Checking', true)
+  await navigate('Bills')
+  checkTitle('Bills', true)
+  await navigate('Budgets')
+  checkTitle('Budgets', true)
+  await navigate('Debt')
+  checkTitle('Debt')
+  await navigate('More')
+  checkTitle('More')
+  await click(button('Reports'))
+  checkTitle('Reports', true)
+  await navigate('More')
+  await click(button('Settings'))
+  checkTitle('Settings')
+  await click(button('Themes & Fonts'))
+  checkTitle('Themes & Fonts', true)
+})
+
 test('account register keeps compact secondary dates over zoom-safe native pickers and fitted totals', async () => {
   browser.happyDOM.setWindowSize({ width: 320, height: 844 })
   browser.localStorage.setItem('money-honey-account-data', JSON.stringify({

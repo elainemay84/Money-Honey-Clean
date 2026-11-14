@@ -793,14 +793,14 @@ export default function Bills() {
       <header style={{
         marginBottom: 12
       }}>
-        <div className="page-heading-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div className="page-heading-row page-title-row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <ResponsiveText style={{
             margin: 0,
             color: '#B87522',
             fontFamily: 'Georgia, serif',
             fontStyle: 'italic'
           }}>
-            Bills 🍯
+            Bills
           </ResponsiveText>
           <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 10, background: '#F5D6A5' }}>
             {['out', 'in'].map(direction => (

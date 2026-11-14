@@ -271,7 +271,7 @@ export default function Debt() {
         fontFamily: 'Georgia, serif',
         fontStyle: 'italic',
         textAlign: 'center'
-      }}>Debt 🍯</ResponsiveText>
+      }}>Debt</ResponsiveText>
 
       <section aria-label="Overall debt progress" style={{
         marginBottom: 10,

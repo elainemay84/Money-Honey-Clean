@@ -372,8 +372,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   if (screen === 'overview') {
     return (
       <main className="accounts-overview" style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-        <div className="page-heading-row" style={{
-          display: 'flex',
+        <div className="page-heading-row page-title-row" style={{
           alignItems: 'center',
           justifyContent: 'space-between',
           marginBottom: 18
@@ -384,7 +383,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             fontStyle: 'italic',
             color: '#B87522'
           }}>
-            Accounts 🍯
+            Accounts
           </ResponsiveText>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
@@ -530,8 +529,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   if (screen === 'manage') {
     return (
       <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
-        <div className="page-heading-row" style={{
-          display: 'flex',
+        <div className="page-heading-row page-title-row" style={{
           alignItems: 'center',
           justifyContent: 'space-between',
           marginBottom: 18

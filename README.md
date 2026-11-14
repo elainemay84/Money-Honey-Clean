@@ -61,6 +61,9 @@ Page titles retain theme fonts and wrap between words. Text fitting measures the
 rendered font and adjusts on resizing, theme changes, and font loading, so an
 individual word is never split or truncated. Shared headers place back/action
 controls above the centered title instead of reserving fixed side gutters.
+Accounts and Bills likewise place their controls above a full-width centered
+title, so unequal button widths cannot shift headings off-center. Only the Home
+dashboard title includes the honey pot emoji.
 
 Account summaries use three columns when the card has room and two rows on
 narrow screens. Currency values fit their cells without truncation or changes to

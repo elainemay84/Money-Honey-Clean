@@ -178,6 +178,7 @@ body {
 
 .responsive-page-title {
   --responsive-base-size: 36px;
+  text-align: center;
   text-wrap: balance;
 }
 
@@ -194,6 +195,23 @@ body {
 .page-heading-row > :not(h1, h2) {
   flex-shrink: 0;
   max-width: 100%;
+}
+
+.page-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 6px;
+}
+
+.page-title-row > h1 {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.page-title-row > :not(h1) {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
 }
 
 .page-header {

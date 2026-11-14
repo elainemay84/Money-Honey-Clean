@@ -131,7 +131,7 @@ test('Accounts Overview renders active account cards and separate management act
     const markup = renderToStaticMarkup(createElement(Accounts))
     const accountCards = [...markup.matchAll(/<button[^>]*data-account-id="(\d+)"/g)]
 
-    assert.match(markup, /Accounts 🍯/)
+    assert.match(markup, /<h1[^>]*>Accounts<\/h1>/)
     assert.match(markup, /aria-label="Manage accounts"/)
     assert.match(markup, /aria-label="Add account"/)
     assert.deepEqual(accountCards.map(([, id]) => Number(id)), [1, 2])
