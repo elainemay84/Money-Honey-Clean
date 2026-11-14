@@ -790,19 +790,17 @@ export default function Bills() {
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 210 }}>
-      <header style={{
-        marginBottom: 12
-      }}>
-        <div className="page-heading-row page-title-row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <ResponsiveText style={{
-            margin: 0,
-            color: '#B87522',
-            fontFamily: 'Georgia, serif',
-            fontStyle: 'italic'
-          }}>
-            Bills
-          </ResponsiveText>
-          <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 10, background: '#F5D6A5' }}>
+      <header className="bills-page-header">
+        <ResponsiveText style={{
+          margin: 0,
+          color: '#B87522',
+          fontFamily: 'Georgia, serif',
+          fontStyle: 'italic'
+        }}>
+          Bills
+        </ResponsiveText>
+        <div className="bills-header-controls">
+          <div className="bills-segmented-control" role="group" aria-label="Money flow">
             {['out', 'in'].map(direction => (
               <button
                 key={direction}
@@ -814,38 +812,32 @@ export default function Bills() {
                 style={{
                   border: 'none',
                   borderRadius: 8,
-                  padding: '7px 10px',
                   background: flow === direction ? '#FFFFFF' : 'transparent',
-                  color: '#79502A',
-                  fontSize: 12,
-                  cursor: 'pointer'
+                  color: '#79502A'
                 }}
               >
-                Money {direction === 'out' ? 'Out' : 'In'}
+                <ResponsiveText as="span">Money {direction === 'out' ? 'Out' : 'In'}</ResponsiveText>
               </button>
             ))}
           </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 3, padding: 3, width: 'fit-content', marginLeft: 'auto', borderRadius: 10, background: '#F5D6A5' }}>
-          {['list', 'calendar'].map(mode => (
-            <button
-              key={mode}
-              type="button"
-              aria-pressed={view === mode}
-              onClick={() => setView(mode)}
-              style={{
-                border: 'none',
-                borderRadius: 8,
-                padding: '7px 9px',
-                background: view === mode ? '#FFFFFF' : 'transparent',
-                color: '#79502A',
-                fontSize: 12,
-                cursor: 'pointer'
-              }}
-            >
-              {mode === 'list' ? 'List' : 'Calendar'}
-            </button>
-          ))}
+          <div className="bills-segmented-control bills-view-control" role="group" aria-label="Bills view">
+            {['list', 'calendar'].map(mode => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={view === mode}
+                onClick={() => setView(mode)}
+                style={{
+                  border: 'none',
+                  borderRadius: 8,
+                  background: view === mode ? '#FFFFFF' : 'transparent',
+                  color: '#79502A'
+                }}
+              >
+                <ResponsiveText as="span">{mode === 'list' ? 'List' : 'Calendar'}</ResponsiveText>
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 

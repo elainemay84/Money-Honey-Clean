@@ -5,7 +5,9 @@ function fitText(element) {
   const availableWidth = element.clientWidth - 2
   if (availableWidth <= 0) return
 
-  const words = element.textContent.match(/[^ \t\r\n]+/g) ?? []
+  const words = window.getComputedStyle(element).whiteSpace === 'nowrap'
+    ? [element.textContent]
+    : element.textContent.match(/[^ \t\r\n]+/g) ?? []
   const probe = document.createElement('span')
   probe.setAttribute('aria-hidden', 'true')
   Object.assign(probe.style, {

@@ -1059,7 +1059,7 @@ function App() {
         Always verify important financial decisions against your bank accounts and actual bills.
       </p>
       <p style={{ margin: '10px 0 0', color: '#9A7652', fontSize: 10, lineHeight: 1.45 }}>
-        Money Honey does not automatically verify your bank balances or transactions.
+        Money Honey does not verify your balances or transactions with your bank.
       </p>
     </section>
   </main>

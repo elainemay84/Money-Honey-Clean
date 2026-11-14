@@ -231,6 +231,20 @@ test('selected preset theme persists when leaving Themes and across app reload',
   )
 })
 
+test('More disclaimer states bank verification accurately without changing its other paragraphs', async () => {
+  const container = await render(App)
+  await click(container.querySelector('nav').lastElementChild)
+  const disclaimer = [...container.querySelectorAll('section')].find(section =>
+    section.querySelector('h2')?.textContent.includes('Financial Disclaimer'))
+  assert.ok(disclaimer)
+  assert.deepEqual([...disclaimer.querySelectorAll('p')].map(paragraph => paragraph.textContent), [
+    "Money Honey's financial forecasts, daily spending allowances, Smart Budgets, and automated suggestions are estimates based on the information you enter.",
+    'Actual balances, payments, and expenses may differ. Predictions may improve as you use the app and build a more complete financial history, but accuracy is never guaranteed.',
+    'Always verify important financial decisions against your bank accounts and actual bills.',
+    'Money Honey does not verify your balances or transactions with your bank.'
+  ])
+})
+
 beforeEach(() => {
   seedData()
   browser.confirm = () => true

@@ -72,6 +72,12 @@ body {
   box-sizing: border-box;
 }
 
+.app-shell.theme-funky-pop:has(> .accounts-overview) {
+  /* Use #root's full-height gradient instead of repainting it on the shorter overview. */
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
 .account-overview-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
@@ -212,6 +218,47 @@ body {
   grid-column: 1;
   grid-row: 1;
   justify-self: end;
+}
+
+.bills-page-header {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.bills-header-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 6px;
+}
+
+.bills-segmented-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  min-width: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: #F5D6A5;
+}
+
+.bills-view-control {
+  grid-template-columns: minmax(44px, 0.65fr) minmax(0, 1fr);
+}
+
+.bills-segmented-control button {
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 3px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.bills-segmented-control .responsive-text {
+  --responsive-base-size: 12px;
+  display: block;
+  line-height: 1.2 !important;
+  white-space: nowrap;
 }
 
 .page-header {

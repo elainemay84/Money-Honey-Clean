@@ -158,7 +158,7 @@ test('page titles stay centered in full-width rows independently of navigation a
   await click(container.querySelector('[data-account-id]'))
   checkTitle('Everyday Checking', true)
   await navigate('Bills')
-  checkTitle('Bills', true)
+  checkTitle('Bills')
   await navigate('Budgets')
   checkTitle('Budgets', true)
   await navigate('Debt')
@@ -172,6 +172,86 @@ test('page titles stay centered in full-width rows independently of navigation a
   checkTitle('Settings')
   await click(button('Themes & Fonts'))
   checkTitle('Themes & Fonts', true)
+})
+
+test('Funky Pop overview uses the full-height root gradient without changing other pages or themes', async () => {
+  const container = browser.document.createElement('div')
+  container.id = 'root'
+  browser.document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root.render(React.createElement(App)))
+  await navigate('More')
+  await click(button('Settings'))
+  await click(button('Themes & Fonts'))
+  await click(button('Funky Pop'))
+  const gradient = browser.getComputedStyle(container).backgroundImage
+  assert.match(gradient, /linear-gradient/)
+  const before = browser.localStorage.getItem('money-honey-account-data')
+  await navigate('Accounts')
+  const shell = container.querySelector('.app-shell')
+  const readShellBackground = () => {
+    // happy-dom caches :has matches when only a component's descendants change.
+    const copy = shell.cloneNode(true)
+    browser.document.body.append(copy)
+    const image = browser.getComputedStyle(copy).backgroundImage
+    copy.remove()
+    return image
+  }
+  assert.equal(browser.getComputedStyle(shell).backgroundImage, 'none')
+  assert.equal(browser.getComputedStyle(shell).backgroundColor, 'transparent')
+  assert.equal(browser.getComputedStyle(container).backgroundImage, gradient)
+  assert.equal(browser.getComputedStyle(container).minHeight, '100svh')
+  assert.equal(browser.getComputedStyle(shell).minHeight, '0')
+  assert.ok(container.querySelector('nav'))
+  await click(container.querySelector('[data-account-id]'))
+  assert.equal(readShellBackground(), gradient)
+  await navigate('Home')
+  assert.equal(readShellBackground(), gradient)
+  await navigate('More')
+  await click(button('Settings'))
+  await click(button('Themes & Fonts'))
+  await click(button('Pink Sugar'))
+  const pattern = readShellBackground()
+  await navigate('Accounts')
+  assert.equal(readShellBackground(), pattern)
+  assert.notEqual(pattern, gradient)
+  assert.equal(browser.localStorage.getItem('money-honey-account-data'), before)
+})
+
+test('Bills places both segmented controls below its centered title and preserves all mode switches', async () => {
+  browser.happyDOM.setWindowSize({ width: 320, height: 844 })
+  const container = browser.document.createElement('div')
+  browser.document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root.render(React.createElement(App)))
+  await navigate('Bills')
+  const header = container.querySelector('.bills-page-header')
+  assert.equal(header.firstElementChild.tagName, 'H1')
+  assert.equal(browser.getComputedStyle(header.firstElementChild).textAlign, 'center')
+  const controls = header.lastElementChild
+  assert.equal(browser.getComputedStyle(controls).display, 'grid')
+  assert.deepEqual([...controls.children].map(group => group.getAttribute('aria-label')), ['Money flow', 'Bills view'])
+  assert.deepEqual([...controls.querySelectorAll('button')].map(control => control.textContent), ['Money Out', 'Money In', 'List', 'Calendar'])
+  for (const control of controls.querySelectorAll('button')) {
+    assert.equal(browser.getComputedStyle(control).minHeight, '40px')
+    assert.equal(browser.getComputedStyle(control.firstElementChild).whiteSpace, 'nowrap')
+  }
+  const before = ['money-honey-account-data', 'money-honey-bills'].map(key => browser.localStorage.getItem(key))
+  assert.ok(container.querySelector('[aria-label="Show Completed"]'))
+  await click(button('Calendar'))
+  assert.equal(button('Calendar').getAttribute('aria-pressed'), 'true')
+  assert.ok(container.querySelector('[aria-label="Monthly total due"]'))
+  await click(button('Money In'))
+  assert.equal(button('Money In').getAttribute('aria-pressed'), 'true')
+  assert.ok(container.querySelector('[aria-label="Monthly total incoming"]'))
+  await click(button('List'))
+  assert.equal(button('List').getAttribute('aria-pressed'), 'true')
+  assert.ok(container.querySelector('[aria-label="Show Completed"]'))
+  await click(button('Money Out'))
+  assert.equal(button('Money Out').getAttribute('aria-pressed'), 'true')
+  assert.ok(container.querySelector('[aria-label="Add bill"]'))
+  assert.ok(container.querySelector('nav'))
+  assert.deepEqual(['money-honey-account-data', 'money-honey-bills'].map(key => browser.localStorage.getItem(key)), before)
 })
 
 test('account register keeps compact secondary dates over zoom-safe native pickers and fitted totals', async () => {
@@ -347,5 +427,22 @@ test('responsive currency text keeps every digit visible instead of overflowing 
       assert.ok(parseFloat(browser.getComputedStyle(amount).fontSize) * value.length * geometry.glyphWidth <= geometry.width)
       assert.equal(browser.getComputedStyle(amount).whiteSpace, 'nowrap')
     }
+  })
+
+})
+
+test('unwrapped segmented-control labels fit the whole phrase rather than individual words', async () => {
+  await withTextGeometry(async geometry => {
+    geometry.width = 60
+    const container = browser.document.createElement('div')
+    container.className = 'bills-segmented-control'
+    browser.document.body.append(container)
+    root = createRoot(container)
+    await act(async () => root.render(React.createElement(ResponsiveText, { as: 'span' }, 'Money Out')))
+    const label = container.querySelector('.responsive-text')
+    const size = parseFloat(browser.getComputedStyle(label).fontSize)
+    assert.ok(size < 12)
+    assert.ok(size * 'Money Out'.length * geometry.glyphWidth <= geometry.width)
+    assert.equal(label.textContent, 'Money Out')
   })
 })
