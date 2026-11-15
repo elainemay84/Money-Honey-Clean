@@ -125,6 +125,64 @@ async function heicCanvas(file, signal) {
   }
 }
 
+// Photos of screens or paper have shaded, uneven backgrounds that make Tesseract skip whole text blocks.
+// Dividing each pixel by its local background brightness turns the background white and keeps text dark.
+export function flattenStatementBackground(pixels, width, height, tile = 32) {
+  const luminance = new Float32Array(width * height)
+  let total = 0
+  for (let i = 0, j = 0; j < luminance.length; i += 4, j++) {
+    luminance[j] = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]
+    total += luminance[j]
+  }
+  // Light text on a dark background (dark mode) is left untouched.
+  if (total / luminance.length < 128) return pixels
+  const columns = Math.ceil(width / tile)
+  const rows = Math.ceil(height / tile)
+  const background = new Float32Array(columns * rows)
+  const histogram = new Uint32Array(256)
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      histogram.fill(0)
+      let count = 0
+      for (let y = row * tile; y < Math.min(height, row * tile + tile); y++) {
+        for (let x = column * tile; x < Math.min(width, column * tile + tile); x++) {
+          histogram[luminance[y * width + x] | 0]++
+          count++
+        }
+      }
+      let level = 255
+      for (let brighter = histogram[255]; level > 0 && brighter < count * 0.1; brighter += histogram[--level]);
+      // A floor keeps dark-mode or text-free dark tiles from being stretched to white.
+      background[row * columns + column] = Math.max(level, 128)
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    const fy = Math.min(rows - 1, Math.max(0, y / tile - 0.5))
+    const y0 = fy | 0
+    const y1 = Math.min(rows - 1, y0 + 1)
+    const wy = fy - y0
+    for (let x = 0; x < width; x++) {
+      const fx = Math.min(columns - 1, Math.max(0, x / tile - 0.5))
+      const x0 = fx | 0
+      const x1 = Math.min(columns - 1, x0 + 1)
+      const wx = fx - x0
+      const level = (background[y0 * columns + x0] * (1 - wx) + background[y0 * columns + x1] * wx) * (1 - wy)
+        + (background[y1 * columns + x0] * (1 - wx) + background[y1 * columns + x1] * wx) * wy
+      const value = Math.min(255, luminance[y * width + x] / level * 255)
+      const i = (y * width + x) * 4
+      pixels[i] = pixels[i + 1] = pixels[i + 2] = value
+    }
+  }
+  return pixels
+}
+
+function flattenCanvas(canvas) {
+  const context = canvas.getContext('2d')
+  const image = context.getImageData(0, 0, canvas.width, canvas.height)
+  flattenStatementBackground(image.data, canvas.width, canvas.height)
+  context.putImageData(image, 0, 0)
+}
+
 // Safari decodes HEIC natively; other browsers use the bundled on-device converter.
 async function imageCanvas(file, signal, signature, onProgress) {
   try {
@@ -176,6 +234,7 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
     if (kind === 'image') {
       const canvas = await imageCanvas(file, signal, signature, onProgress)
       try {
+        flattenCanvas(canvas)
         lines = await recognize(canvas)
       } finally {
         canvas.width = canvas.height = 0

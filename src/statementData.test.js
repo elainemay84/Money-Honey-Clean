@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { getReliableOcrLines, parseDebtStatement, validateStatementSuggestions } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
-import { getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
+import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
 
 test('labeled statement fields extract exact amounts, complete dates, debt type and only the account suffix', () => {
   const result = parseDebtStatement([
@@ -319,4 +319,35 @@ test('caption amounts, scheduled payments and embedded APRs do not override expl
   assert.equal(parseDebtStatement(['Minimum Payment Due: $35.00', '$296.74 scheduled for Nov 30, 2026']).values.minimumPayment, '35')
   assert.equal(parseDebtStatement(['$296.74 scheduled for Nov 30, 2026']).values.nextPaymentDue, '2026-11-30')
   assert.equal(parseDebtStatement(['Purchase APR: 19.99%', 'Fee $1.00 (APR 24.99%)']).values.interestRate, undefined)
+})
+
+function shadedPhoto(width, height, shade) {
+  const pixels = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = (y * width + x) * 4
+    pixels[i] = pixels[i + 1] = pixels[i + 2] = shade(x, y)
+    pixels[i + 3] = 255
+  }
+  return pixels
+}
+const gray = (pixels, width, x, y) => pixels[(y * width + x) * 4]
+
+test('photographed statements with shaded backgrounds are flattened so text is separable from paper everywhere', () => {
+  const width = 256
+  const height = 128
+  // Bright centre fading to a dark edge, like a phone photo of a laptop screen; text is drawn 70% as bright as its surroundings.
+  const paper = x => 220 - Math.abs(x - 128) * 0.6
+  const isText = (x, y) => y >= 60 && y < 68 && x % 16 < 4
+  const pixels = shadedPhoto(width, height, (x, y) => isText(x, y) ? paper(x) * 0.7 : paper(x))
+  assert.ok(gray(pixels, width, 2, 10) < gray(pixels, width, 128, 61), 'edge paper starts darker than centre text')
+  flattenStatementBackground(pixels, width, height)
+  for (const x of [0, 2, 64, 128, 200, 254]) assert.ok(gray(pixels, width, x, 10) >= 220, `paper at x=${x} becomes near-white`)
+  for (const x of [1, 65, 129, 241]) assert.ok(gray(pixels, width, x, 63) <= 190, `text at x=${x} stays dark`)
+})
+
+test('dark-mode screenshots are left unchanged by background flattening', () => {
+  const pixels = shadedPhoto(64, 64, (x, y) => y > 30 && y < 36 && x % 8 < 3 ? 235 : 28)
+  const before = pixels.slice()
+  flattenStatementBackground(pixels, 64, 64)
+  assert.deepEqual(pixels, before)
 })
