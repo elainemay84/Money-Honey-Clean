@@ -347,6 +347,10 @@ export default function Debt({ statementExtractor } = {}) {
       if (detailKeys.includes(key)) updated.statementDetails = { ...updated.statementDetails, [key]: parseFinancialAmount(value, key) }
       else if (!['totalInstallments', 'completedInstallments'].includes(key)) updated[key] = value
     }
+    // An installment plan's purchase amount is its original balance; never overwrite one already entered.
+    if (values.purchaseAmount && updated.type && updated.type !== 'Credit Card' && !String(current.startingBalance ?? '').trim()) {
+      updated.startingBalance = values.purchaseAmount
+    }
     if (values.nextPaymentDue && updated.paymentSchedule) {
       const next = editingDebt ? scheduleStatusFor(editingDebt).nextScheduledDate : null
       updated.paymentSchedule = next && current.paymentHistory.length

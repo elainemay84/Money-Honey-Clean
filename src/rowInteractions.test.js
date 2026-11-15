@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { after, afterEach, beforeEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
-import { parseDebtStatement } from './statementData.js'
+import { getReliableOcrLines, parseDebtStatement } from './statementData.js'
+import { homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 
 const browser = new Window({ url: 'http://localhost/' })
@@ -518,6 +519,7 @@ test('statement scans keep reference amounts without exposing advanced fields or
   }
   assert.equal(form.querySelector('[aria-label="Payment Schedule"]').value, 'monthly')
   assert.equal(form.querySelector('[aria-label="Next Payment Due"]').value, '2026-11-16')
+  assert.equal(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]').value, '1568')
   await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '1780.64')
   await changeValue(form.querySelector('[aria-label="Assigned To"]'), 'Joint')
   await submit(form)
@@ -536,6 +538,32 @@ test('statement scans keep reference amounts without exposing advanced fields or
   assert.deepEqual(bills[0].paymentHistory, [])
   assert.equal(readAccountData().transactions.length, 0)
   assert.doesNotMatch(container.querySelector('[aria-label="Debt row: The Home Depot"]').textContent, /installments/)
+})
+
+test('a Home Depot-style OCR scan shows every supported field in the rendered Add Debt form without saving', async () => {
+  const container = await render(() => React.createElement(Debt, {
+    statementExtractor: async () => parseDebtStatement(getReliableOcrLines(homeDepotOcrData))
+  }))
+  const before = ['money-honey-debts', 'money-honey-bills', 'money-honey-account-data'].map(key => browser.localStorage.getItem(key))
+  await click(button(container, 'Add debt'))
+  await click(button(container, 'Scan / Upload'))
+  await chooseStatementFile(container, 'Statement image')
+  const form = container.querySelector('form')
+  const field = label => form.querySelector(`[aria-label="${label}"]`).value
+  assert.equal(field('Debt name'), 'The Home Depot')
+  assert.equal(field('Debt type'), 'Other')
+  assert.equal(field('Starting balance · original amount borrowed or owed'), '1568')
+  assert.equal(field('Current balance · amount still owed'), '296.74')
+  assert.equal(field('Interest rate · annual percentage (optional)'), '24.99')
+  assert.equal(field('Minimum payment · amount due each cycle (optional)'), '296.74')
+  assert.equal(field('Next Payment Due'), '2026-11-16')
+  assert.equal(field('Account Last 4 Digits'), '')
+  assert.equal(field('Payment Schedule'), 'monthly')
+  assert.equal(form.querySelector('[aria-label="Credit Limit"]'), null)
+  assert.match(form.textContent, /Statement scanned\. Review your information before saving\./)
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Home Depot plan')
+  assert.equal(field('Current balance · amount still owed'), '296.74')
+  assert.deepEqual(['money-honey-debts', 'money-honey-bills', 'money-honey-account-data'].map(key => browser.localStorage.getItem(key)), before)
 })
 
 test('compact Pay in 4 requires only balance and first due date and recalculates the four draft payments', async () => {

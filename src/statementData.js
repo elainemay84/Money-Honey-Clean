@@ -141,7 +141,9 @@ export function parseDebtStatement(lines) {
     const line = textLines[index]
     const installments = /^payments completed\s*:?\s*(\d+)\s*(?:of|\/)\s*(\d+)$/i.exec(line)
       ?? /^(?:progress\s*:?\s*)?(\d+)\s*(?:of|\/)\s*(\d+)\s+payments(?: completed)?$/i.exec(line)
-      ?? /^(\d{1,2})\s+of\s+(\d{1,2})\b(?=.*\b(?:paid|remaining|payments?)\b)/i.exec(line)
+      ?? (/\b(?:paid|remaining|payments?)\b/i.test(`${textLines[index - 1] ?? ''} ${line} ${textLines[index + 1] ?? ''}`)
+        // OCR often reads a ring's "5 of 6" as "50f6".
+        ? /^(\d{1,2})\s*[o0]f\s*(\d{1,2})(?![\d,.])/i.exec(line) : null)
     if (installments && Number(installments[1]) <= Number(installments[2])) {
       add('completedInstallments', installments[1])
       add('totalInstallments', installments[2])
@@ -171,7 +173,7 @@ export function parseDebtStatement(lines) {
     if (captioned) add('currentBalance', textLines[index - 1])
     // A caption already claimed by the amount above it is never paired again with the amount below.
     if (!captioned) for (const [key, value] of pairColumns(line, textLines[index + 1])) add(key, value)
-    const embeddedApr = /\(\s*APR\s*:?\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*\)|\(\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*APR\s*\)/i.exec(line)
+    const embeddedApr = /\(\s*APR\s*:?\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*\)?|\(\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*APR\s*\)/i.exec(line)
     if (embeddedApr) add('interestRate', `${embeddedApr[1] ?? embeddedApr[2]}%`)
     for (const [key, label] of Object.entries(labels)) {
       const match = label.exec(line)
@@ -245,6 +247,8 @@ function wordCenter(word) {
 // Uses OCR word positions to pair each caption with the amount directly below it.
 function positionalPairs(header, amounts) {
   if (!header?.words?.length || !amounts?.words?.length) return []
+  // Only a caption-only row over an amount-only row is a column layout; "Label $X" rows pair on their own line.
+  if (/\$\s*\d/.test(header.text) || amounts.text.match(CAPTIONS)) return []
   const captions = []
   let text = ''
   const offsets = header.words.map(word => {
@@ -268,14 +272,24 @@ function positionalPairs(header, amounts) {
   })
 }
 
+// Logos, icons and buttons beside text are read as low-confidence noise; trim them instead of losing the line.
+function withoutNoise(line) {
+  const words = [...(line?.words ?? [])]
+  const edgeNoise = word => word.confidence < 80 && (word.confidence < 40 || !/\d/.test(word.text))
+  while (words.length && edgeNoise(words[0])) words.shift()
+  while (words.length && edgeNoise(words.at(-1))) words.pop()
+  const kept = words.filter(word => word.confidence >= 80 || /[\da-z]/i.test(word.text))
+  if (!kept.length || kept.some(word => word.confidence < 80)) return null
+  return { text: kept.map(word => word.text).join(' '), words: kept }
+}
+
 export function getReliableOcrLines(data) {
   const lines = (data.blocks ?? []).flatMap(block => block.paragraphs ?? [])
-    .flatMap(paragraph => paragraph.lines ?? [])
+    .flatMap(paragraph => paragraph.lines ?? []).map(withoutNoise)
   return lines.flatMap((line, index) => {
-    const reliable = item => item?.words?.length && item.words.every(word => word.confidence >= 80)
-    if (!reliable(line)) return ['']
+    if (!line) return ['']
     const previous = lines[index - 1]
-    return [line.text, ...(reliable(previous) ? positionalPairs(previous, line) : [])]
+    return [line.text, ...(previous ? positionalPairs(previous, line) : [])]
   })
 }
 

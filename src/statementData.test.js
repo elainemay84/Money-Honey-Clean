@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { getReliableOcrLines, parseDebtStatement, validateStatementSuggestions } from './statementData.js'
+import { homeDepotOcrData } from './statementOcrFixture.js'
 import { getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
 
 test('labeled statement fields extract exact amounts, complete dates, debt type and only the account suffix', () => {
@@ -55,7 +56,7 @@ test('masked account suffixes preserve zeros and names never absorb full account
 })
 
 test('low confidence OCR is excluded without joining a label to a value across an unreadable line', () => {
-  const line = (text, confidence) => ({ text, words: [{ confidence }] })
+  const line = (text, confidence) => ({ text, words: [{ text, confidence }] })
   const lines = getReliableOcrLines({ blocks: [{ paragraphs: [{ lines: [
     line('Current Balance:', 99), line('$800.00', 79), line('$300.00', 99),
     line('Minimum Payment Due: $25', 95)
@@ -227,6 +228,26 @@ test('OCR word positions pair column captions with the amounts directly below th
   const result = parseDebtStatement(lines)
   assert.equal(result.values.currentBalance, '296.74')
   assert.equal(result.values.amountAlreadyPaid, '1483.9')
+})
+
+test('real Tesseract word output keeps a heading beside a logo, reads 50f6 as 5 of 6 and never cross-pairs label rows', () => {
+  const lines = getReliableOcrLines(homeDepotOcrData)
+  assert.ok(lines.includes('The Home Depot'))
+  assert.ok(lines.includes('Remaining $296.74'))
+  assert.ok(!lines.some(line => /^(?:Purchase amount|Total interest) \$(?:121\.90|1,780\.64)$/.test(line)))
+  assert.deepEqual(parseDebtStatement(lines).values, {
+    name: 'The Home Depot', type: 'Other', currentBalance: '296.74', interestRate: '24.99', minimumPayment: '296.74',
+    nextPaymentDue: '2026-11-16', purchaseAmount: '1568', totalRepayment: '1780.64', totalInterest: '121.9',
+    amountAlreadyPaid: '1483.9', nextPaymentAmount: '296.74', completedInstallments: '5', totalInstallments: '6'
+  })
+  const word = (text, confidence) => ({ text, confidence })
+  const noisy = getReliableOcrLines({ blocks: [{ paragraphs: [{ lines: [
+    { text: 'Total interest $121.9O', words: [word('Total', 96), word('interest', 96), word('$121.9O', 60)] },
+    { text: 'Remaining $296.74', words: [word('Remaining', 96), word('$296.74', 70)] }
+  ] }] }] })
+  assert.deepEqual(noisy, ['', ''])
+  assert.equal(parseDebtStatement(['50f6 payments', '$1,483.90']).values.completedInstallments, '5')
+  assert.equal(parseDebtStatement(['50f6 $1,483.90']).values.completedInstallments, undefined)
 })
 
 test('split columns and yearless due dates stay blank when the association is not unambiguous', () => {
