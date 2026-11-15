@@ -119,9 +119,9 @@ test('Home Depot installment totals remain distinct and inconsistent totals are 
     'Next scheduled payment: $296.74 on November 16, 2026'
   ])
   assert.deepEqual(result.values, {
-    name: 'The Home Depot', currentBalance: '296.74', interestRate: '24.99', nextPaymentDue: '2026-11-16',
+    name: 'The Home Depot', currentBalance: '296.74', interestRate: '24.99', minimumPayment: '296.74', nextPaymentDue: '2026-11-16',
     purchaseAmount: '1568', totalRepayment: '1780.64', totalInterest: '121.9', amountAlreadyPaid: '1483.9',
-    totalInstallments: '6', completedInstallments: '5', nextPaymentAmount: '296.74'
+    totalInstallments: '6', completedInstallments: '5', nextPaymentAmount: '296.74', type: 'Other'
   })
   assert.equal(result.values.creditLimit, undefined)
   assert.equal(result.values.startingBalance, undefined)
@@ -140,11 +140,11 @@ test('screenshot-style OCR maps separate Home Depot labels and values without ne
     '5 of 6 payments completed\n'
   ])
   assert.deepEqual(result.values, {
-    name: 'The Home Depot', currentBalance: '296.74', interestRate: '24.99', nextPaymentDue: '2026-11-16',
+    name: 'The Home Depot', currentBalance: '296.74', interestRate: '24.99', minimumPayment: '296.74', nextPaymentDue: '2026-11-16',
     purchaseAmount: '1568', totalRepayment: '1780.64', totalInterest: '121.9', amountAlreadyPaid: '1483.9',
-    totalInstallments: '6', completedInstallments: '5', nextPaymentAmount: '296.74'
+    totalInstallments: '6', completedInstallments: '5', nextPaymentAmount: '296.74', type: 'Other'
   })
-  for (const key of ['type', 'accountLast4', 'creditLimit', 'minimumPayment']) {
+  for (const key of ['accountLast4', 'creditLimit']) {
     assert.ok(result.missing.includes(key))
     assert.equal(result.values[key], undefined)
   }
@@ -172,9 +172,10 @@ test('purchase, paid and repayment totals never become an outstanding balance, c
     'Amount already paid', '$1,483.90', 'Next scheduled payment', '$40.00',
     'Next payment date', 'November 16, 2026', 'Progress: 5 of 6 payments completed'
   ])
-  for (const key of ['currentBalance', 'creditLimit', 'minimumPayment', 'accountLast4', 'type']) {
+  for (const key of ['currentBalance', 'creditLimit', 'accountLast4']) {
     assert.equal(result.values[key], undefined)
   }
+  assert.equal(result.values.minimumPayment, '40')
   assert.equal(result.values.purchaseAmount, '1568')
   assert.equal(result.values.amountAlreadyPaid, '1483.9')
   assert.equal(result.values.nextPaymentAmount, '40')
@@ -195,4 +196,58 @@ test('unrecognized documents and generic financial headings do not invent credit
   ]) {
     assert.deepEqual(parseDebtStatement(lines).values, {})
   }
+})
+
+// Line structure reported from on-device OCR of a Home Depot installment screenshot (synthetic values).
+const homeDepotRealOcr = [
+  'The Home Depot', "5 of 6 You've paid Remaining", 'Paid $1,483.90 $296.74',
+  '$296.74 scheduled for Nov 16 Make a Payment', 'Purchase date May 15, 2026',
+  'Purchase amount $1,568.00', 'Total interest $121.90 (APR 24.99%)', 'Total amount $1,780.64'
+]
+
+test('real OCR column layout pairs Remaining with its amount and resolves the due year from the plan', () => {
+  const result = parseDebtStatement(homeDepotRealOcr.map(line => `${line}\n`))
+  assert.deepEqual(result.values, {
+    name: 'The Home Depot', type: 'Other', currentBalance: '296.74', interestRate: '24.99', minimumPayment: '296.74',
+    nextPaymentDue: '2026-11-16', purchaseAmount: '1568', totalRepayment: '1780.64', totalInterest: '121.9',
+    amountAlreadyPaid: '1483.9', nextPaymentAmount: '296.74', completedInstallments: '5', totalInstallments: '6'
+  })
+  for (const key of ['creditLimit', 'accountLast4', 'startingBalance']) assert.equal(result.values[key], undefined)
+  assert.deepEqual(validateStatementSuggestions(result.values), result.values)
+})
+
+test('OCR word positions pair column captions with the amounts directly below them', () => {
+  const word = (text, x) => ({ text, confidence: 95, bbox: { x0: x - 20, x1: x + 20 } })
+  const lines = getReliableOcrLines({ blocks: [{ paragraphs: [{ lines: [
+    { text: 'The Home Depot', confidence: 95, words: [word('The', 50), word('Home', 100), word('Depot', 150)] },
+    { text: "You've paid Remaining", confidence: 95, words: [word("You've", 80), word('paid', 120), word('Remaining', 300)] },
+    { text: '$1,483.90 $296.74', confidence: 95, words: [word('$1,483.90', 100), word('$296.74', 300)] }
+  ] }] }] })
+  assert.ok(lines.includes('Remaining $296.74'))
+  const result = parseDebtStatement(lines)
+  assert.equal(result.values.currentBalance, '296.74')
+  assert.equal(result.values.amountAlreadyPaid, '1483.9')
+})
+
+test('split columns and yearless due dates stay blank when the association is not unambiguous', () => {
+  const mismatched = parseDebtStatement(["You've paid Remaining", '$1,483.90 $296.74 $12.00'])
+  assert.equal(mismatched.values.currentBalance, undefined)
+  assert.equal(mismatched.values.amountAlreadyPaid, undefined)
+  assert.equal(parseDebtStatement(['$296.74 scheduled for Nov 16']).values.nextPaymentDue, undefined)
+  assert.equal(parseDebtStatement(['Purchase date May 15, 2026', '$296.74 scheduled for Nov 16']).values.nextPaymentDue, undefined)
+  assert.equal(parseDebtStatement([
+    '5 of 24 payments', 'Purchase date May 15, 2026', '$296.74 scheduled for Nov 16'
+  ]).values.nextPaymentDue, undefined)
+  assert.equal(parseDebtStatement([
+    '5 of 6 payments', 'Purchase date Dec 15, 2026', '$296.74 scheduled for Nov 16'
+  ]).values.nextPaymentDue, undefined)
+})
+
+test('caption amounts, scheduled payments and embedded APRs do not override explicit or conflicting values', () => {
+  assert.equal(parseDebtStatement(['$296.74', 'Remaining', '$1,483.90']).values.currentBalance, '296.74')
+  assert.equal(parseDebtStatement(['Remaining', '$296.74']).values.currentBalance, '296.74')
+  assert.equal(parseDebtStatement(['Total amount due $50.00']).values.totalRepayment, undefined)
+  assert.equal(parseDebtStatement(['Minimum Payment Due: $35.00', '$296.74 scheduled for Nov 30, 2026']).values.minimumPayment, '35')
+  assert.equal(parseDebtStatement(['$296.74 scheduled for Nov 30, 2026']).values.nextPaymentDue, '2026-11-30')
+  assert.equal(parseDebtStatement(['Purchase APR: 19.99%', 'Fee $1.00 (APR 24.99%)']).values.interestRate, undefined)
 })

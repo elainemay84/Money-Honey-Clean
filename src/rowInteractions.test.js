@@ -310,7 +310,7 @@ test('Debt floating scan action opens the existing scanner and extracted suggest
   assert.equal(scannedFile.name, 'statement.png')
   assert.equal(form.querySelector('[aria-label="Debt name"]').value, 'Example Bank')
   assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '800.15')
-  assert.match(form.textContent, /We filled in 5 fields\. Review and complete the rest\./)
+  assert.match(form.textContent, /Statement scanned\. Review your information before saving\./)
   assert.doesNotMatch(form.textContent, /Not determined:/)
   assert.equal(form.querySelector('[aria-label="Statement autofill"]'), null)
   await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '912.34')
@@ -425,9 +425,9 @@ test('a failed scanner can retry or return to manual entry without saving a debt
 })
 
 test('one-field and two-field scans fill the normal Add Debt form while uncertain fields stay blank', async () => {
-  for (const [lines, count, balance, apr, date] of [
-    [['APR: 24.99%'], 1, '', '24.99', ''],
-    [['Current remaining balance', '$296.74', 'Next payment date', 'November 16, 2026'], 2, '296.74', '', '2026-11-16']
+  for (const [lines, balance, apr, date] of [
+    [['APR: 24.99%'], '', '24.99', ''],
+    [['Current remaining balance', '$296.74', 'Next payment date', 'November 16, 2026'], '296.74', '', '2026-11-16']
   ]) {
     const container = await render(() => React.createElement(Debt, {
       statementExtractor: async () => parseDebtStatement(lines)
@@ -438,7 +438,7 @@ test('one-field and two-field scans fill the normal Add Debt form while uncertai
     await chooseStatementFile(container, 'Statement image')
     const form = container.querySelector('form')
     assert.ok(form)
-    assert.match(form.textContent, new RegExp(`We filled in ${count} ${count === 1 ? 'field' : 'fields'}\\. Review and complete the rest\\.`))
+    assert.match(form.textContent, /Statement scanned\. Review your information before saving\./)
     assert.equal(form.querySelector('[aria-label="Debt name"]').value, '')
     assert.equal(form.querySelector('[aria-label="Debt type"]').value, '')
     assert.equal(form.querySelector('[aria-label="Account Last 4 Digits"]').value, '')
@@ -492,7 +492,7 @@ test('failed and partial scans preserve manual debt edits, allow typing while re
   assert.equal(form.querySelector('[aria-label="Interest rate · annual percentage (optional)"]').value, '18.50')
   assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '734.56')
   assert.equal(form.querySelector('[aria-label="Next Payment Due"]').value, '2026-11-16')
-  assert.match(form.textContent, /We filled in 1 field/)
+  assert.match(form.textContent, /Statement scanned\. Review your information before saving\./)
   assert.deepEqual(['money-honey-debts', 'money-honey-bills', 'money-honey-account-data'].map(key => browser.localStorage.getItem(key)), before)
 })
 
@@ -508,16 +508,16 @@ test('statement scans keep reference amounts without exposing advanced fields or
   await click(button(container, 'Scan / Upload'))
   await chooseStatementFile(container, 'Statement PDF', 'installment.pdf', 'application/pdf')
   const form = container.querySelector('form')
-  assert.match(form.textContent, /Some statement totals differ/)
-  assert.match(form.textContent, /We filled in 4 fields/)
-  assert.equal(form.querySelector('[aria-label="Debt type"]').value, '')
+  assert.match(form.textContent, /Statement scanned\. Review your information before saving\./)
+  assert.doesNotMatch(form.textContent, /statement totals differ|Developer|confidence/i)
+  assert.equal(form.querySelector('[aria-label="Debt type"]').value, 'Other')
   assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '296.74')
+  assert.equal(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]').value, '296.74')
   for (const label of ['Original Purchase Amount', 'Original Total Repayment', 'Amount Already Paid', 'Total Installments', 'Completed Installments']) {
     assert.equal(form.querySelector(`[aria-label="${label}"]`), null)
   }
   assert.equal(form.querySelector('[aria-label="Payment Schedule"]').value, 'monthly')
   assert.equal(form.querySelector('[aria-label="Next Payment Due"]').value, '2026-11-16')
-  await changeValue(form.querySelector('[aria-label="Debt type"]'), 'Other')
   await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '1780.64')
   await changeValue(form.querySelector('[aria-label="Assigned To"]'), 'Joint')
   await submit(form)
@@ -530,8 +530,10 @@ test('statement scans keep reference amounts without exposing advanced fields or
   assert.deepEqual(saved.statementDetails, { purchaseAmount: 1568, totalRepayment: 1780.64, totalInterest: 121.90, amountAlreadyPaid: 1483.9, nextPaymentAmount: 296.74 })
   assert.equal(saved.paymentSchedule.kind, 'monthly')
   assert.equal(saved.paymentSchedule.completedInstallments, 0)
-  const bill = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.find(item => item.debtId === saved.id)
-  assert.equal(bill, undefined)
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.filter(item => item.debtId === saved.id)
+  assert.equal(bills.length, 1)
+  assert.equal(bills[0].amount, 296.74)
+  assert.deepEqual(bills[0].paymentHistory, [])
   assert.equal(readAccountData().transactions.length, 0)
   assert.doesNotMatch(container.querySelector('[aria-label="Debt row: The Home Depot"]').textContent, /installments/)
 })

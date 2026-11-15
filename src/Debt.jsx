@@ -5,7 +5,6 @@ import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
 import { createPayInFourSchedule, defaultSchedule, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
-import { DEBT_STATEMENT_FIELDS } from './statementData.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
 import {
@@ -796,10 +795,7 @@ export default function Debt({ statementExtractor } = {}) {
               onExtract={result => {
                 const draft = applyStatement(result.values, { ...blankDebt(), type: '' })
                 setFormValues(draft)
-                setStatementReview({
-                  count: DEBT_STATEMENT_FIELDS.filter(field => Object.hasOwn(result.values, field.key)).length,
-                  hasWarnings: Boolean(result.warnings?.length)
-                })
+                setStatementReview(true)
                 setSelectedDebtId(null)
                 setEditingDebtId(null)
                 setIsNewPayInFour(false)
@@ -855,12 +851,9 @@ export default function Debt({ statementExtractor } = {}) {
           <section role="dialog" aria-modal="true" aria-label={editingDebtId === null ? 'Add debt form' : 'Edit debt form'} style={dialog}>
             <h2 style={{ margin: '0 0 12px', color: '#79502A' }}>{editingDebtId === null ? 'Add Debt' : 'Edit Debt'}</h2>
             <form onSubmit={saveDebt} style={{ display: 'grid', gap: 10 }}>
-              {statementReview && <div role="status" style={{ fontSize: 11, color: '#79502A' }}>
-                {statementReview.count
-                  ? `We filled in ${statementReview.count} ${statementReview.count === 1 ? 'field' : 'fields'}. Review and complete the rest.`
-                  : 'We read text, but could not match any debt fields. You can enter them manually.'}
-                {statementReview.hasWarnings && <p style={{ margin: '4px 0 0' }}>Some statement totals differ. Check the provider's figures before saving.</p>}
-              </div>}
+              {statementReview && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>
+                Statement scanned. Review your information before saving.
+              </p>}
               {editingDebt && <StatementAutofill
                 currentValues={formValues}
                 fieldStyle={inputStyle}

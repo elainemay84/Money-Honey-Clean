@@ -1,4 +1,4 @@
-import { createWorker } from 'tesseract.js'
+import { createWorker, PSM } from 'tesseract.js'
 import { getReliableOcrLines } from './statementData.js'
 
 let reader
@@ -27,6 +27,8 @@ self.onmessage = async ({ data: { image, assets } }) => {
       },
       errorHandler: () => self.postMessage({ error: true })
     })
+    // Tesseract's default single-block mode drops text placed inside graphics, such as a balance in a progress ring.
+    await reader.setParameters({ tessedit_pageseg_mode: PSM.AUTO })
     self.postMessage({ ready: true })
     const { data } = await reader.recognize(new Uint8Array(image), {}, { text: false, blocks: true })
     self.postMessage({ lines: getReliableOcrLines(data) })

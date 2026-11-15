@@ -14,7 +14,6 @@ export default function StatementAutofill({
   const [selected, setSelected] = useState({})
   const [error, setError] = useState('')
   const [applied, setApplied] = useState(0)
-  const [warnings, setWarnings] = useState([])
   const camera = useRef(null)
   const photos = useRef(null)
   const pdf = useRef(null)
@@ -32,7 +31,6 @@ export default function StatementAutofill({
     setSuggestions(null)
     setApplied(0)
     setError('')
-    setWarnings([])
     setProgress('Preparing the on-device reader...')
     try {
       const result = await extract(file, {
@@ -46,7 +44,6 @@ export default function StatementAutofill({
         return
       }
       setSuggestions(result.values)
-      setWarnings(result.warnings ?? [])
       setSelected(Object.fromEntries(DEBT_STATEMENT_FIELDS.filter(field => Object.hasOwn(result.values, field.key))
         .map(field => [field.key, true])))
     } catch (failure) {
@@ -135,7 +132,6 @@ export default function StatementAutofill({
           {error && <p role="alert" style={{ color: '#9B463E' }}>{error}</p>}
           {error && <p className="statement-scan-help">Try a clear English summary page, up to 5 PDF pages.</p>}
           {error && <button type="button" className="statement-scan-retry" onClick={() => { if (lastFile.current) scan(lastFile.current) }} style={{ ...buttonStyle, minHeight: 48 }}>Retry Reading</button>}
-          {warnings.length > 0 && <p role="status">Some statement totals differ. Check the provider's figures before saving.</p>}
           {suggestions && <p role="status">{suggestedFields.length
             ? `We found ${suggestedFields.length} ${suggestedFields.length === 1 ? 'field' : 'fields'}. Review and complete the rest.`
             : 'We read text, but could not match any debt fields. You can enter them manually.'}</p>}
@@ -171,7 +167,7 @@ export default function StatementAutofill({
               <button type="button" onClick={apply} style={{ ...buttonStyle, fontWeight: 'bold' }}>Apply Suggestions to Form</button>
             </div>
           )}
-          {applied > 0 && <p role="status">We filled in {applied} {applied === 1 ? 'field' : 'fields'}. Review and complete the rest.</p>}
+          {applied > 0 && <p role="status">Statement scanned. Review your information before saving.</p>}
           <div className="statement-scan-footer">
             {onManual && <button type="button" onClick={() => { operation.current?.abort(); lastFile.current = null; onManual() }}>Enter Manually</button>}
             <button type="button" onClick={cancel}>{busy ? 'Cancel Reading' : onExtract ? 'Cancel' : 'Close Scanner'}</button>
