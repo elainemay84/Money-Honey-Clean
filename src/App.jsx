@@ -29,7 +29,7 @@ import { loadAccountData, loadSavedAccountData, saveAccountData } from './accoun
 import { calculateOverallDebtSummary, loadDebts } from './debtData.js'
 import { calculatePaycheckForecast } from './paycheckForecast.js'
 import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budgetData.js'
-import { getCategories, loadCategoryConfig } from './categoryData.js'
+import { getHistoricalCategories, getReportingTransactions, loadCategoryConfig } from './categoryData.js'
 import { calculateDailySpending } from './dailySpending.js'
 import { loadAppearanceSize, saveAppearanceSize } from './appearanceData.js'
 import {
@@ -115,14 +115,10 @@ function App() {
   const totalStartingDebt = debtSummary.totalStarting
   const debtProgress = debtSummary.progressPercent
   const categoryConfig = loadCategoryConfig()
-  const budgetCategories = getCategories(
-    categoryConfig.customCategories,
-    'expense',
-    categoryConfig.builtInNames,
-    categoryConfig.disabledBuiltIns
-  )
+  const budgetCategories = getHistoricalCategories(categoryConfig)
+  const categorizedTransactions = getReportingTransactions(transactions, categoryConfig)
   const budgetSnapshot = calculateBudgetSnapshot({
-    transactions,
+    transactions: categorizedTransactions,
     today,
     categories: budgetCategories,
     mode: budgetSettings.mode,
@@ -139,7 +135,7 @@ function App() {
     forecastEndDate: rollingForecastEnd.toISOString().slice(0, 10)
   })
   const dailySpending = calculateDailySpending({
-    transactions,
+    transactions: categorizedTransactions,
     today,
     forecast: rollingCashFlowForecast,
     categories: budgetCategories,

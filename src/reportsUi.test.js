@@ -625,7 +625,7 @@ test('refunds can be associated with an expense category, reducing category spen
   await click(card.querySelector('[data-review-item="302"] button'))
 
   const dialog = container.querySelector('[role="dialog"]')
-  await changeValue(dialog.querySelector('select[aria-label="Transaction category"]'), 'Shopping')
+  await changeValue(dialog.querySelector('select[aria-label="Transaction category"]'), JSON.stringify(['expense', 'Shopping']))
   await submit(dialog.querySelector('form'))
 
   assert.equal(container.querySelector('h1').textContent, 'Reports')

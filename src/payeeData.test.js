@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { loadPayees, savePayees } from './payeeData.js'
+import { PAYEE_STORAGE_KEY, loadPayees, savePayees } from './payeeData.js'
 
 function createStorage() {
   const values = new Map()
@@ -12,8 +12,36 @@ function createStorage() {
 
 test('saved payees persist and remain unique', () => {
   const storage = createStorage()
-  savePayees(['Walmart', 'Walmart', ' Starbucks '], storage)
-  assert.deepEqual(loadPayees(storage), ['Walmart', 'Starbucks'])
+  savePayees(['Walmart', ' Starbucks '], storage)
+  assert.deepEqual(loadPayees(storage), ['Starbucks', 'Walmart'])
+  for (const duplicate of ['Walmart', 'walmart', ' WALMART ']) {
+    assert.throws(() => savePayees([...loadPayees(storage), duplicate], storage), /already exists/)
+    assert.deepEqual(loadPayees(storage), ['Starbucks', 'Walmart'])
+  }
+})
+
+test('large payee lists persist and new or renamed entries sort without changing spelling', () => {
+  const storage = createStorage()
+  const payees = [...Array.from({ length: 1500 }, (_, i) => `Payee ${i}`), 'zebra', 'ALPHA', 'apple']
+  savePayees(payees, storage)
+  assert.deepEqual(loadPayees(storage), [...payees].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
+  savePayees(loadPayees(storage).map(name => name === 'zebra' ? 'Aardvark' : name), storage)
+  assert.equal(loadPayees(storage)[0], 'Aardvark')
+})
+
+test('invalid payees and storage failures are explicit and leave previous data intact', () => {
+  const storage = createStorage()
+  savePayees(['Keep'], storage)
+  assert.throws(() => savePayees(['Keep', '  '], storage), /Enter a payee name/)
+  assert.deepEqual(loadPayees(storage), ['Keep'])
+  assert.throws(() => savePayees(['New'], { getItem: () => null, setItem: () => { throw new DOMException('Full', 'QuotaExceededError') } }), /storage may be full or unavailable.*not saved/)
+})
+
+test('legacy case variants do not block unrelated additions or get silently removed', () => {
+  const storage = createStorage()
+  storage.setItem(PAYEE_STORAGE_KEY, JSON.stringify({ version: 1, payees: ['Coffee', 'coffee'] }))
+  savePayees([...loadPayees(storage), 'New payee'], storage)
+  assert.deepEqual(loadPayees(storage), ['Coffee', 'coffee', 'New payee'])
 })
 
 test('deleting a saved payee leaves transaction data independent', () => {

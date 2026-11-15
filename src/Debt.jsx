@@ -119,6 +119,7 @@ export default function Debt({ statementExtractor } = {}) {
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [addMode, setAddMode] = useState(null)
   const addMenuRef = useRef(null)
+  const statementDialogRef = useRef(null)
   const [statementReview, setStatementReview] = useState(null)
   const [editingDebtId, setEditingDebtId] = useState(null)
   const [formValues, setFormValues] = useState(blankDebt)
@@ -195,6 +196,29 @@ export default function Debt({ statementExtractor } = {}) {
       document.removeEventListener('pointerdown', closeOutside)
       document.removeEventListener('keydown', closeOnEscape)
     }
+  }, [addMode])
+
+  useEffect(() => {
+    if (addMode !== 'scan') return
+    const scanner = statementDialogRef.current
+    scanner.querySelector('button')?.focus()
+    const handleKey = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setAddMode(null)
+        addMenuRef.current?.querySelector('button')?.focus()
+      } else if (event.key === 'Tab') {
+        const buttons = [...scanner.querySelectorAll('button:not(:disabled)')]
+        const target = event.shiftKey ? buttons.at(-1) : buttons[0]
+        const boundary = event.shiftKey ? buttons[0] : buttons.at(-1)
+        if (document.activeElement === boundary || !scanner.contains(document.activeElement)) {
+          event.preventDefault()
+          target?.focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
   }, [addMode])
 
   useEffect(() => {
@@ -760,12 +784,15 @@ export default function Debt({ statementExtractor } = {}) {
       )}
 
       {addMode === 'scan' && (
-        <div style={overlay} onMouseDown={event => { if (event.target === event.currentTarget) setAddMode(null) }}>
-          <section role="dialog" aria-modal="true" aria-label="Scan / Upload Statement" style={dialog}>
-            <h2 style={{ margin: '0 0 10px', color: '#79502A', fontSize: 18 }}>Scan / Upload Statement</h2>
+        <div className="statement-scan-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setAddMode(null) }}>
+          <section ref={statementDialogRef} role="dialog" aria-modal="true" aria-labelledby="statement-scan-title" aria-describedby="statement-scan-description" className="statement-scan-dialog">
+            <h2 id="statement-scan-title" className="statement-scan-title">
+              <svg aria-hidden="true" focusable="false" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5M7 12h10M12 7v10" /></svg>
+              Scan Statement
+            </h2>
             <StatementAutofill
               initialOpen currentValues={{}} fieldStyle={inputStyle} buttonStyle={control} extract={statementExtractor}
-              onManual={openNewDebt} onClose={() => setAddMode(null)}
+              onManual={openNewDebt} onClose={() => { setAddMode(null); addMenuRef.current?.querySelector('button')?.focus() }}
               onExtract={result => {
                 const draft = applyStatement(result.values, { ...blankDebt(), type: '' })
                 setFormValues(draft)

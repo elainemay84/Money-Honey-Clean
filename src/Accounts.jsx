@@ -15,6 +15,8 @@ import { loadDebts, reconcileDebtPaymentForTransaction, removeDebtPaymentForTran
 import {
   getCategories,
   getDefaultCategoryForFlow,
+  getReportingTransactions,
+  getTransactionCategoryType,
   loadCategoryConfig,
   suggestTransactionCategory
 } from './categoryData.js'
@@ -67,9 +69,10 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const [newAmount, setNewAmount] = useState(startEdit ? String(Math.abs(startEdit.transaction.amount)) : '')
   const [newDate, setNewDate] = useState(startEdit?.transaction.date ?? todayDate)
   const [kind, setKind] = useState(startEdit && startEdit.transaction.amount > 0 ? 'income' : 'expense')
-  const [category, setCategory] = useState(startEdit ? startEdit.transaction.category ?? '' : getDefaultCategoryForFlow('out'))
-  const [categoryWasChosen, setCategoryWasChosen] = useState(Boolean(startEdit))
   const [categoryConfig] = useState(() => loadCategoryConfig())
+  const [category, setCategory] = useState(startEdit ? startEdit.transaction.category ?? '' : getDefaultCategoryForFlow('out', categoryConfig))
+  const [categoryType, setCategoryType] = useState(startEdit ? getTransactionCategoryType(startEdit.transaction, categoryConfig) : 'expense')
+  const [categoryWasChosen, setCategoryWasChosen] = useState(Boolean(startEdit))
   const customCategories = categoryConfig.customCategories
   const builtInNames = categoryConfig.builtInNames
   const disabledBuiltIns = categoryConfig.disabledBuiltIns
@@ -106,6 +109,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   }, [isAddTransactionOpen, onEditFinished])
 
   const categoryOptions = getCategories(customCategories, kind, builtInNames, disabledBuiltIns)
+  const categoryTransactions = getReportingTransactions(transactions, categoryConfig)
   // A credit can be tied to the expense category it refunds; Debt Payments is a different kind of record.
   const refundOptions = kind === 'income'
     ? getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns).filter(item => item !== 'Debt Payments')
@@ -224,6 +228,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     setNewDate(transaction.date)
     setKind(transaction.amount < 0 ? 'expense' : 'income')
     setCategory(transaction.category ?? '')
+    setCategoryType(getTransactionCategoryType(transaction, categoryConfig))
     setCategoryWasChosen(true)
     setIsAddTransactionOpen(true)
   }
@@ -342,7 +347,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             name: newName.trim(),
             amount: normalizeTransactionAmount(amount, kind),
             date: newDate,
-            category
+            category,
+            categoryType
           }
           : item
       ))
@@ -356,7 +362,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
         amount: normalizeTransactionAmount(amount, kind),
         date: newDate,
         cleared: account.defaultCleared,
-        category: categoryWasChosen ? category : (category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out'))
+        category: categoryWasChosen ? category : (category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out', categoryConfig)),
+        categoryType
       }])
     }
 
@@ -925,7 +932,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
           setNewAmount('')
           setNewDate(todayDate)
           setKind('expense')
-          setCategory(getDefaultCategoryForFlow('out'))
+          setCategoryType('expense')
+          setCategory(getDefaultCategoryForFlow('out', categoryConfig))
           setCategoryWasChosen(false)
           setIsAddTransactionOpen(true)
         }}
@@ -1019,9 +1027,10 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 onChange={event => {
                   const nextKind = event.target.value
                   setKind(nextKind)
+                  setCategoryType(nextKind)
                   setCategory(
-                    suggestTransactionCategory(transactions, newName, nextKind, customCategories, builtInNames, disabledBuiltIns)
-                    || getDefaultCategoryForFlow(nextKind === 'income' ? 'in' : 'out')
+                    suggestTransactionCategory(categoryTransactions, newName, nextKind, customCategories, builtInNames, disabledBuiltIns)
+                    || getDefaultCategoryForFlow(nextKind === 'income' ? 'in' : 'out', categoryConfig)
                   )
                   setCategoryWasChosen(false)
                 }}
@@ -1040,8 +1049,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   setNewName(value)
                   if (!categoryWasChosen) {
                     setCategory(
-                      suggestTransactionCategory(transactions, value, kind, customCategories, builtInNames, disabledBuiltIns)
-                      || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out')
+                      suggestTransactionCategory(categoryTransactions, value, kind, customCategories, builtInNames, disabledBuiltIns)
+                      || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out', categoryConfig)
                     )
                   }
                 }}
@@ -1071,24 +1080,32 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 Category
                 <select
                   aria-label="Transaction category"
-                  value={category}
+                  value={kind === 'income' && category ? JSON.stringify([categoryType, category]) : category}
                   onChange={event => {
-                    setCategory(event.target.value)
+                    if (kind === 'income' && event.target.value) {
+                      const [type, name] = JSON.parse(event.target.value)
+                      setCategoryType(type)
+                      setCategory(name)
+                    } else {
+                      setCategory(event.target.value)
+                      setCategoryType(kind)
+                    }
                     setCategoryWasChosen(true)
                   }}
                   style={field}
                 >
                   <option value="">Uncategorized</option>
-                  {category !== '' && !categoryOptions.includes(category) && !refundOptions.includes(category) && (
-                    <option value={category}>{category} (not an active category)</option>
+                  {editingTransactionId !== null && category !== ''
+                    && !(kind === 'income' && categoryType === 'expense' ? refundOptions : categoryOptions).includes(category) && (
+                    <option value={kind === 'income' ? JSON.stringify([categoryType, category]) : category}>{category} (not an active category)</option>
                   )}
                   {kind === 'income' ? (
                     <>
                       <optgroup label="Income">
-                        {categoryOptions.map(item => <option key={item} value={item}>{item}</option>)}
+                        {categoryOptions.map(item => <option key={item} value={JSON.stringify(['income', item])}>{item}</option>)}
                       </optgroup>
                       <optgroup label="Refund of an expense">
-                        {refundOptions.map(item => <option key={`refund-${item}`} value={item}>{item}</option>)}
+                        {refundOptions.map(item => <option key={`refund-${item}`} value={JSON.stringify(['expense', item])}>{item}</option>)}
                       </optgroup>
                     </>
                   ) : categoryOptions.map(item => (

@@ -91,8 +91,11 @@ The Debt **+** button expands two small, labeled floating actions: **Add Manuall
 (pencil) and **Scan / Upload** (camera). Tap the main **X** again, tap outside, or
 press Escape to dismiss; choosing an action or leaving Debt also closes the menu.
 The gold button stays above the bottom navigation and iPhone safe area.
-Manual entry opens the compact form without a scanner. Scanning offers **Take Photo**,
-**Choose Image** (Photos or a file), or **Choose PDF**, then opens the same normal,
+Manual entry opens the compact form without a scanner. The compact **Scan Statement**
+sheet has full-width **Take Photo**, **Choose Image** (Photos or a file), and
+**Choose PDF** rows, plus **Enter Manually** and **Cancel**. It stays above the
+bottom navigation, follows theme styling, and supports Tab and Escape.
+Scanning then opens the same normal,
 unsaved Add Debt form with suggested values filled in. Review the extracted
 creditor, explicit debt type, account suffix, credit limit, current balance, APR,
 minimum payment, and next due date. Every suggestion is editable and can be
@@ -199,6 +202,23 @@ due date. Skips and historical payments retain their identities across schedule 
 Schedules, installment identities, reference amounts, and assignments round-trip
 in the existing version-1 JSON backups. Legacy debts without schedule metadata keep
 their existing monthly behavior and are not rewritten on load.
+
+## Categories & Payees
+
+Expense categories, income categories, and saved payees are alphabetized
+case-insensitively in management and entry choices. Adds and renames reject blank
+or duplicate names with visible errors. Category names are unique within each
+type; Income and Expense may share a name without confusing new income with refunds.
+There is no application-imposed record-count limit; device storage failures are
+reported and entry drafts remain available to retry.
+
+Preset and custom categories can both be deleted after confirmation. Deletion
+removes future choices, not transactions, bills, budgets, or historical assignments.
+Deleted categories remain available to historical reporting, including refunds
+and existing budget lines. Preset deletion markers, historical category names,
+and same-name category classification metadata are included in version-1 JSON
+backups. Older backups remain supported; loading saved data never restores
+intentionally deleted presets.
 
 ## iPhone form behavior
 

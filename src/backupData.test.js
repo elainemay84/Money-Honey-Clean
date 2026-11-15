@@ -3,13 +3,14 @@ import test from 'node:test'
 import { ACCOUNT_STORAGE_KEY, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { BILL_STORAGE_KEY, PAY_SCHEDULE_STORAGE_KEY, saveBillData, savePaySchedule } from './billData.js'
 import { BUDGET_MODE_STORAGE_KEY, BUDGET_SETTINGS_STORAGE_KEY, BUDGET_STORAGE_KEY, MANUAL_BUDGET_STORAGE_KEY, SMART_BUDGET_STORAGE_KEY, SMART_DISMISSED_STORAGE_KEY, saveBudgets } from './budgetData.js'
-import { CATEGORY_STORAGE_KEY, saveCategories } from './categoryData.js'
+import { CATEGORY_STORAGE_KEY, getCategories, getHistoricalCategories, getReportingTransactions, loadCategoryConfig, saveCategories, saveCategoryConfig } from './categoryData.js'
 import {
   DEBT_STORAGE_KEY, addDebtAssignee, deleteDebtAssignee, loadDebtData,
   loadDebts, renameDebtAssignee, saveDebts, createDebtPayment, getDebtScheduleStatus, synchronizeDebtBills
 } from './debtData.js'
 import { APPEARANCE_SIZE_STORAGE_KEY } from './appearanceData.js'
-import { PAYEE_STORAGE_KEY, savePayees } from './payeeData.js'
+import { PAYEE_STORAGE_KEY, loadPayees, savePayees } from './payeeData.js'
+import { getIncomeVsExpenses } from './reportData.js'
 import {
   BACKUP_STORAGE_KEYS,
   BACKUP_CATEGORIES,
@@ -85,6 +86,47 @@ test('creating a backup is read-only and uses the export date in its filename', 
 
   assert.deepEqual([...values.entries()], before)
   assert.equal(getBackupFilename(date), 'money-honey-backup-2026-11-12.json')
+})
+
+test('category deletions, large catalogs and typed assignments restore without changing financial history', () => {
+  const { storage } = sampleStorage()
+  const accounts = loadSavedAccountData(storage)
+  const transactions = [
+    { id: 1, accountId: 1, name: 'Purchase', category: 'Groceries', amount: -50, date: '2026-11-01', cleared: true },
+    { id: 2, accountId: 1, name: 'Return', category: 'Groceries', amount: 10, date: '2026-11-02', cleared: false },
+    { id: 3, accountId: 1, name: 'Pay', category: 'Paycheck', amount: 1000, date: '2026-11-02', cleared: true },
+    { id: 4, accountId: 1, name: 'Coffee', category: 'Coffee', amount: -5, date: '2026-11-02', cleared: false },
+    { id: 5, accountId: 1, name: 'Side income', category: 'Groceries', categoryType: 'income', amount: 25, date: '2026-11-02', cleared: true }
+  ]
+  saveAccountData(accounts.accounts, transactions, storage)
+  const customCategories = Array.from({ length: 1200 }, (_, i) => ({ name: `Saved ${i}`, type: i % 2 ? 'income' : 'expense' }))
+  customCategories.push({ name: 'Groceries', type: 'income' }, { name: 'Paycheck', type: 'expense' })
+  saveCategoryConfig({
+    customCategories,
+    disabledBuiltIns: ['expense:Groceries', 'income:Commission'],
+    deletedCategories: [{ name: 'Coffee', type: 'expense' }],
+    builtInNames: { 'expense:Other': 'Miscellaneous' }
+  }, storage)
+  savePayees(Array.from({ length: 1200 }, (_, i) => `Payee ${i}`), storage)
+  const before = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(before), target).backup, target)
+  const config = loadCategoryConfig(target)
+  assert.deepEqual(config, loadCategoryConfig(storage))
+  assert.equal(config.customCategories.length, 1202)
+  assert.equal(loadPayees(target).length, 1200)
+  assert.equal(getCategories(config.customCategories, 'expense', config.builtInNames, config.disabledBuiltIns).includes('Groceries'), false)
+  assert.equal(getCategories(config.customCategories, 'income', config.builtInNames, config.disabledBuiltIns).includes('Commission'), false)
+  assert.deepEqual(createBackupSnapshot(target).data, before.data)
+  assert.deepEqual(loadSavedAccountData(target).transactions, transactions)
+  const report = getIncomeVsExpenses({
+    transactions: getReportingTransactions(transactions, config), categories: getHistoricalCategories(config), month: '2026-11'
+  })
+  assert.equal(report.income, 1025)
+  assert.equal(report.expenses, 45)
+  assert.equal(report.refundTotal, 10)
+  saveCategories([...config.customCategories, { name: 'Later', type: 'income' }], target)
+  assert.deepEqual(loadCategoryConfig(target).disabledBuiltIns, ['expense:Groceries', 'income:Commission'])
 })
 
 function sampleStorage() {
@@ -590,7 +632,9 @@ test('restored data is sanitized to the supported schema', () => {
     version: 1,
     customCategories: [{ name: 'Boat', type: 'income' }],
     builtInNames: { 'expense:Groceries': 'Eats' },
-    disabledBuiltIns: ['income:Paycheck']
+    disabledBuiltIns: ['income:Paycheck'],
+    deletedCategories: [],
+    legacyCategoryTypes: {}
   })
 })
 

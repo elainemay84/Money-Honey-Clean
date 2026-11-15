@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import FinancialInput from './FinancialInput'
 import { parseFinancialAmount } from './financialAmounts.js'
-import { getCategories, loadCategoryConfig } from './categoryData.js'
+import { getCategories, getHistoricalCategories, getReportingTransactions, loadCategoryConfig } from './categoryData.js'
 import {
   analyzeSmartBudgets,
   getBudgetSpendingEntries,
@@ -44,17 +44,22 @@ export default function Budgets({ transactions, today }) {
   const [editingBudget, setEditingBudget] = useState(null)
   const [budgetAmount, setBudgetAmount] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
-  const { customCategories, builtInNames, disabledBuiltIns } = loadCategoryConfig()
+  const categoryConfig = loadCategoryConfig()
+  const { customCategories, builtInNames, disabledBuiltIns } = categoryConfig
   const mode = budgetSettings.mode
   const budgets = loadBudgets(mode)
-  const categories = getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns)
-  const currentSpending = getBudgetSpendingByCategory({ transactions, today, categories })
+  const activeCategories = getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns)
+  const historicalCategories = getHistoricalCategories(categoryConfig)
+  const categorizedTransactions = getReportingTransactions(transactions, categoryConfig)
+  const categories = [...new Set([...activeCategories, ...Object.keys(budgets).filter(name => historicalCategories.includes(name))])]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  const currentSpending = getBudgetSpendingByCategory({ transactions: categorizedTransactions, today, categories: historicalCategories })
   const smartAnalysis = mode === 'smart'
-    ? analyzeSmartBudgets({ transactions, today, categories, historyMonths: budgetSettings.historyMonths })
+    ? analyzeSmartBudgets({ transactions: categorizedTransactions, today, categories: historicalCategories, historyMonths: budgetSettings.historyMonths })
     : null
   const smartDetails = new Map(smartAnalysis?.categories.map(item => [item.category, item]) ?? [])
   const dismissedSuggestions = mode === 'smart' ? loadDismissedSmartSuggestions() : {}
-  const spendingEntries = getBudgetSpendingEntries({ transactions, categories })
+  const spendingEntries = getBudgetSpendingEntries({ transactions: categorizedTransactions, categories: historicalCategories })
   const spending = categories.map(category => {
     const expenses = spendingEntries.filter(entry => entry.category === category)
     const smartDetail = smartDetails.get(category)

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { getCategories, loadCategoryConfig } from './categoryData.js'
+import { getHistoricalCategories, getReportingTransactions, loadCategoryConfig } from './categoryData.js'
 import PageHeader from './PageHeader'
 import ClassificationReviewReport from './ClassificationReviewReport.jsx'
 import IncomeVsExpensesReport from './IncomeVsExpensesReport.jsx'
@@ -36,8 +36,9 @@ const REPORT_SECTIONS = [
 export default function Reports({ transactions, accounts = [], today, cardColor = '#FFFFFF', onBack, onEditTransaction }) {
   const currentMonth = today.slice(0, 7)
   const [month, setMonth] = useState(currentMonth)
-  const { customCategories, builtInNames, disabledBuiltIns } = loadCategoryConfig()
-  const categories = getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns)
+  const categoryConfig = loadCategoryConfig()
+  const categories = getHistoricalCategories(categoryConfig)
+  const categorizedTransactions = getReportingTransactions(transactions, categoryConfig)
   const bounds = getMonthBounds(transactions, currentMonth)
 
   return (
@@ -69,7 +70,7 @@ export default function Reports({ transactions, accounts = [], today, cardColor 
       {REPORT_SECTIONS.map(({ id, Component }) => (
         <Component
           key={id}
-          transactions={transactions}
+          transactions={categorizedTransactions}
           categories={categories}
           accounts={accounts}
           month={month}

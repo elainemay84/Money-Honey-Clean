@@ -79,6 +79,15 @@ test('a credit in an expense category is a refund of that category, not income',
   assert.deepEqual(refund.flags, [])
 })
 
+test('explicit income and refund selections remain distinct with the same category name', () => {
+  assert.deepEqual(kinds([
+    txn(50, { category: 'Shopping', categoryType: 'income' }),
+    txn(20, { category: 'Shopping', categoryType: 'expense' }),
+    txn(-30, { category: 'Shopping', categoryType: 'expense' }),
+    txn(25, { category: 'Debt Payments', categoryType: 'income' })
+  ]), ['income', 'refund', 'purchase', 'income'])
+})
+
 test('credits elsewhere are income, and ambiguous ones are flagged without changing the count', () => {
   const [plain, noCategory, namedRefund] = classify([
     txn(1500, { category: 'Paycheck', name: 'Pay' }),

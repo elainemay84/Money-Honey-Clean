@@ -17,10 +17,29 @@ export function loadPayees(storage = localStorage) {
     throw new Error('Saved Money Honey payees are invalid.')
   }
   return [...new Set(data.payees.map(normalize).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 }
 
 export function savePayees(payees, storage = localStorage) {
-  const unique = [...new Set(payees.map(normalize).filter(Boolean))]
-  storage.setItem(PAYEE_STORAGE_KEY, JSON.stringify({ version: 1, payees: unique }))
-  return unique
+  const names = payees.map(normalize)
+  const previousCounts = new Map()
+  for (const name of loadPayees(storage)) {
+    const key = name.toLocaleLowerCase()
+    previousCounts.set(key, (previousCounts.get(key) ?? 0) + 1)
+  }
+  const counts = new Map()
+  for (const name of names) {
+    if (!name) throw new Error('Enter a payee name.')
+    const key = name.toLocaleLowerCase()
+    const count = (counts.get(key) ?? 0) + 1
+    if (count > 1 && count > (previousCounts.get(key) ?? 0)) throw new Error(`A payee named "${name}" already exists.`)
+    counts.set(key, count)
+  }
+  names.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  try {
+    storage.setItem(PAYEE_STORAGE_KEY, JSON.stringify({ version: 1, payees: names }))
+  } catch (error) {
+    throw new Error('Could not save payees. Device storage may be full or unavailable. Your changes were not saved.', { cause: error })
+  }
+  return names
 }

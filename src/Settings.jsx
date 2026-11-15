@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import {
-  getDefaultCategoryForFlow,
   getCategories,
   getCategoryId,
+  getTransactionCategoryType,
   loadCategoryConfig,
   renameCategory,
   saveCategoryConfig
 } from './categoryData.js'
 import { loadPayees, savePayees } from './payeeData.js'
+import { isDebtPaymentTransaction } from './transactionRules.js'
 import PageHeader from './PageHeader'
 
 const field = {
@@ -26,7 +27,7 @@ const card = {
   boxShadow: '0 3px 14px #76552212'
 }
 
-export default function Settings({ onBack, transactions, onTransactionsChange }) {
+export default function Settings({ onBack, transactions = [], onTransactionsChange }) {
   const [categoryConfig, setCategoryConfig] = useState(() => loadCategoryConfig())
   const [payees, setPayees] = useState(() => loadPayees())
   const [newCategoryName, setNewCategoryName] = useState('')
@@ -35,7 +36,7 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
   const [selectedCategory, setSelectedCategory] = useState('')
   const [editingCategory, setEditingCategory] = useState(null)
   const [categoryDraft, setCategoryDraft] = useState('')
-  const [replacementCategory, setReplacementCategory] = useState('')
+  const [managementError, setManagementError] = useState('')
   const [categoryDeleteConfirmation, setCategoryDeleteConfirmation] = useState(null)
   const [payeeDeleteConfirmation, setPayeeDeleteConfirmation] = useState(null)
   const [editingPayee, setEditingPayee] = useState(null)
@@ -47,100 +48,117 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
 
   function addCategory(event) {
     event.preventDefault()
-    const name = newCategoryName.trim()
-    if (!name) return
-    const allNames = [
-      ...getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns),
-      ...getCategories(customCategories, 'income', builtInNames, disabledBuiltIns)
-    ]
-    if (allNames.some(item => item.toLocaleLowerCase() === name.toLocaleLowerCase())) return
-    setCategoryConfig(saveCategoryConfig({
-      customCategories: [...customCategories, { name, type: newCategoryType }],
-      builtInNames,
-      disabledBuiltIns
-    }))
-    setNewCategoryName('')
+    setManagementError('')
+    try {
+      setCategoryConfig(saveCategoryConfig({
+        ...categoryConfig,
+        customCategories: [...customCategories, { name: newCategoryName, type: newCategoryType }]
+      }))
+      setNewCategoryName('')
+    } catch (error) {
+      setManagementError(error.message)
+    }
   }
 
   function openCategory(name, type) {
+    setManagementError('')
     setSelectedCategory(name)
     setEditingCategory({
       name,
       type,
-      isCustom: customCategories.some(item => item.name === name)
+      isCustom: customCategories.some(item => item.name === name && item.type === type)
     })
     setCategoryDraft(name)
-    setReplacementCategory(getCategories(customCategories, type, builtInNames)
-      .find(item => item !== name) ?? getDefaultCategoryForFlow(type === 'income' ? 'in' : 'out'))
   }
 
   function saveCategoryEdit() {
-    if (!editingCategory || !categoryDraft.trim()) return
+    setManagementError('')
+    if (!categoryDraft.trim()) {
+      setManagementError('Enter a category name.')
+      return
+    }
     const name = categoryDraft.trim()
     const oldName = editingCategory.name
-    let nextConfig = categoryConfig
-    if (editingCategory.isCustom) {
-      nextConfig = saveCategoryConfig({
-        customCategories: renameCategory(customCategories, oldName, name),
-        builtInNames,
-        disabledBuiltIns
-      })
-    } else {
-      const id = getCategoryId(oldName, editingCategory.type, builtInNames)
-      nextConfig = saveCategoryConfig({
-        customCategories,
-        builtInNames: id ? { ...builtInNames, [id]: name } : builtInNames,
-        disabledBuiltIns
-      })
+    if (name === oldName) {
+      setEditingCategory(null)
+      return
     }
-    setCategoryConfig(nextConfig)
-    onTransactionsChange(transactions.map(transaction =>
-      transaction.category === oldName ? { ...transaction, category: name } : transaction
-    ))
-    setEditingCategory(null)
+    try {
+      const id = getCategoryId(oldName, editingCategory.type, builtInNames, disabledBuiltIns)
+      const nextConfig = saveCategoryConfig({
+        ...categoryConfig,
+        customCategories: editingCategory.isCustom
+          ? renameCategory(customCategories, oldName, name, editingCategory.type)
+          : customCategories,
+        builtInNames: editingCategory.isCustom ? builtInNames : { ...builtInNames, [id]: name },
+        deletedCategories: [...categoryConfig.deletedCategories, { name: oldName, type: editingCategory.type }]
+      })
+      setCategoryConfig(nextConfig)
+      onTransactionsChange(transactions.map(transaction =>
+        transaction.category === oldName && getTransactionCategoryType(transaction, categoryConfig) === editingCategory.type
+          ? {
+            ...transaction,
+            category: name,
+            categoryType: editingCategory.type,
+            ...(isDebtPaymentTransaction(transaction) ? { transactionType: 'debt-payment' } : {})
+          }
+          : transaction
+      ))
+      setEditingCategory(null)
+    } catch (error) {
+      setManagementError(error.message)
+    }
   }
 
   function deleteCategory() {
-    if (!editingCategory?.isCustom || !replacementCategory || !window.confirm(`Delete ${editingCategory.name} and reassign its transactions?`)) return
-    const name = editingCategory.name
-    const categoryId = getCategoryId(name, editingCategory.type, builtInNames)
-    setCategoryConfig(saveCategoryConfig({
-      customCategories: customCategories.filter(item => item.name !== name),
-      builtInNames,
-      disabledBuiltIns: categoryId
-        ? [...disabledBuiltIns, categoryId]
-        : disabledBuiltIns
-    }))
-    onTransactionsChange(transactions.map(transaction =>
-      transaction.category === name ? { ...transaction, category: replacementCategory } : transaction
-    ))
-    setEditingCategory(null)
-    setCategoryDeleteConfirmation(null)
+    setManagementError('')
+    const { name, type } = editingCategory
+    const categoryId = editingCategory.isCustom ? null : getCategoryId(name, type, builtInNames, disabledBuiltIns)
+    try {
+      setCategoryConfig(saveCategoryConfig({
+        ...categoryConfig,
+        customCategories: customCategories.filter(item => item.name !== name || item.type !== type),
+        disabledBuiltIns: categoryId ? [...disabledBuiltIns, categoryId] : disabledBuiltIns,
+        deletedCategories: [...categoryConfig.deletedCategories, { name, type }]
+      }))
+      setEditingCategory(null)
+      setCategoryDeleteConfirmation(null)
+    } catch (error) {
+      setManagementError(error.message)
+    }
   }
 
   function addPayee(event) {
     event.preventDefault()
-    const name = newPayee.trim()
-    if (!name) return
-    setPayees(savePayees([...payees, name]))
-    setNewPayee('')
+    setManagementError('')
+    try {
+      setPayees(savePayees([...payees, newPayee]))
+      setNewPayee('')
+    } catch (error) {
+      setManagementError(error.message)
+    }
   }
 
   function renamePayee(oldName, newName) {
     const name = newName.trim()
-    if (!name || name === oldName) return
-    setPayees(savePayees(payees.map(payee => payee === oldName ? name : payee)))
-    if (updatePayeeTransactions) {
-      onTransactionsChange(transactions.map(transaction =>
-        transaction.name === oldName ? { ...transaction, name } : transaction
-      ))
+    setManagementError('')
+    try {
+      setPayees(savePayees(payees.map(payee => payee === oldName ? name : payee)))
+      if (updatePayeeTransactions) {
+        onTransactionsChange(transactions.map(transaction =>
+          transaction.name === oldName ? { ...transaction, name } : transaction
+        ))
+      }
+      setEditingPayee(null)
+    } catch (error) {
+      setManagementError(error.message)
     }
-    setEditingPayee(null)
   }
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
       <PageHeader backLabel="Settings" onBack={onBack}>Categories &amp; Payees</PageHeader>
+      {managementError && !editingCategory && !editingPayee && <p role="alert">{managementError}</p>}
 
       <section style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -152,7 +170,7 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
             <option value="expense">Expense</option>
             <option value="income">Income</option>
           </select>
-          <button type="submit" style={{ ...field, padding: '9px 12px', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', whiteSpace: 'nowrap', cursor: 'pointer' }}>Add</button>
+          <button type="submit" aria-label="Add category" style={{ ...field, padding: '9px 12px', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', whiteSpace: 'nowrap', cursor: 'pointer' }}>Add</button>
         </form>
         {[
           ['Expense categories', 'expense'],
@@ -183,6 +201,7 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {payees.map(payee => (
             <button key={payee} type="button" onClick={() => {
+              setManagementError('')
               setEditingPayee(payee)
               setPayeeDraft(payee)
               setUpdatePayeeTransactions(false)
@@ -214,18 +233,7 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
               onChange={event => editingCategory ? setCategoryDraft(event.target.value) : setPayeeDraft(event.target.value)}
               style={{ ...field, width: '100%', boxSizing: 'border-box' }}
             />
-            {editingCategory?.isCustom && (
-              <>
-                <label style={{ display: 'grid', gap: 4, marginTop: 10, color: '#79502A', fontSize: 12 }}>
-                  Replacement for existing transactions when deleting
-                  <select value={replacementCategory} onChange={event => setReplacementCategory(event.target.value)} style={field}>
-                    {getCategories(customCategories, editingCategory.type, builtInNames, disabledBuiltIns)
-                      .filter(item => item !== editingCategory.name)
-                      .map(item => <option key={item} value={item}>{item}</option>)}
-                  </select>
-                </label>
-              </>
-            )}
+            {managementError && !categoryDeleteConfirmation && !payeeDeleteConfirmation && <p role="alert">{managementError}</p>}
             {editingPayee && (
               <>
                 <label style={{ display: 'flex', gap: 8, marginTop: 10, color: '#79502A', fontSize: 12 }}>
@@ -235,7 +243,7 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
               </>
             )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
-              <button type="button" onClick={() => { setEditingCategory(null); setEditingPayee(null) }} style={field}>Cancel</button>
+              <button type="button" onClick={() => { setEditingCategory(null); setEditingPayee(null); setManagementError('') }} style={field}>Cancel</button>
               <button type="button" onClick={editingCategory ? saveCategoryEdit : () => renamePayee(editingPayee, payeeDraft)} style={{ ...field, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
                 Save
               </button>
@@ -244,8 +252,8 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
               <button type="button" onClick={() => setCategoryDeleteConfirmation({
                 name: editingCategory.name,
                 type: editingCategory.type,
-                replacement: replacementCategory,
-                transactionCount: transactions.filter(item => item.category === editingCategory.name).length
+                transactionCount: transactions.filter(item => item.category === editingCategory.name
+                  && getTransactionCategoryType(item, categoryConfig) === editingCategory.type).length
               })} style={{ marginTop: 10, border: 'none', background: 'transparent', color: '#9B463E', cursor: 'pointer' }}>
                 Delete Category
               </button>
@@ -265,18 +273,14 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
             <p style={{ margin: '0 0 10px', color: '#493320', fontSize: 13 }}>
               Delete <strong>{categoryDeleteConfirmation.name}</strong>?
             </p>
-            {categoryDeleteConfirmation.transactionCount > 0 && (
-              <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 12 }}>
-                Reassign {categoryDeleteConfirmation.transactionCount} transaction{categoryDeleteConfirmation.transactionCount === 1 ? '' : 's'} to
-                <select value={replacementCategory} onChange={event => setReplacementCategory(event.target.value)} style={field}>
-                  {getCategories(customCategories, categoryDeleteConfirmation.type, builtInNames, disabledBuiltIns)
-                    .filter(item => item !== categoryDeleteConfirmation.name)
-                    .map(item => <option key={item} value={item}>{item}</option>)}
-                </select>
-              </label>
-            )}
+            <p style={{ color: '#79502A', fontSize: 12 }}>
+              {categoryDeleteConfirmation.transactionCount > 0 && `${categoryDeleteConfirmation.transactionCount} transaction${categoryDeleteConfirmation.transactionCount === 1 ? '' : 's'} currently use this category. `}
+              Existing transactions, bills, budgets, and history will keep their saved categories and amounts.
+              Nothing will be deleted or reassigned. This category will no longer be offered for new entries.
+            </p>
+            {managementError && <p role="alert">{managementError}</p>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
-              <button type="button" onClick={() => setCategoryDeleteConfirmation(null)} style={field}>Cancel</button>
+              <button type="button" onClick={() => { setCategoryDeleteConfirmation(null); setManagementError('') }} style={field}>Cancel</button>
               <button type="button" onClick={deleteCategory} style={{ ...field, background: '#9B463E', color: '#FFFFFF', fontWeight: 'bold' }}>Delete</button>
             </div>
           </section>
@@ -287,12 +291,18 @@ export default function Settings({ onBack, transactions, onTransactionsChange })
           <section role="dialog" aria-modal="true" style={{ width: '100%', maxWidth: 380, padding: 18, borderRadius: 16, background: '#FFF8ED' }}>
             <h2 style={{ margin: '0 0 10px', color: '#79502A', fontSize: 18 }}>Delete Payee?</h2>
             <p style={{ margin: '0 0 14px', color: '#493320', fontSize: 13 }}>Delete <strong>{payeeDeleteConfirmation}</strong>? Transactions will not be deleted.</p>
+            {managementError && <p role="alert">{managementError}</p>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <button type="button" onClick={() => setPayeeDeleteConfirmation(null)} style={field}>Cancel</button>
+              <button type="button" onClick={() => { setPayeeDeleteConfirmation(null); setManagementError('') }} style={field}>Cancel</button>
               <button type="button" onClick={() => {
-                setPayees(savePayees(payees.filter(item => item !== payeeDeleteConfirmation)))
-                setPayeeDeleteConfirmation(null)
-                setEditingPayee(null)
+                setManagementError('')
+                try {
+                  setPayees(savePayees(payees.filter(item => item !== payeeDeleteConfirmation)))
+                  setPayeeDeleteConfirmation(null)
+                  setEditingPayee(null)
+                } catch (error) {
+                  setManagementError(error.message)
+                }
               }} style={{ ...field, background: '#9B463E', color: '#FFFFFF', fontWeight: 'bold' }}>Delete</button>
             </div>
           </section>

@@ -105,31 +105,36 @@ export default function StatementAutofill({
   const suggestedFields = DEBT_STATEMENT_FIELDS.filter(field => suggestions && Object.hasOwn(suggestions, field.key))
 
   return (
-    <section aria-label="Statement autofill" style={{ minWidth: 0 }}>
+    <section aria-label="Statement autofill" className="statement-autofill" style={{ minWidth: 0 }}>
       {!onExtract && <button type="button" onClick={() => setOpen(true)} style={{ ...buttonStyle, padding: '7px 10px', fontSize: 12 }}>
         Scan / Upload Statement
       </button>}
       {open && (
-        <div style={{ marginTop: 7, padding: 10, border: '1px solid #E9D6B7', borderRadius: 10, background: '#FFFFFF', color: '#79502A', fontSize: 11 }}>
-          <p style={{ margin: '0 0 7px' }}>
-            Read on this device only. Use a clear English summary page. Up to 15 MB / 5 PDF pages.
-            Review suggestions before applying; nothing is saved automatically.
+        <div className="statement-autofill-panel">
+          <p id={onExtract ? 'statement-scan-description' : undefined} className="statement-scan-description">
+            Add a photo or PDF to fill in your debt details.
           </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          <div className="statement-scan-choices">
             {[
-              ['Take Photo', camera],
-              ['Choose Image', photos],
-              ['Choose PDF', pdf]
-            ].map(([label, ref]) => (
-              <button key={label} type="button" disabled={busy} onClick={() => ref.current.click()} style={{ ...buttonStyle, padding: '6px 8px', fontSize: 11 }}>{label}</button>
+              ['Take Photo', camera, <><path d="M8 5 9.5 3h5L16 5h4v15H4V5Z" /><circle cx="12" cy="12" r="3.5" /></>],
+              ['Choose Image', photos, <><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1" /><path d="m3 17 5-5 4 4 4-6 5 7" /></>],
+              ['Choose PDF', pdf, <><path d="M14 3H5v18h14V8ZM14 3v5h5M8 13h8M8 17h6" /></>]
+            ].map(([label, ref, icon]) => (
+              <button key={label} type="button" className="statement-scan-choice" disabled={busy} onClick={() => ref.current.click()}>
+                <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
+                <span>{label}</span>
+                <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
+              </button>
             ))}
           </div>
           <input ref={camera} aria-label="Statement camera photo" type="file" accept="image/*" capture="environment" onChange={readStatement} style={{ display: 'none' }} />
           <input ref={photos} aria-label="Statement image" type="file" accept="image/*" onChange={readStatement} style={{ display: 'none' }} />
           <input ref={pdf} aria-label="Statement PDF" type="file" accept=".pdf,application/pdf" onChange={readStatement} style={{ display: 'none' }} />
+          <p className="statement-scan-privacy">Processed privately on your device &middot; 15 MB max</p>
           {busy && <p role="status">{progress}</p>}
           {error && <p role="alert" style={{ color: '#9B463E' }}>{error}</p>}
-          {error && <button type="button" onClick={() => { if (lastFile.current) scan(lastFile.current) }} style={buttonStyle}>Retry Reading</button>}
+          {error && <p className="statement-scan-help">Try a clear English summary page, up to 5 PDF pages.</p>}
+          {error && <button type="button" className="statement-scan-retry" onClick={() => { if (lastFile.current) scan(lastFile.current) }} style={{ ...buttonStyle, minHeight: 48 }}>Retry Reading</button>}
           {warnings.length > 0 && <p role="status">Some statement totals differ. Check the provider's figures before saving.</p>}
           {suggestions && <p role="status">{suggestedFields.length
             ? `We found ${suggestedFields.length} ${suggestedFields.length === 1 ? 'field' : 'fields'}. Review and complete the rest.`
@@ -167,8 +172,10 @@ export default function StatementAutofill({
             </div>
           )}
           {applied > 0 && <p role="status">We filled in {applied} {applied === 1 ? 'field' : 'fields'}. Review and complete the rest.</p>}
-          {onManual && <button type="button" onClick={() => { operation.current?.abort(); lastFile.current = null; onManual() }} style={{ ...buttonStyle, marginTop: 7 }}>Enter Manually</button>}
-          <button type="button" onClick={cancel} style={{ ...buttonStyle, marginTop: 7, padding: '5px 8px', fontSize: 11 }}>{busy ? 'Cancel Reading' : 'Close Scanner'}</button>
+          <div className="statement-scan-footer">
+            {onManual && <button type="button" onClick={() => { operation.current?.abort(); lastFile.current = null; onManual() }}>Enter Manually</button>}
+            <button type="button" onClick={cancel}>{busy ? 'Cancel Reading' : onExtract ? 'Cancel' : 'Close Scanner'}</button>
+          </div>
         </div>
       )}
     </section>

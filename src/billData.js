@@ -824,6 +824,7 @@ export function createIncomeTransaction(income, dueDate, storage = localStorage,
     date: transactionDate,
     cleared: false,
     category: income.category ?? getDefaultCategoryForFlow('in'),
+    categoryType: 'income',
     linkedIncomeOccurrenceId: occurrenceId
   }
   accountData.transactions.push(transaction)

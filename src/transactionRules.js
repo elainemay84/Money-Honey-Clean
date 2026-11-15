@@ -46,7 +46,7 @@ export function isDebtPaymentTransaction(transaction) {
   return transaction.transactionType === 'debt-payment'
     || transaction.linkedDebtId != null
     || transaction.linkedDebtPaymentId != null
-    || transaction.category === DEBT_PAYMENTS_CATEGORY
+    || (transaction.categoryType !== 'income' && transaction.category === DEBT_PAYMENTS_CATEGORY)
 }
 
 export function classifyTransactions({ transactions, categories, accounts = [] }) {
@@ -84,7 +84,7 @@ export function classifyTransactions({ transactions, categories, accounts = [] }
       return { ...record, kind: 'purchase', category: isActive ? transaction.category : UNCATEGORIZED, flags }
     }
 
-    if (activeCategories.has(transaction.category)) return { ...record, kind: 'refund', category: transaction.category }
+    if (transaction.categoryType !== 'income' && activeCategories.has(transaction.category)) return { ...record, kind: 'refund', category: transaction.category }
     if (cardAccounts.has(transaction.accountId)) return { ...record, kind: 'card-credit', flags: ['card-credit'] }
     const flags = []
     if (!hasText(transaction.category)) flags.push('uncategorized-income')

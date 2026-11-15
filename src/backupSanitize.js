@@ -271,10 +271,14 @@ export const SANITIZERS = {
     return JSON.stringify({ mode, period, historyMonths, suggestionsEnabled, rolloverEnabled })
   },
   [CATEGORY_STORAGE_KEY]: raw => {
-    const { builtInNames = {}, ...rest } = parseObject(raw, 'Categories')
-    if (!isPlainObject(builtInNames)) fail('Categories are not in the expected format.')
+    const { builtInNames = {}, legacyCategoryTypes = {}, ...rest } = parseObject(raw, 'Categories')
+    if (!isPlainObject(builtInNames) || !isPlainObject(legacyCategoryTypes)) fail('Categories are not in the expected format.')
     checkVersion(rest, CATEGORY_STORAGE_VERSION, 'Categories')
-    const cleaned = { ...cleanJson(rest, 'Categories'), builtInNames: cleanJson(builtInNames, 'Categories', true) }
+    const cleaned = {
+      ...cleanJson(rest, 'Categories'),
+      builtInNames: cleanJson(builtInNames, 'Categories', true),
+      legacyCategoryTypes: cleanJson(legacyCategoryTypes, 'Categories', true)
+    }
     const config = loadCategoryConfig(scratchStorage(CATEGORY_STORAGE_KEY, JSON.stringify(cleaned)))
     return JSON.stringify({ version: CATEGORY_STORAGE_VERSION, ...config })
   },

@@ -37,11 +37,12 @@ const vite = await createServer({
   appType: 'custom',
   logLevel: 'silent'
 })
-const [{ default: Bills }, { default: Accounts }, { default: Debt }, { default: App }] = await Promise.all([
+const [{ default: Bills }, { default: Accounts }, { default: Debt }, { default: App }, { default: Settings }] = await Promise.all([
   vite.ssrLoadModule('/src/Bills.jsx'),
   vite.ssrLoadModule('/src/Accounts.jsx'),
   vite.ssrLoadModule('/src/Debt.jsx'),
-  vite.ssrLoadModule('/src/App.jsx')
+  vite.ssrLoadModule('/src/App.jsx'),
+  vite.ssrLoadModule('/src/Settings.jsx')
 ])
 const roots = new Set()
 const rootContainers = new Map()
@@ -225,11 +226,46 @@ test('floating actions open the existing forms directly and stay closed after fo
   assert.equal(button(container, 'Add debt').getAttribute('aria-expanded'), 'false')
   await click(button(container, 'Add debt'))
   await click(button(container, 'Scan / Upload'))
-  assert.ok(container.querySelector('[role="dialog"][aria-label="Scan / Upload Statement"]'))
+  assert.ok(container.querySelector('[role="dialog"][aria-labelledby="statement-scan-title"]'))
   assert.equal(container.querySelector('#debt-add-actions'), null)
-  await click(button(container, 'Close Scanner'))
+  await click(button(container, 'Cancel'))
   assert.equal(container.querySelector('[role="dialog"]'), null)
   assert.equal(button(container, 'Add debt').getAttribute('aria-expanded'), 'false')
+})
+
+test('compact scanner has labeled upload rows, concise copy and accessible keyboard dismissal', async () => {
+  const container = await render(Debt)
+  await click(button(container, 'Add debt'))
+  await click(button(container, 'Scan / Upload'))
+  const dialog = container.querySelector('.statement-scan-dialog')
+  assert.equal(dialog.getAttribute('aria-modal'), 'true')
+  assert.equal(dialog.querySelector('h2').textContent.trim(), 'Scan Statement')
+  assert.equal(dialog.querySelector(`#${dialog.getAttribute('aria-describedby')}`).textContent.trim(), 'Add a photo or PDF to fill in your debt details.')
+  assert.equal(dialog.querySelector('.statement-scan-privacy').textContent, 'Processed privately on your device · 15 MB max')
+  assert.doesNotMatch(dialog.textContent, /English summary|5 PDF pages|nothing is saved automatically/i)
+  const before = browser.localStorage.getItem('money-honey-debts')
+  for (const [label, inputLabel] of [
+    ['Take Photo', 'Statement camera photo'], ['Choose Image', 'Statement image'], ['Choose PDF', 'Statement PDF']
+  ]) {
+    const action = button(dialog, label)
+    assert.ok(action.classList.contains('statement-scan-choice'))
+    assert.equal(action.querySelectorAll('svg[aria-hidden="true"]').length, 2)
+    let clicked = false
+    dialog.querySelector(`[aria-label="${inputLabel}"]`).addEventListener('click', () => { clicked = true })
+    await click(action)
+    assert.equal(clicked, true)
+  }
+  assert.equal(browser.localStorage.getItem('money-honey-debts'), before)
+  const camera = button(dialog, 'Take Photo')
+  const cancel = button(dialog, 'Cancel')
+  await act(async () => camera.focus())
+  await act(async () => document.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })))
+  assert.equal(document.activeElement, cancel)
+  await act(async () => document.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })))
+  assert.equal(document.activeElement, camera)
+  await act(async () => document.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+  assert.equal(container.querySelector('.statement-scan-dialog'), null)
+  assert.equal(document.activeElement, button(container, 'Add debt'))
 })
 
 test('navigating away from Debt discards an expanded floating menu', async () => {
@@ -333,8 +369,9 @@ test('cancelled scans ignore late results and unsupported files show an error wi
   let finish
   let scanSignal
   const Component = () => React.createElement(Debt, {
-    statementExtractor: (file, { signal }) => {
+    statementExtractor: (file, { signal, onProgress }) => {
       scanSignal = signal
+      onProgress('Reading image on your device...')
       return new Promise(resolve => { finish = resolve })
     }
   })
@@ -342,6 +379,9 @@ test('cancelled scans ignore late results and unsupported files show an error wi
   await click(button(container, 'Add debt'))
   await click(button(container, 'Scan / Upload'))
   await chooseStatementFile(container, 'Statement image')
+  assert.match(container.querySelector('[role="status"]').textContent, /Reading image on your device/)
+  assert.equal(button(container, 'Take Photo').disabled, true)
+  assert.equal(button(container, 'Enter Manually').disabled, false)
   await click(button(container, 'Cancel Reading'))
   assert.equal(scanSignal.aborted, true)
   await openManualDebt(container)
@@ -613,6 +653,192 @@ test('More opens Settings and Categories & Payees has a back path', async () => 
   await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Categories & Payees')))
   await click([...container.querySelectorAll('button')].find(item => item.textContent.includes('Settings')))
   assert.equal(container.querySelector('h1')?.textContent, 'Settings')
+})
+
+function categoryNames(container, type) {
+  const heading = [...container.querySelectorAll('h3')].find(item => item.textContent === `${type} categories`)
+  return [...heading.parentElement.querySelectorAll('button')].map(item => item.textContent.trim())
+}
+
+test('preset and custom category deletion persists without reassigning or deleting any financial records', async () => {
+  const data = readAccountData()
+  data.transactions = [
+    { id: 1, accountId: 1, name: 'Food', category: 'Groceries', amount: -50, date: localDate(), cleared: true },
+    { id: 2, accountId: 1, name: 'Return', category: 'Groceries', amount: 10, date: localDate(), cleared: false },
+    { id: 3, accountId: 1, name: 'Income', category: 'Groceries', categoryType: 'income', amount: 20, date: localDate(), cleared: true }
+  ]
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify(data))
+  browser.localStorage.setItem('money-honey-categories', JSON.stringify({
+    version: 1, customCategories: [{ name: 'Coffee', type: 'expense' }, { name: 'Groceries', type: 'income' }]
+  }))
+  browser.localStorage.setItem('money-honey-manual-budgets', JSON.stringify({ budgets: { Groceries: 200, Coffee: 25 } }))
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  bills.bills[0].category = 'Groceries'
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(bills))
+  const keys = ['money-honey-account-data', 'money-honey-bills', 'money-honey-manual-budgets', 'money-honey-debts']
+  const before = keys.map(key => browser.localStorage.getItem(key))
+  const Screen = () => React.createElement(Settings, {
+    transactions: data.transactions,
+    onTransactionsChange: () => assert.fail('Deletion must not rewrite transaction assignments')
+  })
+  let container = await render(Screen)
+  await click(button(container, 'Groceries'))
+  await click(button(container, 'Delete Category'))
+  let dialog = [...container.querySelectorAll('[role="dialog"]')].at(-1)
+  assert.match(dialog.textContent, /2 transactions currently use this category/)
+  assert.match(dialog.textContent, /Nothing will be deleted or reassigned/)
+  assert.equal(dialog.querySelector('select'), null)
+  await click(button(dialog, 'Cancel'))
+  assert.ok(categoryNames(container, 'Expense').includes('Groceries'))
+  await click(button(container, 'Delete Category'))
+  dialog = [...container.querySelectorAll('[role="dialog"]')].at(-1)
+  await click(button(dialog, 'Delete'))
+  assert.equal(categoryNames(container, 'Expense').includes('Groceries'), false)
+  assert.ok(categoryNames(container, 'Income').includes('Groceries'))
+  await click(button(container, 'Coffee'))
+  await click(button(container, 'Delete Category'))
+  await click(button([...container.querySelectorAll('[role="dialog"]')].at(-1), 'Delete'))
+  assert.equal(categoryNames(container, 'Expense').includes('Coffee'), false)
+  container = await reload(Screen, container)
+  assert.equal(categoryNames(container, 'Expense').includes('Groceries'), false)
+  assert.equal(categoryNames(container, 'Expense').includes('Coffee'), false)
+  assert.deepEqual(keys.map(key => browser.localStorage.getItem(key)), before)
+})
+
+test('category and payee additions, duplicate errors and renames stay sorted and persist', async () => {
+  const Screen = () => React.createElement(Settings, { transactions: [], onTransactionsChange: () => {} })
+  let container = await render(Screen)
+  const addCategory = async (name, type) => {
+    await changeValue(container.querySelector('[aria-label="New category name"]'), name)
+    await changeValue(container.querySelector('[aria-label="New category type"]'), type)
+    await submit(container.querySelector('[aria-label="New category name"]').closest('form'))
+  }
+  await addCategory('zebra', 'expense')
+  await addCategory('ALPHA', 'expense')
+  await addCategory('zebra', 'income')
+  await addCategory('Paycheck', 'expense')
+  assert.equal(container.querySelector('[role="alert"]'), null)
+  await addCategory(' ZEBRA ', 'expense')
+  assert.match(container.querySelector('[role="alert"]').textContent, /already exists/)
+  assert.equal(container.querySelector('[aria-label="New category name"]').value, ' ZEBRA ')
+  await addCategory('', 'expense')
+  assert.match(container.querySelector('[role="alert"]').textContent, /Enter a category name/)
+  await click(button(container, 'zebra'))
+  await changeValue(container.querySelector('[aria-label="Category name"]'), 'Groceries')
+  await click(button(container, 'Save'))
+  assert.match(container.querySelector('[role="alert"]').textContent, /already exists/)
+  await changeValue(container.querySelector('[aria-label="Category name"]'), 'Aardvark')
+  await click(button(container, 'Save'))
+  assert.equal(categoryNames(container, 'Expense')[0], 'Aardvark')
+  assert.ok(categoryNames(container, 'Income').includes('zebra'))
+  for (const name of ['zulu', 'ALPHA', 'beta']) {
+    await changeValue(container.querySelector('[aria-label="New payee name"]'), name)
+    await submit(container.querySelector('[aria-label="New payee name"]').closest('form'))
+  }
+  await changeValue(container.querySelector('[aria-label="New payee name"]'), 'alpha')
+  await submit(container.querySelector('[aria-label="New payee name"]').closest('form'))
+  assert.match(container.querySelector('[role="alert"]').textContent, /already exists/)
+  await click(button(container.querySelectorAll('main > section')[1], 'zulu'))
+  await changeValue(container.querySelector('[aria-label="Payee name"]'), 'beta')
+  await click(button(container, 'Save'))
+  assert.match(container.querySelector('[role="alert"]').textContent, /already exists/)
+  await changeValue(container.querySelector('[aria-label="Payee name"]'), 'Aardvark')
+  await click(button(container, 'Save'))
+  container = await reload(Screen, container)
+  for (const type of ['Expense', 'Income']) {
+    const names = categoryNames(container, type)
+    assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
+  }
+  const payeeNames = [...container.querySelectorAll('main > section')[1].querySelectorAll('button')]
+    .filter(item => item.type !== 'submit').map(item => item.textContent.trim())
+  assert.deepEqual(payeeNames, ['Aardvark', 'ALPHA', 'beta'])
+  assert.ok(categoryNames(container, 'Expense').includes('Paycheck'))
+  assert.ok(categoryNames(container, 'Income').includes('Paycheck'))
+})
+
+test('catalog storage failures show helpful errors, preserve drafts and allow retry', async () => {
+  const Screen = () => React.createElement(Settings, { transactions: [], onTransactionsChange: () => {} })
+  const container = await render(Screen)
+  const storage = browser.localStorage
+  const original = storage.setItem
+  Object.defineProperty(storage, 'setItem', {
+    configurable: true,
+    writable: true,
+    value: (key, value) => {
+      if (key === 'money-honey-categories' || key === 'money-honey-payees') throw new browser.DOMException('Full', 'QuotaExceededError')
+      return original(key, value)
+    }
+  })
+  try {
+    await changeValue(container.querySelector('[aria-label="New category name"]'), 'Keep draft')
+    await submit(container.querySelector('[aria-label="New category name"]').closest('form'))
+    assert.match(container.querySelector('[role="alert"]').textContent, /storage may be full or unavailable/)
+    assert.equal(container.querySelector('[aria-label="New category name"]').value, 'Keep draft')
+    assert.equal(categoryNames(container, 'Expense').includes('Keep draft'), false)
+    await changeValue(container.querySelector('[aria-label="New payee name"]'), 'Keep payee')
+    await submit(container.querySelector('[aria-label="New payee name"]').closest('form'))
+    assert.match(container.querySelector('[role="alert"]').textContent, /Could not save payees/)
+    assert.equal(container.querySelector('[aria-label="New payee name"]').value, 'Keep payee')
+    await click(button(container, 'Groceries'))
+    await click(button(container, 'Delete Category'))
+    const confirmation = [...container.querySelectorAll('[role="dialog"]')].at(-1)
+    await click(button(confirmation, 'Delete'))
+    assert.match(confirmation.querySelector('[role="alert"]').textContent, /not saved/)
+    assert.ok(categoryNames(container, 'Expense').includes('Groceries'))
+    Object.defineProperty(storage, 'setItem', { value: original })
+    await click(button(confirmation, 'Delete'))
+    assert.equal(categoryNames(container, 'Expense').includes('Groceries'), false)
+    await submit(container.querySelector('[aria-label="New category name"]').closest('form'))
+    assert.ok(categoryNames(container, 'Expense').includes('Keep draft'))
+  } finally {
+    Object.defineProperty(storage, 'setItem', { value: original })
+  }
+})
+
+test('transaction selectors sort active catalogs, retain historical edits and distinguish same-named income and refunds', async () => {
+  browser.localStorage.setItem('money-honey-categories', JSON.stringify({
+    version: 1,
+    customCategories: [{ name: 'Shared', type: 'income' }, { name: 'Shared', type: 'expense' }, { name: 'ALPHA', type: 'expense' }],
+    disabledBuiltIns: ['expense:Groceries', 'expense:Other', 'income:Other Income']
+  }))
+  browser.localStorage.setItem('money-honey-payees', JSON.stringify({ version: 1, payees: ['zulu', 'ALPHA', 'beta'] }))
+  const data = readAccountData()
+  const historical = { id: 1, accountId: 1, name: 'Historical', category: 'Groceries', amount: -40, date: localDate(), cleared: true }
+  data.transactions = [historical]
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify(data))
+  let container = await render(Accounts)
+  await click(buttonContaining(container, 'Checking'))
+  await click(button(container, 'Add transaction'))
+  let category = container.querySelector('[aria-label="Transaction category"]')
+  assert.equal(category.value, '')
+  assert.equal([...category.options].some(option => option.value === 'Groceries' || option.value === 'Other'), false)
+  const names = [...category.options].slice(1).map(option => option.textContent)
+  assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
+  assert.deepEqual([...container.querySelectorAll('#saved-payees option')].map(option => option.value), ['ALPHA', 'beta', 'zulu'])
+  for (const type of ['income', 'expense']) {
+    if (type === 'expense') await click(button(container, 'Add transaction'))
+    await changeValue(container.querySelector('[aria-label="Transaction type"]'), 'income')
+    await changeValue(container.querySelector('[aria-label="Payee or description"]'), `Shared ${type}`)
+    await changeValue(container.querySelector('[aria-label="Amount"]'), '10')
+    category = container.querySelector('[aria-label="Transaction category"]')
+    for (const group of category.querySelectorAll('optgroup')) {
+      const options = [...group.querySelectorAll('option')].map(option => option.textContent)
+      assert.deepEqual(options, [...options].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
+    }
+    await changeValue(category, JSON.stringify([type, 'Shared']))
+    await submit(category.closest('form'))
+    const saved = readAccountData().transactions.at(-1)
+    assert.equal(saved.category, 'Shared')
+    assert.equal(saved.categoryType, type)
+    assert.equal(saved.amount, 10)
+  }
+  container = await reload(() => React.createElement(Accounts, { editRequest: { transactionId: 1, accountId: 1 } }), container)
+  category = container.querySelector('[aria-label="Transaction category"]')
+  assert.equal(category.value, 'Groceries')
+  assert.match(category.selectedOptions[0].textContent, /not an active category/)
+  await submit(category.closest('form'))
+  const saved = readAccountData().transactions.find(item => item.id === 1)
+  for (const [key, value] of Object.entries(historical)) assert.equal(saved[key], value)
 })
 
 test('bottom navigation opens Budgets and More shows Settings and Reports', async () => {
