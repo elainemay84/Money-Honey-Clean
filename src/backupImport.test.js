@@ -42,18 +42,6 @@ function validBackupText() {
   return JSON.stringify(snapshot)
 }
 
-function fakeSafetyDownload(storage) {
-  const calls = []
-  const download = () => {
-    calls.push('download')
-    return {
-      filename: 'money-honey-safety-backup-test.json',
-      fingerprint: JSON.stringify(createBackupSnapshot(storage).data)
-    }
-  }
-  return { calls, download }
-}
-
 async function render(props = {}, Component = Backup) {
   const container = browser.document.createElement('div')
   browser.document.body.append(container)
@@ -65,7 +53,6 @@ async function render(props = {}, Component = Backup) {
     onHome: () => { calls.home += 1 },
     reload: () => { calls.reload += 1 },
     storage: browser.localStorage,
-    downloadSafety: fakeSafetyDownload(browser.localStorage).download,
     ...props
   })))
   return { container, calls }
@@ -84,13 +71,6 @@ async function chooseFile(container, text, name = 'backup.json') {
 
 function findButton(container, label) {
   return [...container.querySelectorAll('button')].find(item => item.textContent.includes(label))
-}
-
-async function acknowledge(container) {
-  const checkbox = container.querySelector('input[type="checkbox"]')
-  await act(async () => {
-    checkbox.dispatchEvent(new browser.MouseEvent('click', { bubbles: true, cancelable: true }))
-  })
 }
 
 async function clickButton(container, label) {
@@ -122,8 +102,11 @@ function seedCurrentData() {
 
 async function prepareRestore(container) {
   await chooseFile(container, validBackupText())
-  await clickButton(container, 'Download Current Backup')
-  await acknowledge(container)
+}
+
+async function restore(container) {
+  await clickButton(container, 'Restore Backup')
+  if (findButton(container, 'Continue')) await clickButton(container, 'Continue')
 }
 
 test('the compact preview summarizes the backup with one warning and collapsed details', async () => {
@@ -136,9 +119,11 @@ test('the compact preview summarizes the backup with one warning and collapsed d
   assert.match(preview.textContent, /my-backup\.json/)
   assert.match(preview.textContent, /Exported/)
   assert.match(preview.textContent, /1 account, 0 transactions/)
-  assert.equal(preview.textContent.match(/will replace your current Money Honey data/g).length, 1)
+  assert.equal(preview.textContent.match(/replace/g).length, 1)
   assert.match(preview.textContent, /Anything not included in the backup may be removed\./)
-  assert.match(preview.textContent, /I understand my current data will be replaced\./)
+  assert.match(preview.textContent, /replaces your current Money Honey data rather than merging/)
+  assert.equal(preview.querySelector('input[type="checkbox"]'), null)
+  assert.equal(findButton(container, 'Download Current Backup'), undefined)
   assert.equal(container.querySelectorAll('h3').length, 0)
 
   const details = preview.querySelector('details')
@@ -152,47 +137,45 @@ test('the compact preview summarizes the backup with one warning and collapsed d
   assert.equal(browser.localStorage.getItem(ACCOUNT_KEY), ORIGINAL)
 })
 
-test('Restore stays disabled until a safety backup download starts and the replacement is acknowledged', async () => {
+test('a valid backup imports without a prior export after one replace confirmation', async () => {
   seedCurrentData()
-  const safety = fakeSafetyDownload(browser.localStorage)
-  const { container } = await render({ downloadSafety: safety.download })
+  const { container, calls } = await render()
 
   await chooseFile(container, validBackupText())
-  assert.equal(findButton(container, 'Restore Backup').disabled, true)
-
-  await acknowledge(container)
-  assert.equal(findButton(container, 'Restore Backup').disabled, true)
-
-  await clickButton(container, 'Download Current Backup')
-  assert.deepEqual(safety.calls, ['download'])
   assert.equal(findButton(container, 'Restore Backup').disabled, false)
-  const notice = container.querySelector('[role="status"]').textContent
-  assert.match(notice, /Download started: money-honey-safety-backup-test\.json/)
-  assert.match(notice, /cannot confirm it was saved/)
-  assert.doesNotMatch(notice, /saved successfully|has been saved/i)
-})
+  await clickButton(container, 'Restore Backup')
 
-test('Restore stays disabled when the safety backup download cannot be started', async () => {
-  seedCurrentData()
-  const { container } = await render({ downloadSafety() { throw new Error('blocked') } })
-
-  await chooseFile(container, validBackupText())
-  await clickButton(container, 'Download Current Backup')
-  await acknowledge(container)
-
-  assert.match(container.querySelector('[role="alert"]').textContent, /could not be started/)
-  assert.equal(findButton(container, 'Restore Backup').disabled, true)
+  assert.match(container.querySelector('[aria-label="Confirm import"]').textContent,
+    /^Importing will replace your current Money Honey data\. Continue\?$/)
   assert.equal(browser.localStorage.getItem(ACCOUNT_KEY), ORIGINAL)
+  await clickButton(container, 'Continue')
+
+  assert.match(browser.localStorage.getItem(ACCOUNT_KEY), /Restored/)
+  assert.equal(calls.reload, 1)
 })
 
-test('no safety backup is demanded when the device has no data', async () => {
-  const { container } = await render()
+test('cancelling the replace confirmation leaves current data untouched', async () => {
+  seedCurrentData()
+  const { container, calls } = await render()
 
   await chooseFile(container, validBackupText())
-  await acknowledge(container)
+  await clickButton(container, 'Restore Backup')
+  await clickButton(container, 'Cancel')
 
-  assert.equal(findButton(container, 'Download Current Backup'), undefined)
-  assert.equal(findButton(container, 'Restore Backup').disabled, false)
+  assert.equal(container.querySelector('[aria-label="Confirm import"]'), null)
+  assert.equal(browser.localStorage.getItem(ACCOUNT_KEY), ORIGINAL)
+  assert.equal(calls.reload, 0)
+})
+
+test('an empty device imports directly without a replace confirmation', async () => {
+  const { container, calls } = await render()
+
+  await chooseFile(container, validBackupText())
+  await clickButton(container, 'Restore Backup')
+
+  assert.equal(container.querySelector('[aria-label="Confirm import"]'), null)
+  assert.match(browser.localStorage.getItem(ACCOUNT_KEY), /Restored/)
+  assert.equal(calls.reload, 1)
 })
 
 test('cancelling the preview preserves current data and hides the confirmation', async () => {
@@ -214,7 +197,7 @@ test('confirming restores verified data, flags the session, and reloads without 
   const { container, calls } = await render()
 
   await prepareRestore(container)
-  await clickButton(container, 'Restore Backup')
+  await restore(container)
 
   assert.match(browser.localStorage.getItem(ACCOUNT_KEY), /Restored/)
   assert.equal(browser.localStorage.getItem('money-honey-appearance-size'), null)
@@ -230,7 +213,7 @@ test('the success confirmation survives the reload and stays until dismissed', a
   seedCurrentData()
   const first = await render()
   await prepareRestore(first.container)
-  await clickButton(first.container, 'Restore Backup')
+  await restore(first.container)
 
   // Simulate the reload: a brand-new mount in the same browser session.
   const { container, calls } = await render()
@@ -269,7 +252,7 @@ test('without session storage the confirmation still shows and Back to Home relo
   const { container, calls } = await render({ session })
 
   await prepareRestore(container)
-  await clickButton(container, 'Restore Backup')
+  await restore(container)
 
   assert.equal(calls.reload, 0)
   assert.match(container.textContent, /Backup Restored!/)
@@ -330,10 +313,10 @@ test('a failed restore rolls back, reports the failure, and does not reload', as
       browser.localStorage.setItem(key, value)
     }
   }
-  const { container, calls } = await render({ storage, downloadSafety: fakeSafetyDownload(storage).download })
+  const { container, calls } = await render({ storage })
 
   await prepareRestore(container)
-  await clickButton(container, 'Restore Backup')
+  await restore(container)
 
   assert.match(container.querySelector('[role="alert"]').textContent, /existing data was kept unchanged/)
   assert.equal(container.querySelector('[aria-label="Recovery instructions"]'), null)
@@ -350,14 +333,14 @@ test('a failed rollback warns instead of claiming the old data was restored and 
     removeItem() { throw new Error('disk error') },
     setItem() { throw new Error('disk error') }
   }
-  const { container, calls } = await render({ storage, downloadSafety: fakeSafetyDownload(storage).download })
+  const { container, calls } = await render({ storage })
 
   await prepareRestore(container)
-  await clickButton(container, 'Restore Backup')
+  await restore(container)
 
   const recovery = container.querySelector('[aria-label="Recovery instructions"]').textContent
   assert.match(recovery, /may not have been restored/)
-  assert.match(recovery, /money-honey-safety-backup-test\.json/)
+  assert.match(recovery, /most recent exported backup/)
   assert.match(recovery, /choose that file under Import Backup/)
   assert.doesNotMatch(recovery, /kept unchanged/)
   assert.doesNotMatch(container.textContent, /Backup Restored!/)
@@ -365,13 +348,13 @@ test('a failed rollback warns instead of claiming the old data was restored and 
   assert.equal(calls.reload, 0)
 })
 
-test('data changing after the safety backup blocks the restore without writing', async () => {
+test('data changing after the file was validated blocks the restore without writing', async () => {
   seedCurrentData()
   const { container } = await render()
 
   await prepareRestore(container)
   browser.localStorage.setItem('money-honey-appearance-size', 'small')
-  await clickButton(container, 'Restore Backup')
+  await restore(container)
 
   assert.match(container.querySelector('[role="alert"]').textContent, /data changed/)
   assert.equal(browser.localStorage.getItem(ACCOUNT_KEY), ORIGINAL)
@@ -387,10 +370,10 @@ test('a restore whose written data does not verify shows an error and never the 
       browser.localStorage.setItem(key, key === ACCOUNT_KEY && value.includes('Restored') ? 'truncated' : value)
     }
   }
-  const { container, calls } = await render({ storage, downloadSafety: fakeSafetyDownload(storage).download })
+  const { container, calls } = await render({ storage })
 
   await prepareRestore(container)
-  await clickButton(container, 'Restore Backup')
+  await restore(container)
 
   assert.match(container.querySelector('[role="alert"]').textContent, /existing data was kept unchanged/)
   assert.doesNotMatch(container.textContent, /Backup Restored!/)

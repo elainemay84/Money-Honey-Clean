@@ -2,8 +2,6 @@ import { useRef, useState } from 'react'
 import {
   MAX_BACKUP_BYTES,
   downloadBackup,
-  downloadSafetyBackup,
-  getDataFingerprint,
   parseBackup,
   restoreBackup
 } from './backupData.js'
@@ -100,14 +98,12 @@ export default function Backup({
   onBack,
   reload = () => window.location.reload(),
   storage = globalThis.localStorage,
-  downloadSafety = downloadSafetyBackup,
   onHome,
   session
 }) {
   const fileInput = useRef(null)
   const [pending, setPending] = useState(null)
-  const [safety, setSafety] = useState(null)
-  const [acknowledged, setAcknowledged] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState(null)
   const [status, setStatus] = useState('idle')
   const [restored, setRestored] = useState(() => hasRestoreNotice(session))
@@ -115,15 +111,9 @@ export default function Backup({
 
   function clearSelection() {
     setPending(null)
-    setSafety(null)
-    setAcknowledged(false)
+    setConfirming(false)
     setError(null)
     if (fileInput.current) fileInput.current.value = ''
-  }
-
-  function showError(message) {
-    clearSelection()
-    setError({ message, rollbackFailed: false })
   }
 
   async function chooseFile(event) {
@@ -142,47 +132,27 @@ export default function Backup({
     }
   }
 
-  function startSafetyDownload() {
-    if (!pending) return
-    try {
-      if (getDataFingerprint(storage) !== pending.preview.currentFingerprint) {
-        showError('Your data changed after the preview was created, so nothing was changed. Choose the backup file again.')
-        return
-      }
-      setSafety(downloadSafety(storage))
-      setError(null)
-    } catch {
-      setSafety(null)
-      setError({ message: 'The safety backup download could not be started. Nothing was changed.' })
-    }
-  }
-
   function confirmImport() {
-    const safetyReady = !pending?.preview.requiresSafetyBackup || safety
-    if (!pending || status !== 'idle' || !safetyReady || !acknowledged) return
+    if (!pending || status !== 'idle') return
     setStatus('importing')
     try {
-      restoreBackup(pending.backup, storage, {
-        expectedFingerprint: safety?.fingerprint ?? pending.preview.currentFingerprint
-      })
+      // Restoring is refused if the current data changed after the file was validated.
+      restoreBackup(pending.backup, storage, { expectedFingerprint: pending.preview.currentFingerprint })
     } catch (caught) {
       const known = caught?.name === 'BackupImportError'
       setStatus('idle')
       setPending(null)
-      setAcknowledged(false)
+      setConfirming(false)
       setError({
         message: known ? caught.message : 'The import failed. Your existing data was kept unchanged.',
-        rollbackFailed: known && caught.rollbackFailed,
-        safetyFilename: safety?.filename
+        rollbackFailed: known && caught.rollbackFailed
       })
-      setSafety(null)
       return
     }
     // restoreBackup has read every restored value back, so the restore is verified at this point.
     setStatus('idle')
     setPending(null)
-    setSafety(null)
-    setAcknowledged(false)
+    setConfirming(false)
     setRestored(true)
     if (markRestoreComplete(session)) reload()
     else setNeedsReload(true)
@@ -199,7 +169,9 @@ export default function Backup({
   }
 
   const items = pending?.preview.items ?? []
-  const canRestore = pending && status === 'idle' && acknowledged && (!pending.preview.requiresSafetyBackup || safety)
+  const canRestore = pending && status === 'idle'
+  // requiresSafetyBackup is true whenever this device already holds Money Honey data that a restore would replace.
+  const replacesData = Boolean(pending?.preview.requiresSafetyBackup)
   const inBackup = items.filter(item => item.backupDetail !== null)
   const accountSummary = inBackup.find(item => item.id === 'accounts')?.backupDetail ?? 'No accounts or transactions'
   const otherData = inBackup.filter(item => item.id !== 'accounts').map(item => item.label.toLowerCase())
@@ -277,7 +249,7 @@ export default function Backup({
               <p style={{ margin: '0 0 8px' }}>{error.message}</p>
               <ol style={{ margin: '0 0 8px', paddingLeft: 18 }}>
                 <li>Do not add or edit anything yet.</li>
-                <li>Find the safety backup you downloaded{error.safetyFilename ? ` (${error.safetyFilename})` : ''}, or your most recent exported backup.</li>
+                <li>Find your most recent exported backup.</li>
                 <li>Reload Money Honey, then choose that file under Import Backup to restore your data.</li>
                 <li>If you cannot find a backup file, keep this browser tab and profile as they are and get help before clearing any browser data.</li>
               </ol>
@@ -301,46 +273,24 @@ export default function Backup({
               </div>
 
               <p style={{ margin: '0 0 10px', color: '#A12828', fontSize: 12, fontWeight: 'bold', textAlign: 'left' }}>
-                Restoring this backup will replace your current Money Honey data, including accounts, transactions, bills, budgets, saved themes, and preferences. Anything not included in the backup may be removed.
+                Importing replaces your current Money Honey data rather than merging with it, including accounts, transactions, bills, budgets, saved themes, and preferences. Anything not included in the backup may be removed. Exporting a backup first is optional.
               </p>
 
               <DetailsList items={items} ignoredCount={pending.preview.ignoredKeys.length} />
 
-              {pending.preview.requiresSafetyBackup && (
-                <div style={{ margin: '0 0 10px' }}>
-                  <button type="button" onClick={startSafetyDownload} disabled={status !== 'idle'} style={compactSecondaryButton}>
-                    Download Current Backup
-                  </button>
-                  {safety ? (
-                    <p role="status" style={{ margin: '6px 0 0', color: '#79502A', fontSize: 11, overflowWrap: 'anywhere', textAlign: 'left' }}>
-                      Download started: {safety.filename}. Check your Downloads folder; Money Honey cannot confirm it was saved.
-                    </p>
-                  ) : (
-                    <p style={{ margin: '6px 0 0', color: '#79502A', fontSize: 11, textAlign: 'left' }}>
-                      Required before you can restore.
-                    </p>
-                  )}
-                </div>
+              {confirming && (
+                <p role="alertdialog" aria-label="Confirm import" style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 'bold', textAlign: 'left' }}>
+                  Importing will replace your current Money Honey data. Continue?
+                </p>
               )}
-
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '0 0 10px', fontSize: 13, textAlign: 'left' }}>
-                <input
-                  type="checkbox"
-                  checked={acknowledged}
-                  onChange={event => setAcknowledged(event.target.checked)}
-                  disabled={status !== 'idle'}
-                />
-                <span>I understand my current data will be replaced.</span>
-              </label>
-
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <button
                   type="button"
-                  onClick={confirmImport}
+                  onClick={replacesData && !confirming ? () => setConfirming(true) : confirmImport}
                   disabled={!canRestore}
                   style={{ ...compactButton, opacity: canRestore ? 1 : 0.5, cursor: canRestore ? 'pointer' : 'not-allowed' }}
                 >
-                  {status === 'importing' ? 'Restoring…' : 'Restore Backup'}
+                  {status === 'importing' ? 'Restoring…' : confirming ? 'Continue' : 'Restore Backup'}
                 </button>
                 <button type="button" onClick={clearSelection} disabled={status === 'importing'} style={compactSecondaryButton}>
                   Cancel
