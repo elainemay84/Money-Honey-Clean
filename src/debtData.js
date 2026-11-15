@@ -1,13 +1,16 @@
 import { loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { getDebtScheduledPayments, getNextScheduledDebtPayment, getPaidInstallmentNumbers, validatePaymentSchedule } from './debtSchedule.js'
 import {
   createBillId,
   getBillOccurrencesInRange,
   loadBillData,
-  saveBillData
+  saveBillData,
+  updateScheduleOccurrence
 } from './billData.js'
 
 export const DEBT_STORAGE_KEY = 'money-honey-debts'
 export const DEBT_STORAGE_VERSION = 1
+const INITIAL_DEBT_ASSIGNEES = ['E', 'R', 'Joint']
 
 const DEBT_TYPES = ['Credit Card', 'Personal Loan', 'Auto Loan', 'Mortgage', 'Medical', 'Other']
 export const DEBT_PAYMENT_CALCULATION_METHODS = {
@@ -43,6 +46,77 @@ function assertDebts(debts) {
   )) {
     throw new Error('Saved Money Honey debt data is invalid.')
   }
+  debts.forEach(validateDebtMetadata)
+}
+
+export function validateDebtMetadata(debt) {
+  validatePaymentSchedule(debt.paymentSchedule)
+  if ((debt.paymentHistory ?? []).some(payment => payment.installmentNumber != null && (
+    !Number.isInteger(payment.installmentNumber) || payment.installmentNumber < 1 || payment.installmentNumber > 600
+    || (!payment.reversedAt && debt.paymentSchedule?.totalInstallments != null && payment.installmentNumber > debt.paymentSchedule.totalInstallments)
+  ))) throw new Error('The installment total must include recorded installment numbers, and installment numbers must be valid.')
+  if (debt.statementDetails != null) {
+    if (typeof debt.statementDetails !== 'object' || Array.isArray(debt.statementDetails)
+      || Object.entries(debt.statementDetails).some(([key, value]) =>
+        !['purchaseAmount', 'totalRepayment', 'totalInterest', 'amountAlreadyPaid', 'nextPaymentAmount'].includes(key)
+        || !Number.isFinite(value) || value < 0
+      )) throw new Error('Statement plan amounts must be valid non-negative amounts.')
+  }
+  if (debt.creditLimit != null && (!Number.isFinite(debt.creditLimit) || debt.creditLimit < 0)) {
+    throw new Error('Credit limit must be zero or more.')
+  }
+  if (debt.accountLast4 != null && debt.accountLast4 !== '' && (
+    typeof debt.accountLast4 !== 'string'
+    || debt.accountLast4.length !== 4
+    || !/^\d{4}$/.test(debt.accountLast4)
+  )) {
+    throw new Error('Account last four must contain exactly four digits.')
+  }
+  if (debt.assignedTo != null && debt.assignedTo !== '' && (
+    typeof debt.assignedTo !== 'string' || !debt.assignedTo.trim()
+  )) {
+    throw new Error('Choose a valid debt assignee.')
+  }
+  if (debt.customAssignee != null && typeof debt.customAssignee !== 'string') {
+    throw new Error('Enter a valid custom assignee.')
+  }
+}
+
+export function getDebtAssignee(debt, assignees) {
+  // Read legacy custom assignments without rewriting the saved debt.
+  const name = (debt.assignedTo === 'Other' && debt.customAssignee?.trim()
+    ? debt.customAssignee
+    : debt.assignedTo)?.trim()
+  return assignees?.find(assignee => assigneeKey(assignee) === assigneeKey(name)) ?? name
+}
+
+function assigneeKey(name) {
+  return name?.trim().toLocaleLowerCase('en-US') ?? ''
+}
+
+export function validateDebtAssignees(assignees, debts = []) {
+  if (!Array.isArray(assignees) || assignees.some(name =>
+    typeof name !== 'string' || !name.trim() || name !== name.trim()
+  )) throw new Error('Saved Money Honey debt assignees are invalid.')
+  const keys = new Set(assignees.map(assigneeKey))
+  if (keys.size !== assignees.length) throw new Error('An assignee with that name already exists.')
+  if (debts.some(debt => getDebtAssignee(debt) && !keys.has(assigneeKey(getDebtAssignee(debt))))) {
+    throw new Error('A debt is assigned to an assignee missing from the list.')
+  }
+}
+
+function includeDebtAssignees(assignees, debts) {
+  const names = [...assignees]
+  for (const debt of debts) {
+    const name = getDebtAssignee(debt)
+    if (name && !names.some(item => assigneeKey(item) === assigneeKey(name))) names.push(name)
+  }
+  return names
+}
+
+export function getAvailableCredit(debt) {
+  if (debt.type !== 'Credit Card' || !Number.isFinite(debt.creditLimit)) return null
+  return roundMoney(debt.creditLimit - debt.currentBalance)
 }
 
 function roundMoney(amount) {
@@ -66,9 +140,9 @@ function normalizeAllocation(total, allocation) {
   return result
 }
 
-export function loadDebts(storage = localStorage) {
+export function loadDebtData(storage = localStorage) {
   const saved = storage.getItem(DEBT_STORAGE_KEY)
-  if (saved === null) return []
+  if (saved === null) return { debts: [], assignees: [...INITIAL_DEBT_ASSIGNEES] }
 
   let data
   try {
@@ -80,18 +154,76 @@ export function loadDebts(storage = localStorage) {
     throw new Error('Saved Money Honey debt data has an unsupported format.')
   }
   assertDebts(data.debts)
-  return data.debts
+  const assignees = data.assignees === undefined
+    ? includeDebtAssignees(INITIAL_DEBT_ASSIGNEES, data.debts)
+    : data.assignees
+  validateDebtAssignees(assignees, data.debts)
+  return { debts: data.debts, assignees }
 }
 
-export function saveDebts(debts, storage = localStorage) {
+export function loadDebts(storage = localStorage) {
+  return loadDebtData(storage).debts
+}
+
+function saveDebtData({ debts, assignees }, storage) {
   assertDebts(debts)
+  validateDebtAssignees(assignees, debts)
   storage.setItem(DEBT_STORAGE_KEY, JSON.stringify({
     version: DEBT_STORAGE_VERSION,
-    debts
+    debts,
+    assignees
   }))
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('money-honey-debts-updated'))
   }
+  return { debts, assignees }
+}
+
+export function saveDebts(debts, storage = localStorage) {
+  assertDebts(debts)
+  const { assignees } = loadDebtData(storage)
+  return saveDebtData({ debts, assignees: includeDebtAssignees(assignees, debts) }, storage)
+}
+
+function checkAssigneeName(name, assignees, previousName) {
+  if (typeof name !== 'string' || !name.trim()) throw new Error('Enter an assignee name.')
+  const trimmed = name.trim()
+  if (assignees.some(item => item !== previousName && assigneeKey(item) === assigneeKey(trimmed))) {
+    throw new Error('An assignee with that name already exists.')
+  }
+  return trimmed
+}
+
+export function addDebtAssignee(name, storage = localStorage) {
+  const data = loadDebtData(storage)
+  const nextName = checkAssigneeName(name, data.assignees)
+  return saveDebtData({ ...data, assignees: [...data.assignees, nextName] }, storage)
+}
+
+function changeDebtAssignee(name, nextName, storage) {
+  const { debts, assignees } = loadDebtData(storage)
+  if (!assignees.includes(name)) throw new Error('That assignee no longer exists.')
+  const replacement = nextName === null ? '' : checkAssigneeName(nextName, assignees, name)
+  const nextDebts = debts.map(debt => {
+    if (getDebtAssignee(debt, assignees) !== name) return debt
+    const updated = { ...debt, assignedTo: replacement }
+    delete updated.customAssignee
+    return updated
+  })
+  return saveDebtData({
+    debts: nextDebts,
+    assignees: nextName === null
+      ? assignees.filter(item => item !== name)
+      : assignees.map(item => item === name ? replacement : item)
+  }, storage)
+}
+
+export function renameDebtAssignee(name, nextName, storage = localStorage) {
+  return changeDebtAssignee(name, nextName, storage)
+}
+
+export function deleteDebtAssignee(name, storage = localStorage) {
+  return changeDebtAssignee(name, null, storage)
 }
 
 export function createDebtId(debts) {
@@ -165,14 +297,17 @@ function addDays(date, days) {
 }
 
 export function getDebtScheduleStatus(debt, bills, transactions = [], today = new Date().toLocaleDateString('en-CA')) {
-  const bill = bills.find(item => item.id === debt.billId && item.debtId === debt.id)
+  const savedBill = bills.find(item => item.id === debt.billId && item.debtId === debt.id)
     ?? bills.find(item => item.debtId === debt.id)
     ?? bills.find(item => item.id === debt.billId && item.debtId == null)
+  const bill = savedBill && debt.paymentSchedule ? updateDebtSchedule(savedBill, debt, false) : savedBill
   if (!bill || !validISODate(bill.dueDate) || bill.archived || bill.active === false) {
     const nextDueDate = getNextDebtPaymentDue(debt, today)
     const pastDue = validISODate(nextDueDate) && nextDueDate < today
     return {
       nextDueDate,
+      nextScheduledDate: nextDueDate,
+      nextPaymentAmount: getNextScheduledDebtPayment(debt)?.amount ?? debt.minimumPayment ?? null,
       overdueAmount: 0,
       overdueCount: 0,
       oldestOverdueDate: null,
@@ -211,6 +346,8 @@ export function getDebtScheduleStatus(debt, bills, transactions = [], today = ne
 
   return {
     nextDueDate: nextUnpaid?.dueDate ?? '',
+    nextScheduledDate: nextUnpaid?.scheduledDate ?? '',
+    nextPaymentAmount: nextUnpaid?.amount ?? null,
     overdueAmount: roundMoney(overdueOccurrences.reduce((sum, occurrence) => sum + Math.abs(occurrence.amount), 0)),
     overdueCount: overdueOccurrences.length,
     oldestOverdueDate: overdueOccurrences[0]?.dueDate ?? null,
@@ -220,6 +357,7 @@ export function getDebtScheduleStatus(debt, bills, transactions = [], today = ne
 }
 
 export function getNextDebtPaymentDue(debt, today = new Date().toLocaleDateString('en-CA')) {
+  if (debt.paymentSchedule) return getNextScheduledDebtPayment(debt)?.dueDate ?? ''
   const dueDate = debt.nextPaymentDue
   if (dueDate) return dueDate
   if (!Number.isInteger(debt.paymentDueDay) || debt.paymentDueDay < 1 || debt.paymentDueDay > 31) {
@@ -249,6 +387,7 @@ export function getNextDebtPaymentDue(debt, today = new Date().toLocaleDateStrin
 }
 
 export function validateDebt(debt) {
+  validateDebtMetadata(debt)
   if (!DEBT_TYPES.includes(debt.type)) throw new Error('Choose a valid debt type.')
   if (!debt.name?.trim()) throw new Error('Enter a debt name.')
   if (
@@ -290,12 +429,14 @@ export function validateDebt(debt) {
 }
 
 function debtHasPaymentSchedule(debt) {
+  if (debt.paymentSchedule?.totalInstallments != null) return Boolean(debt.paymentSchedule.startDate)
   return Number.isFinite(debt.minimumPayment)
     && debt.minimumPayment > 0
     && calculateDebtDueDate(debt.nextPaymentDue, 0) === debt.nextPaymentDue
 }
 
 export function getMatchingDebtBill(bills, debt) {
+  if (debt.paymentSchedule && debt.paymentSchedule.kind !== 'monthly') return null
   const dueDay = debt.nextPaymentDue?.slice(-2)
   return bills.find(bill =>
     bill.debtId == null
@@ -328,16 +469,46 @@ function preserveDebtBillHistory(bill) {
 }
 
 function updateDebtSchedule(bill, debt, managed) {
+  const schedule = debt.paymentSchedule
+  const finite = schedule?.totalInstallments != null
+  const generated = finite ? getDebtScheduledPayments(debt) : []
+  const history = preserveDebtBillHistory(bill)
+  const historicalDates = new Set([
+    ...(bill.paymentHistory ?? []).map(item => item.dueDate),
+    ...(debt.paymentHistory ?? []).filter(item => !item.reversedAt).map(item => item.scheduledDueDate)
+  ])
+  const paidNumbers = finite ? getPaidInstallmentNumbers(debt) : new Set()
+  const historicalNumbers = new Set(history.filter(item => historicalDates.has(item.scheduledDate))
+    .map(item => item.installmentNumber).filter(Number.isInteger))
+  const overrides = finite ? [
+    ...history.filter(item => historicalDates.has(item.scheduledDate)).map(item => ({
+      ...item, ...(schedule.dateAdjustments?.find(change => change.scheduledDate === item.scheduledDate) ?? {})
+    })),
+    ...generated.filter(item => !historicalDates.has(item.scheduledDate) && !paidNumbers.has(item.installmentNumber) && !historicalNumbers.has(item.installmentNumber)).map(item => {
+      const previous = (bill.occurrenceOverrides ?? []).find(override => override.scheduledDate === item.scheduledDate)
+      return {
+        ...previous, ...item,
+        dueDate: previous?.dueDate ?? item.dueDate,
+        ...(previous?.debtAmountOverride ? { amount: previous.amount, debtAmountOverride: true } : {}),
+        // Explicit debt-form date edits take precedence over a prior bill date edit.
+        ...(schedule.dateAdjustments?.find(change => change.scheduledDate === item.scheduledDate) ?? {})
+      }
+    })
+  ] : schedule ? [
+    ...history.filter(item => !schedule.dateAdjustments?.some(change => change.scheduledDate === item.scheduledDate)),
+    ...(schedule.dateAdjustments ?? [])
+  ] : history
   return {
     ...bill,
     name: debt.name,
-    amount: debt.minimumPayment,
-    dueDate: debt.nextPaymentDue,
-    frequency: 'monthly',
+    amount: finite ? generated[0]?.amount ?? bill.amount ?? 0 : debt.minimumPayment,
+    dueDate: schedule?.startDate || debt.nextPaymentDue,
+    frequency: finite ? 'debt-installments' : schedule?.frequency === 'days' ? 'interval' : schedule?.frequency ?? 'monthly',
+    ...(schedule ? { intervalDays: schedule.intervalDays, debtDueDay: schedule.dueDay } : {}),
     debtId: debt.id,
     debtManaged: managed,
     ...(managed ? { active: true, archived: false } : {}),
-    occurrenceOverrides: preserveDebtBillHistory(bill)
+    occurrenceOverrides: overrides
   }
 }
 
@@ -399,7 +570,7 @@ export function synchronizeDebtBills(storage = localStorage, choices = {}) {
     }
 
     const id = createBillId(bills)
-    bills = [...bills, {
+    bills = [...bills, updateDebtSchedule({
       id,
       name: debt.name,
       amount: debt.minimumPayment,
@@ -413,7 +584,7 @@ export function synchronizeDebtBills(storage = localStorage, choices = {}) {
       archived: false,
       paymentHistory: [],
       occurrenceOverrides: []
-    }]
+    }, debt, true)]
     billsChanged = true
     debtsChanged = true
     return { ...debt, billId: id }
@@ -515,6 +686,30 @@ function getLinkedBillOccurrence(transaction, details) {
   return { billOccurrenceId, scheduledDueDate }
 }
 
+function getUnpaidDebtSlot(debt, storage) {
+  if (!debt.paymentSchedule) return null
+  const { bills } = loadBillData([], storage)
+  const savedBill = bills.find(item => item.debtId === debt.id)
+  if (!savedBill) return getNextScheduledDebtPayment(debt)
+  const bill = updateDebtSchedule(savedBill, debt, false)
+  const transactions = loadSavedAccountData(storage)?.transactions ?? []
+  const status = getDebtScheduleStatus(debt, bills, transactions)
+  if (!status.nextDueDate) return null
+  return getBillOccurrencesInRange([bill], status.nextDueDate, status.nextDueDate, transactions)
+    .find(item => !item.paid && !item.skipped) ?? null
+}
+
+function alignDebtBillOccurrence(occurrenceId, transaction, storage) {
+  if (!occurrenceId) return
+  const [, id, date] = /^bill:(\d+):(\d{4}-\d{2}-\d{2})$/.exec(occurrenceId) ?? []
+  if (!id) throw new Error('The debt payment occurrence reference is invalid.')
+  const data = loadBillData([], storage)
+  saveBillData({ bills: data.bills.map(bill => bill.id === Number(id) ? updateScheduleOccurrence(bill, date, {
+    name: transaction.name, amount: Math.abs(transaction.amount), accountId: transaction.accountId
+  }) : bill) }, storage)
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('money-honey-bills-updated'))
+}
+
 export function recordDebtPaymentFromTransaction(
   debtId,
   transactionId,
@@ -530,7 +725,19 @@ export function recordDebtPaymentFromTransaction(
     throw new Error('A debt payment must link to an existing expense transaction.')
   }
 
-  const { billOccurrenceId, scheduledDueDate } = getLinkedBillOccurrence(transaction, details)
+  let { billOccurrenceId, scheduledDueDate } = getLinkedBillOccurrence(transaction, details)
+  let inferredOccurrence = false
+  if (!scheduledDueDate && debt.paymentSchedule) {
+    const slot = getUnpaidDebtSlot(debt, storage)
+    if (slot) {
+      scheduledDueDate = slot.scheduledDate
+      if (debt.billId != null) {
+        billOccurrenceId = `bill:${debt.billId}:${slot.scheduledDate}`
+        transaction.linkedBillOccurrenceId = billOccurrenceId
+        inferredOccurrence = true
+      }
+    }
+  }
   const existing = debt.paymentHistory.find(payment =>
     !payment.reversedAt && (
     payment.transactionId === transactionId
@@ -560,7 +767,12 @@ export function recordDebtPaymentFromTransaction(
     balanceReviewRequired,
     calculationMethod,
     scheduledDueDate,
-    billOccurrenceId
+    billOccurrenceId,
+    ...(debt.paymentSchedule?.totalInstallments != null ? {
+      installmentNumber: getDebtScheduledPayments(debt).find(item => item.scheduledDate === scheduledDueDate)?.installmentNumber
+        ?? loadBillData([], storage).bills.find(item => item.id === debt.billId)?.occurrenceOverrides
+          ?.find(item => item.scheduledDate === scheduledDueDate)?.installmentNumber ?? null
+    } : {})
   }
   transaction.linkedDebtId = debt.id
   transaction.linkedDebtPaymentId = payment.id
@@ -570,6 +782,7 @@ export function recordDebtPaymentFromTransaction(
   updateBalanceReviewFlag(debt)
   saveAccountData(accountData.accounts, accountData.transactions, storage)
   saveDebts(debts, storage)
+  if (inferredOccurrence) alignDebtBillOccurrence(billOccurrenceId, transaction, storage)
   return payment
 }
 
@@ -613,6 +826,11 @@ export function createDebtPayment(debtId, paymentId, details, storage = localSto
       (max, transaction) => Math.max(max, transaction.sequence ?? transaction.id),
       0
     ) + 1
+  const nextScheduled = getUnpaidDebtSlot(debt, storage)
+  if (nextScheduled && Math.round(nextScheduled.amount * 100) !== Math.round(total * 100)) {
+    throw new Error('This amount does not match the scheduled installment. Adjust the scheduled amount before recording its payment.')
+  }
+  const billOccurrenceId = nextScheduled && debt.billId != null ? `bill:${debt.billId}:${nextScheduled.scheduledDate}` : null
   const payment = {
     id: paymentId,
     sequence: debt.paymentHistory.length + 1,
@@ -620,21 +838,26 @@ export function createDebtPayment(debtId, paymentId, details, storage = localSto
     date: details.date,
     total,
     ...allocation,
-    billOccurrenceId: null
+    billOccurrenceId,
+    ...(nextScheduled ? {
+      scheduledDueDate: nextScheduled.scheduledDate,
+      ...(nextScheduled.installmentNumber != null ? { installmentNumber: nextScheduled.installmentNumber } : {})
+    } : {})
   }
   if (!existingTransaction) {
     accountData.transactions.push({
       id,
       sequence,
       accountId,
-      name: `Debt payment · ${debt.name}`,
+      name: billOccurrenceId ? debt.name : `Debt payment · ${debt.name}`,
       amount: -total,
       date: details.date,
       cleared: false,
       category: 'Debt Payments',
       linkedDebtId: debt.id,
       linkedDebtPaymentId: paymentId,
-      transactionType: 'debt-payment'
+      transactionType: 'debt-payment',
+      ...(billOccurrenceId ? { linkedBillOccurrenceId: billOccurrenceId, linkedOccurrenceType: 'bill', linkedOccurrenceId: billOccurrenceId } : {})
     })
   }
   debt.paymentHistory = [...debt.paymentHistory, payment]
@@ -642,6 +865,7 @@ export function createDebtPayment(debtId, paymentId, details, storage = localSto
   updateBalanceReviewFlag(debt)
   saveAccountData(accountData.accounts, accountData.transactions, storage)
   saveDebts(debts, storage)
+  if (billOccurrenceId) alignDebtBillOccurrence(billOccurrenceId, accountData.transactions.find(item => item.id === id), storage)
   return payment
 }
 

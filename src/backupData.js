@@ -17,7 +17,7 @@ import {
   loadDismissedSmartSuggestions
 } from './budgetData.js'
 import { CATEGORY_STORAGE_KEY, loadCategoryConfig } from './categoryData.js'
-import { DEBT_STORAGE_KEY, loadDebts } from './debtData.js'
+import { DEBT_STORAGE_KEY, loadDebtData, loadDebts } from './debtData.js'
 import { APPEARANCE_SIZE_STORAGE_KEY } from './appearanceData.js'
 import { PAYEE_STORAGE_KEY, loadPayees } from './payeeData.js'
 import { CUSTOM_THEME_STORAGE_KEY, THEME_STORAGE_KEY } from './themeData.js'
@@ -148,10 +148,13 @@ export const BACKUP_CATEGORIES = [
   { id: 'pay-schedule', label: 'Pay schedule', group: 'data', keys: [PAY_SCHEDULE_STORAGE_KEY], detail: () => 'Saved pay schedule' },
   {
     id: 'debts',
-    label: 'Debts',
+    label: 'Debts & assignees',
     group: 'data',
     keys: [DEBT_STORAGE_KEY],
-    detail: storage => plural(loadDebts(storage).length, 'debt')
+    detail: storage => {
+      const { debts, assignees } = loadDebtData(storage)
+      return `${plural(debts.length, 'debt')}, ${plural(assignees.length, 'assignee')}`
+    }
   },
   {
     id: 'budgets',

@@ -56,6 +56,26 @@ export function getTodayDate() {
   return formatLocalDate(new Date())
 }
 
+export function groupBillOccurrencesByUrgency(occurrences, { today = getTodayDate(), showCompleted = false } = {}) {
+  const end = new Date(`${today}T00:00:00Z`)
+  end.setUTCDate(end.getUTCDate() + 30)
+  const thirtyDaysAhead = formatUTCDate(end)
+  const groups = [
+    { key: 'past-due', label: 'Past Due', visibleOccurrences: [] },
+    { key: 'within-30', label: 'Due Within 30 Days', visibleOccurrences: [] },
+    { key: 'beyond-30', label: 'Due Beyond 30 Days', visibleOccurrences: [] }
+  ]
+  for (const occurrence of [...occurrences].sort((a, b) => a.dueDate.localeCompare(b.dueDate))) {
+    if (!showCompleted && (occurrence.paid || occurrence.skipped)) continue
+    const index = occurrence.dueDate < today ? 0 : occurrence.dueDate <= thirtyDaysAhead ? 1 : 2
+    groups[index].visibleOccurrences.push(occurrence)
+  }
+  return groups.map(group => ({
+    ...group,
+    total: group.visibleOccurrences.reduce((sum, occurrence) => sum + Math.round(occurrence.amount * 100), 0) / 100
+  }))
+}
+
 function dateFromParts(year, monthIndex, day) {
   const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate()
   return new Date(Date.UTC(year, monthIndex, Math.min(day, lastDay)))
@@ -87,6 +107,8 @@ function isDueInMonth(bill, year, monthIndex, candidate) {
       return dayOffset % 7 === 0
     case 'biweekly':
       return dayOffset % 14 === 0
+    case 'interval':
+      return Number.isInteger(bill.intervalDays) && bill.intervalDays > 0 && dayOffset % bill.intervalDays === 0
     case 'twice-monthly': {
       const days = [...new Set((bill.daysOfMonth ?? []).map(day =>
         dateFromParts(year, monthIndex, day).getUTCDate()
@@ -94,7 +116,7 @@ function isDueInMonth(bill, year, monthIndex, candidate) {
       return days.includes(candidate.getUTCDate())
     }
     case 'monthly':
-      return candidate.getUTCDate() === dateFromParts(year, monthIndex, anchorDay).getUTCDate()
+      return candidate.getUTCDate() === dateFromParts(year, monthIndex, monthOffset ? bill.debtDueDay ?? anchorDay : anchorDay).getUTCDate()
     case 'quarterly':
       return monthOffset % 3 === 0 && candidate.getUTCDate() === dateFromParts(year, monthIndex, anchorDay).getUTCDate()
     case 'yearly':

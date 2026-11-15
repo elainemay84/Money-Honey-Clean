@@ -19,6 +19,8 @@ import {
   suggestTransactionCategory
 } from './categoryData.js'
 import { loadPayees } from './payeeData.js'
+import FinancialInput from './FinancialInput'
+import { parseFinancialAmount } from './financialAmounts.js'
 
 const todayDate = new Date().toLocaleDateString('en-CA')
 
@@ -75,6 +77,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(Boolean(startEdit))
   const [editingTransactionId, setEditingTransactionId] = useState(startEdit ? startEdit.transaction.id : null)
   const [deleteConfirmation, setDeleteConfirmation] = useState(null)
+  const [openingDrafts, setOpeningDrafts] = useState({})
+  const [inputError, setInputError] = useState('')
 
   useEffect(() => {
     const refreshAccountData = () => {
@@ -164,8 +168,12 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
 
   function addAccount(event) {
     event.preventDefault()
-    const openingBalance = Number(newAccountOpeningBalance || 0)
-    if (!newAccountName.trim() || !Number.isFinite(openingBalance)) return
+    let openingBalance
+    try {
+      openingBalance = parseFinancialAmount(newAccountOpeningBalance || '0', 'Opening balance', { signed: true })
+      if (!newAccountName.trim()) throw new Error('Enter an account name.')
+    } catch (error) { setInputError(error.message); return }
+    setInputError('')
 
     updateAccounts(current => [...current, {
       id: nextAccountId.current++,
@@ -313,8 +321,12 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   function addTransaction(event) {
     event.preventDefault()
 
-    const amount = Number(newAmount)
-    if (!newName.trim() || !newDate || !Number.isFinite(amount) || amount === 0) return
+    let amount
+    try {
+      amount = parseFinancialAmount(newAmount, 'Transaction amount', { signed: true })
+      if (!newName.trim() || !newDate || amount === 0) throw new Error('Enter a name, date, and nonzero transaction amount.')
+    } catch (error) { setInputError(error.message); return }
+    setInputError('')
 
     if (editingTransactionId !== null) {
       const currentTransaction = transactions.find(item => item.id === editingTransactionId)
@@ -372,6 +384,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   if (screen === 'overview') {
     return (
       <main className="accounts-overview" style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+        {inputError && <p role="alert">{inputError}</p>}
         <div className="page-heading-row page-title-row" style={{
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -448,15 +461,21 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   <option key={type} value={type}>{type}</option>
                 ))}
               </select>
-              <input
-                type="number"
-                step="0.01"
-                aria-label="Opening balance"
-                placeholder="Opening balance"
-                value={newAccountOpeningBalance}
-                onChange={event => setNewAccountOpeningBalance(event.target.value)}
-                style={field}
-              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <FinancialInput
+                  signed
+                  inputMode="decimal"
+                  step="0.01"
+                  aria-label="Opening balance"
+                  placeholder="Opening balance"
+                  value={newAccountOpeningBalance}
+                  onChange={event => setNewAccountOpeningBalance(event.target.value)}
+                  style={field}
+                />
+                <button type="button" aria-label="Toggle opening balance sign" onClick={() =>
+                  setNewAccountOpeningBalance(value => value.startsWith('-') ? value.slice(1) : `-${value || '0'}`)
+                } style={{ ...field, width: 'auto', flexShrink: 0 }}>+/-</button>
+              </div>
               <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 Account color
                 <input
@@ -529,6 +548,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   if (screen === 'manage') {
     return (
       <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
+        {inputError && <p role="alert">{inputError}</p>}
         <div className="page-heading-row page-title-row" style={{
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -612,17 +632,35 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               </label>
               <label style={{ fontSize: 12, color: '#79502A' }}>
                 Opening balance
-                <input
-                  type="number"
-                  step="0.01"
-                  aria-label={`Opening balance for ${item.name}`}
-                  value={item.openingBalance}
-                  onChange={event => {
-                    const value = Number(event.target.value)
-                    if (Number.isFinite(value)) updateAccount(item.id, { openingBalance: value })
-                  }}
-                  style={{ ...field, display: 'block', width: '100%', marginTop: 4 }}
-                />
+                <span style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  <FinancialInput
+                    signed
+                    inputMode="decimal"
+                    step="0.01"
+                    aria-label={`Opening balance for ${item.name}`}
+                    value={openingDrafts[item.id] ?? item.openingBalance}
+                    onChange={event => {
+                      const text = event.target.value
+                      setOpeningDrafts({ ...openingDrafts, [item.id]: text })
+                      if (event.currentTarget.validity.valid && text.trim()) {
+                        updateAccount(item.id, { openingBalance: parseFinancialAmount(text, 'Opening balance', { signed: true }) })
+                        setInputError('')
+                      }
+                    }}
+                    onBlur={event => {
+                      try {
+                        const value = parseFinancialAmount(event.target.value, 'Opening balance', { signed: true })
+                        updateAccount(item.id, { openingBalance: value })
+                        setOpeningDrafts(current => { const next = { ...current }; delete next[item.id]; return next })
+                        setInputError('')
+                      } catch (error) { setInputError(error.message) }
+                    }}
+                    style={{ ...field, display: 'block', width: '100%' }}
+                  />
+                  <button type="button" aria-label={`Toggle opening balance sign for ${item.name}`} onClick={() =>
+                    updateAccount(item.id, { openingBalance: -item.openingBalance })
+                  } style={{ ...field, width: 'auto', flexShrink: 0 }}>+/-</button>
+                </span>
               </label>
               <label style={{ fontSize: 12, color: '#79502A' }}>
                 Reference date
@@ -974,6 +1012,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               </button>
             </div>
             <form onSubmit={addTransaction} style={{ display: 'grid', gap: 10 }}>
+              {inputError && <p role="alert">{inputError}</p>}
               <select
                 aria-label="Transaction type"
                 value={kind}
@@ -1011,8 +1050,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               <datalist id="saved-payees">
                 {payees.map(payee => <option key={payee} value={payee} />)}
               </datalist>
-              <input
-                type="number"
+              <FinancialInput
+                signed
+                inputMode="decimal"
                 step="0.01"
                 placeholder="Amount"
                 aria-label="Amount"

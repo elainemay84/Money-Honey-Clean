@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import FinancialInput from './FinancialInput'
+import { parseFinancialAmount } from './financialAmounts.js'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
 import {
   analyzeSmartBudgets,
@@ -117,8 +119,9 @@ export default function Budgets({ transactions, today }) {
   }
 
   function saveBudget() {
-    const amount = Number(budgetAmount)
-    if (!Number.isFinite(amount) || amount < 0) return
+    let amount
+    try { amount = parseFinancialAmount(budgetAmount, 'Budget') }
+    catch (error) { setNotice(error.message); return }
     saveBudgets({ ...budgets, [editingBudget]: amount }, mode)
     setEditingBudget(null)
     setNotice('')
@@ -367,8 +370,7 @@ export default function Budgets({ transactions, today }) {
             </p>
             <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 12 }}>
               {mode === 'smart' ? 'Approved Smart Budget amount' : 'Monthly budget amount'}
-              <input
-                type="number"
+              <FinancialInput
                 min="0"
                 step="0.01"
                 inputMode="decimal"
@@ -378,6 +380,7 @@ export default function Budgets({ transactions, today }) {
                 style={{ ...button, boxSizing: 'border-box', width: '100%' }}
               />
             </label>
+            {notice && <p role="alert">{notice}</p>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
               <button type="button" onClick={() => setEditingBudget(null)} style={button}>Cancel</button>
               <button type="button" onClick={saveBudget} style={{ ...button, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>Save</button>

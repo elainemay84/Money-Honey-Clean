@@ -135,6 +135,92 @@ body {
   font-size: 11px;
 }
 
+.debt-fab {
+  position: fixed;
+  right: max(20px, calc((100vw - 460px) / 2));
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  z-index: 20;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 12px;
+  max-width: calc(100vw - 40px);
+}
+
+.debt-fab-toggle,
+.debt-fab-circle {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 4px 14px #76552255;
+}
+
+.debt-fab-toggle {
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  background: #B87522;
+  color: #FFFFFF;
+  cursor: pointer;
+}
+
+.debt-fab-toggle svg {
+  transition: transform 140ms ease-out;
+}
+
+.debt-fab-toggle[aria-expanded='true'] svg {
+  transform: rotate(45deg);
+}
+
+.debt-fab-actions {
+  display: grid;
+  gap: 10px;
+  margin-right: 5px;
+  animation: debt-fab-enter 140ms ease-out;
+}
+
+.debt-fab-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.debt-fab-label {
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--theme-card, #FFFFFF);
+  color: var(--theme-text, #493320);
+  box-shadow: 0 2px 8px #76552222;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.debt-fab-circle {
+  width: 48px;
+  height: 48px;
+  background: var(--theme-card, #FFFFFF);
+  color: var(--theme-accent, #B87522);
+}
+
+@keyframes debt-fab-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .debt-fab-actions { animation: none; }
+  .debt-fab-toggle svg { transition: none; }
+}
+
 @media (max-width: 1024px) {
   .appearance-small {
     /* Keep rendered input text above 16px after the 0.94 appearance zoom. */

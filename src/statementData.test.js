@@ -1,0 +1,198 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { getReliableOcrLines, parseDebtStatement, validateStatementSuggestions } from './statementData.js'
+import { getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
+
+test('labeled statement fields extract exact amounts, complete dates, debt type and only the account suffix', () => {
+  const result = parseDebtStatement([
+    'Creditor: Example Bank', 'Credit Card Statement',
+    'Account Number: 1234 5678 9012 0042', 'Credit Limit: $5,000.00',
+    'Current Outstanding Balance: $1,234.56', 'Purchase APR: 24.99%',
+    'Minimum Payment Due: $35.00', 'Payment Due Date: November 30, 2026'
+  ])
+  assert.deepEqual(result, {
+    values: {
+      name: 'Example Bank', type: 'Credit Card', accountLast4: '0042', creditLimit: '5000',
+      currentBalance: '1234.56', interestRate: '24.99', minimumPayment: '35', nextPaymentDue: '2026-11-30'
+    },
+    missing: [], conflicts: []
+  })
+  assert.equal(JSON.stringify(result).includes('1234 5678 9012'), false)
+  assert.deepEqual(validateStatementSuggestions(result.values), result.values)
+})
+
+test('missing, negative, credit, ambiguous and conflicting amounts are never guessed or made positive', () => {
+  const result = parseDebtStatement([
+    'Previous Balance: $500', 'Amount Due: $40', 'Available Credit: $900',
+    'Current Balance: -$20.00', 'New Balance: $20.00 CR',
+    'Minimum Payment Due: $0', 'Purchase APR: 19.99%', 'APR: 0.00%',
+    'Credit Limit: $5,000', 'Credit Limit: $6,000', 'Due Date: 11/12/2026'
+  ])
+  assert.deepEqual(result.values, { minimumPayment: '0' })
+  assert.deepEqual(result.conflicts, ['creditLimit', 'interestRate'])
+  assert.ok(result.missing.includes('currentBalance'))
+  assert.ok(result.missing.includes('nextPaymentDue'))
+  assert.equal(Object.hasOwn(result.values, 'startingBalance'), false)
+})
+
+test('dates require a valid full year and do not infer locale for ambiguous slash dates', () => {
+  for (const [source, expected] of [
+    ['2028-02-29', '2028-02-29'], ['Nov 30, 2026', '2026-11-30'], ['11/30/2026', '2026-11-30'],
+    ['2026-02-29', undefined], ['Nov 30', undefined], ['02/03/2026', undefined],
+    ['30/11/2026', undefined], ['2026-13-01', undefined]
+  ]) {
+    assert.equal(parseDebtStatement([`Payment Due Date: ${source}`]).values.nextPaymentDue, expected)
+  }
+})
+
+test('masked account suffixes preserve zeros and names never absorb full account numbers', () => {
+  assert.equal(parseDebtStatement(['Account ending in 0012']).values.accountLast4, '0012')
+  assert.equal(parseDebtStatement(['Card Number: **** **** **** 0042']).values.accountLast4, '0042')
+  assert.equal(parseDebtStatement(['Account Last 4 Digits: 0000']).values.accountLast4, '0000')
+  assert.equal(parseDebtStatement(['Creditor: 1234 5678 9012 0042']).values.name, undefined)
+  assert.equal(parseDebtStatement(['Account Number: 12345']).values.accountLast4, undefined)
+  assert.equal(parseDebtStatement(['Companywide Financial']).values.name, 'Companywide Financial')
+})
+
+test('low confidence OCR is excluded without joining a label to a value across an unreadable line', () => {
+  const line = (text, confidence) => ({ text, words: [{ confidence }] })
+  const lines = getReliableOcrLines({ blocks: [{ paragraphs: [{ lines: [
+    line('Current Balance:', 99), line('$800.00', 79), line('$300.00', 99),
+    line('Minimum Payment Due: $25', 95)
+  ] }] }] })
+  assert.deepEqual(lines, ['Current Balance:', '', '$300.00', 'Minimum Payment Due: $25'])
+  assert.deepEqual(parseDebtStatement(lines).values, { minimumPayment: '25' })
+  assert.deepEqual(getReliableOcrLines({}), [])
+})
+
+test('PDF text reconstructs rows without pairing balances with amounts from other columns', () => {
+  const item = (str, x, y, width = 100) => ({ str, transform: [1, 0, 0, 1, x, y], width })
+  const lines = getPdfTextLines([
+    item('$25.00', 220, 650, 50), item('Minimum Payment Due:', 10, 650, 150),
+    item('Balance:', 65, 700, 55), item('Current', 10, 700, 50), item('$800.12', 220, 700, 60)
+  ])
+  assert.deepEqual(parseDebtStatement(lines).values, { currentBalance: '800.12', minimumPayment: '25' })
+  assert.deepEqual(parseDebtStatement(getPdfTextLines([
+    item('Credit Limit:', 10, 700), item('Current Balance:', 300, 700),
+    item('$5000', 10, 650), item('$800', 300, 650)
+  ])).values, {})
+  assert.deepEqual(parseDebtStatement(getPdfTextLines([
+    item('Current Balance:', 300, 700), item('$5000', 10, 650)
+  ])).values, {})
+  assert.equal(parseDebtStatement(getPdfTextLines([
+    item('Current Balance:', 10, 700), item('$800', 10, 650)
+  ])).values.currentBalance, '800')
+  assert.deepEqual(parseDebtStatement(getPdfTextLines([
+    item('Purchase date', 10, 750), item('May 15, 2026', 10, 730),
+    item('Current remaining balance', 10, 700), item('$296.74', 10, 680),
+    item('Next payment date', 10, 650), item('November 16, 2026', 10, 630)
+  ])).values, { currentBalance: '296.74', nextPaymentDue: '2026-11-16' })
+})
+
+test('file selection rejects oversized, empty and unsupported documents without loading engines', () => {
+  for (const [name, type, expected] of [
+    ['photo.jpg', 'image/jpeg', 'image'], ['image.HEIC', '', 'image'],
+    ['statement.pdf', 'application/pdf', 'pdf'], ['statement.PDF', 'application/octet-stream', 'pdf']
+  ]) assert.equal(getStatementFileKind({ name, type, size: 10 }), expected)
+  for (const file of [
+    { name: 'empty.pdf', type: 'application/pdf', size: 0 },
+    { name: 'large.pdf', type: 'application/pdf', size: MAX_STATEMENT_BYTES + 1 },
+    { name: 'script.svg', type: 'image/svg+xml', size: 10 },
+    { name: 'file.txt', type: 'text/plain', size: 10 }
+  ]) assert.throws(() => getStatementFileKind(file), { name: 'StatementScanError' })
+})
+
+test('edited suggestions validate exact suffixes, money, dates and explicit type without silent rounding', () => {
+  assert.deepEqual(validateStatementSuggestions({ currentBalance: '0.01', accountLast4: '0012' }), { currentBalance: '0.01', accountLast4: '0012' })
+  for (const values of [
+    {}, { currentBalance: '-1' }, { currentBalance: '1.234' }, { accountLast4: '12345' },
+    { accountLast4: '012' }, { accountLast4: '1234567890123456' },
+    { interestRate: 'NaN' }, { nextPaymentDue: '2026-02-30' }, { type: 'Unknown' }
+  ]) assert.throws(() => validateStatementSuggestions(values))
+})
+
+test('Home Depot installment totals remain distinct and inconsistent totals are flagged, not recalculated', () => {
+  const result = parseDebtStatement([
+    'Creditor: The Home Depot', 'Purchase amount: $1,568.00', 'Total interest: $121.90',
+    'APR: 24.99%', 'Total repayment amount: $1,780.64', 'Already paid: $1,483.90',
+    'Remaining balance: $296.74', 'Payments completed: 5 of 6',
+    'Next scheduled payment: $296.74 on November 16, 2026'
+  ])
+  assert.deepEqual(result.values, {
+    name: 'The Home Depot', currentBalance: '296.74', interestRate: '24.99', nextPaymentDue: '2026-11-16',
+    purchaseAmount: '1568', totalRepayment: '1780.64', totalInterest: '121.9', amountAlreadyPaid: '1483.9',
+    totalInstallments: '6', completedInstallments: '5', nextPaymentAmount: '296.74'
+  })
+  assert.equal(result.values.creditLimit, undefined)
+  assert.equal(result.values.startingBalance, undefined)
+  assert.equal(result.values.paymentHistory, undefined)
+  assert.match(result.warnings[0], /does not match/)
+  assert.deepEqual(validateStatementSuggestions(result.values), result.values)
+})
+
+test('screenshot-style OCR maps separate Home Depot labels and values without needing every debt field', () => {
+  const result = parseDebtStatement([
+    'The Home Depot\n', 'Purchase date\n\n', 'May 15, 2026\n\n',
+    'Purchase amount\n', '$1,568.00\n\n', 'Total interest\n\n', '$121.90\n\n',
+    'APR\n\n', '24.99%\n\n', 'Total repayment amount\n', '$1,780.64\n\n',
+    'Amount already paid\n', '$1,483.90\n\n', 'Current remaining balance\n', '$296.74\n\n',
+    'Next scheduled payment\n', '$296.74\n\n', 'Next payment date\n', 'November 16, 2026\n\n',
+    '5 of 6 payments completed\n'
+  ])
+  assert.deepEqual(result.values, {
+    name: 'The Home Depot', currentBalance: '296.74', interestRate: '24.99', nextPaymentDue: '2026-11-16',
+    purchaseAmount: '1568', totalRepayment: '1780.64', totalInterest: '121.9', amountAlreadyPaid: '1483.9',
+    totalInstallments: '6', completedInstallments: '5', nextPaymentAmount: '296.74'
+  })
+  for (const key of ['type', 'accountLast4', 'creditLimit', 'minimumPayment']) {
+    assert.ok(result.missing.includes(key))
+    assert.equal(result.values[key], undefined)
+  }
+  assert.deepEqual(validateStatementSuggestions(result.values), result.values)
+})
+
+test('one or two reliable fields survive incomplete statements and unrelated unreadable values', () => {
+  for (const [lines, values] of [
+    [['Current remaining balance', '$296.74'], { currentBalance: '296.74' }],
+    [['APR: 24.99%', 'Credit Limit: unreadable'], { interestRate: '24.99' }],
+    [['Current remaining balance: $296.74', 'Next payment date: November 16, 2026', 'Account: ???'],
+      { currentBalance: '296.74', nextPaymentDue: '2026-11-16' }]
+  ]) {
+    const result = parseDebtStatement(lines)
+    assert.deepEqual(result.values, values)
+    assert.deepEqual(result.conflicts, [])
+    assert.ok(result.missing.length)
+  }
+})
+
+test('purchase, paid and repayment totals never become an outstanding balance, credit limit or minimum payment', () => {
+  const result = parseDebtStatement([
+    'The Home Depot', 'Purchase date', 'May 15, 2026',
+    'Purchase amount', '$1,568.00', 'Total repayment amount', '$1,780.64',
+    'Amount already paid', '$1,483.90', 'Next scheduled payment', '$40.00',
+    'Next payment date', 'November 16, 2026', 'Progress: 5 of 6 payments completed'
+  ])
+  for (const key of ['currentBalance', 'creditLimit', 'minimumPayment', 'accountLast4', 'type']) {
+    assert.equal(result.values[key], undefined)
+  }
+  assert.equal(result.values.purchaseAmount, '1568')
+  assert.equal(result.values.amountAlreadyPaid, '1483.9')
+  assert.equal(result.values.nextPaymentAmount, '40')
+  assert.equal(result.values.nextPaymentDue, '2026-11-16')
+  assert.equal(parseDebtStatement(['Purchase date: May 15, 2026']).values.nextPaymentDue, undefined)
+  assert.equal(parseDebtStatement(['Current remaining balance', 'Purchase amount', '$1,568.00']).values.currentBalance, undefined)
+  assert.equal(parseDebtStatement(['Current remaining balance', '', '$296.74']).values.currentBalance, undefined)
+})
+
+test('unrecognized documents and generic financial headings do not invent creditor names or amounts', () => {
+  for (const lines of [
+    ['A walk in the park', 'Thank you', '$296.74', 'May 15, 2026'],
+    ['Payment summary', 'Purchase date', 'May 15, 2026'],
+    ['Statement details', 'Current remaining balance', 'Unreadable'],
+    ['Due soon', 'Current remaining balance', 'Unreadable'],
+    ['Welcome back', 'Purchase date', 'May 15, 2026'],
+    ['5 of 6 pages', 'Purchase history']
+  ]) {
+    assert.deepEqual(parseDebtStatement(lines).values, {})
+  }
+})

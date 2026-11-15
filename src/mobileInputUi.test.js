@@ -34,6 +34,7 @@ const vite = await createServer({
 const { default: App } = await vite.ssrLoadModule('/src/App.jsx')
 const { default: Accounts } = await vite.ssrLoadModule('/src/Accounts.jsx')
 const { default: ResponsiveText } = await vite.ssrLoadModule('/src/ResponsiveText.jsx')
+const { default: StatementAutofill } = await vite.ssrLoadModule('/src/StatementAutofill.jsx')
 let root
 
 async function click(element) {
@@ -52,6 +53,11 @@ function checkControls(label) {
   assert.ok(controls.length, `${label} must expose editable controls`)
   const zoom = Number(browser.getComputedStyle(browser.document.querySelector('.app-shell')).zoom) || 1
   for (const control of controls) {
+    if (control.type === 'number') {
+      assert.equal(control.inputMode, control.step === '0.01' ? 'decimal' : 'numeric',
+        `${label}: numeric fields must request the appropriate iPhone keypad`)
+    }
+    if (control.inputMode === 'decimal') assert.equal(control.type, 'text', `${label}: financial inputs must have no spinners`)
     for (const state of ['before', 'focused', 'after']) {
       if (state === 'focused') control.focus()
       if (state === 'after') control.blur()
@@ -108,7 +114,12 @@ for (const [size, width] of [['small', 320], ['medium', 390], ['large', 932]]) {
 
     await navigate('Debt')
     await click(button('Add debt'))
+    await click(button('Add Manually'))
     checkControls('Debts')
+    await click(button('Manage Assignees'))
+    checkControls('Debt assignee manager')
+    await click(button('Done'))
+    checkControls('Debt form after managing assignees')
 
     await navigate('Budgets')
     await click(button('Other Categories'))
@@ -124,6 +135,40 @@ for (const [size, width] of [['small', 320], ['medium', 390], ['large', 932]]) {
     checkControls('Settings categories and payees')
   })
 }
+
+test('statement review keeps decimal and last-four keypads and readable controls in Small appearance', async () => {
+  browser.happyDOM.setWindowSize({ width: 320, height: 844 })
+  const container = browser.document.createElement('div')
+  container.className = 'app-shell appearance-small'
+  container.style.zoom = '0.94'
+  browser.document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root.render(React.createElement(StatementAutofill, {
+    currentValues: {},
+    onApply: () => assert.fail('Review must not apply automatically'),
+    extract: async () => ({
+      values: {
+        name: 'Sample Bank', type: 'Credit Card', accountLast4: '0012',
+        creditLimit: '5000', currentBalance: '800.15', interestRate: '19.99',
+        minimumPayment: '25', nextPaymentDue: '2026-11-30'
+      },
+      missing: [], conflicts: []
+    })
+  })))
+  await click(button('Scan / Upload Statement'))
+  const input = container.querySelector('[aria-label="Statement image"]')
+  Object.defineProperty(input, 'files', { value: [new browser.File(['test'], 'sample.png', { type: 'image/png' })] })
+  await act(async () => input.dispatchEvent(new browser.Event('change', { bubbles: true })))
+  checkControls('Statement review')
+  for (const label of ['Credit Limit', 'Current Balance', 'APR', 'Minimum Payment']) {
+    assert.equal(container.querySelector(`[aria-label="Scanned ${label}"]`).inputMode, 'decimal')
+  }
+  const suffix = container.querySelector('[aria-label="Scanned Account Last 4 Digits"]')
+  assert.equal(suffix.type, 'text')
+  assert.equal(suffix.inputMode, 'numeric')
+  assert.equal(suffix.value, '0012')
+  assert.equal(container.querySelector('[aria-label="Scanned Creditor / Debt Name"]').inputMode, '')
+})
 
 test('page titles stay centered in full-width rows independently of navigation and action controls', async () => {
   browser.happyDOM.setWindowSize({ width: 320, height: 844 })

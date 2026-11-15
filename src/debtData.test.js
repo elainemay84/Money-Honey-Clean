@@ -1,27 +1,212 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { getBillOccurrencesInRange, loadBillData, saveBillData, updateBillOccurrenceSkip, updateScheduleOccurrence } from './billData.js'
+import { createPayInFourSchedule, getDebtInstallmentProgress, getDebtScheduledPayments, validatePaymentSchedule } from './debtSchedule.js'
 import {
   DEBT_STORAGE_KEY,
+  addDebtAssignee,
   applyPrincipalOnlyToReviewPayments,
   calculateDebtDueDate,
   calculateOverallDebtSummary,
   createDebtPayment,
   debtPaymentNeedsBalanceReview,
+  deleteDebtAssignee,
   getDebtPaymentCalculationMethod,
   getDebtPrincipalPaid,
   getDebtProgress,
+  getAvailableCredit,
+  getDebtAssignee,
   getDebtRemainingPercent,
   getDebtScheduleStatus,
   loadDebts,
+  loadDebtData,
   recordDebtPaymentFromTransaction,
   reconcileDebtPaymentForTransaction,
   removeDebtPaymentForTransaction,
   reverseDebtPayment,
+  renameDebtAssignee,
   saveDebts,
+  synchronizeDebtBills,
   getNextDebtPaymentDue,
   validateDebt
 } from './debtData.js'
+
+function installmentDebt(changes = {}) {
+  return {
+    id: 7, name: 'The Home Depot', type: 'Other', startingBalance: 1780.64, currentBalance: 296.74,
+    minimumPayment: null, interestRate: 24.99, accountId: 1, nextPaymentDue: '2026-11-16', paymentHistory: [],
+    paymentSchedule: {
+      kind: 'custom', frequency: 'biweekly', startDate: '2026-11-16',
+      completedInstallments: 5, totalInstallments: 6, remainingTotal: 296.74
+    },
+    ...changes
+  }
+}
+
+test('four automatic biweekly payments total the exact balance and progress once per payment through completion', () => {
+  const storage = createStorage()
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 2000 }], [], storage)
+  const debt = installmentDebt({ currentBalance: 100.03, interestRate: 0, paymentSchedule: createPayInFourSchedule('100.03', '2026-11-16') })
+  const slots = getDebtScheduledPayments(debt)
+  assert.deepEqual(slots.map(item => [item.dueDate, item.amount]), [
+    ['2026-11-16', 25], ['2026-11-30', 25], ['2026-12-14', 25], ['2026-12-28', 25.03]
+  ])
+  assert.equal(slots.reduce((sum, item) => sum + Math.round(item.amount * 100), 0), 10003)
+  saveDebts([debt], storage)
+  for (let index = 0; index < slots.length; index += 1) {
+    let { debts, bills } = synchronizeDebtBills(storage)
+    const status = getDebtScheduleStatus(debts[0], bills, loadSavedAccountData(storage).transactions, '2026-11-15')
+    assert.equal(status.nextPaymentAmount, slots[index].amount)
+    assert.equal(status.nextDueDate, slots[index].dueDate)
+    const payment = { total: slots[index].amount, principal: slots[index].amount, accountId: 1, date: slots[index].dueDate }
+    createDebtPayment(7, `automatic:${index}`, payment, storage)
+    createDebtPayment(7, `automatic:${index}`, payment, storage)
+    ;({ debts, bills } = synchronizeDebtBills(storage))
+    const transactions = loadSavedAccountData(storage).transactions
+    assert.equal(transactions.length, index + 1)
+    assert.equal(debts[0].paymentHistory.length, index + 1)
+    assert.equal(getDebtInstallmentProgress(debts[0]).completed, index + 1)
+    assert.equal(getBillOccurrencesInRange(bills, '2026-01-01', '2027-01-01', transactions).length, 4)
+    assert.deepEqual(debts[0].paymentSchedule, debt.paymentSchedule)
+  }
+  const { debts, bills } = synchronizeDebtBills(storage)
+  const finalStatus = getDebtScheduleStatus(debts[0], bills, loadSavedAccountData(storage).transactions)
+  assert.equal(debts[0].currentBalance, 0)
+  assert.equal(finalStatus.nextDueDate, '')
+  assert.equal(finalStatus.nextPaymentAmount, null)
+})
+
+test('simple Pay in 4 setup validates its two inputs and assigns cent remainders only to the last payment', () => {
+  for (const [balance, amounts] of [['99.99', [24.99, 24.99, 24.99, 25.02]], ['0.05', [0.01, 0.01, 0.01, 0.02]], ['1,000,000.01', [250000, 250000, 250000, 250000.01]]]) {
+    const paymentSchedule = createPayInFourSchedule(balance, '2026-12-25')
+    validatePaymentSchedule(paymentSchedule)
+    const payments = getDebtScheduledPayments({ paymentSchedule })
+    assert.deepEqual(payments.map(item => item.amount), amounts)
+    assert.deepEqual(payments.map(item => item.dueDate), ['2026-12-25', '2027-01-08', '2027-01-22', '2027-02-05'])
+  }
+  for (const balance of ['', '-1', '1.234', '0', '0.03']) {
+    assert.throws(() => createPayInFourSchedule(balance, '2026-11-16'), /Current balance/)
+  }
+  for (const date of ['', '2026-02-30']) {
+    assert.throws(() => createPayInFourSchedule('100', date), /first payment due date/)
+  }
+})
+
+test('installment schedules generate only unpaid baseline installments, record once, and reverse without losing plan data', () => {
+  const storage = createStorage()
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 2000 }], [], storage)
+  saveDebts([installmentDebt()], storage)
+  let { debts, bills } = synchronizeDebtBills(storage)
+  const occurrences = getBillOccurrencesInRange(bills, '2026-01-01', '2027-12-31')
+  assert.equal(occurrences.length, 1)
+  assert.equal(occurrences[0].amount, 296.74)
+  assert.deepEqual(getDebtInstallmentProgress(debts[0]), { completed: 5, total: 6, remaining: 1 })
+  assert.equal(debts[0].paymentHistory.length, 0)
+  const details = { total: 296.74, principal: 296.74, date: '2026-11-15', accountId: 1 }
+  createDebtPayment(7, 'installment:6', details, storage)
+  createDebtPayment(7, 'installment:6', details, storage)
+  ;({ debts, bills } = synchronizeDebtBills(storage))
+  const transactions = loadSavedAccountData(storage).transactions
+  assert.equal(transactions.length, 1)
+  assert.equal(getBillOccurrencesInRange(bills, '2026-01-01', '2027-12-31', transactions).filter(item => !item.paid).length, 0)
+  assert.equal(getDebtScheduleStatus(debts[0], bills, transactions, '2026-11-15').nextDueDate, '')
+  assert.deepEqual(getDebtInstallmentProgress(debts[0]), { completed: 6, total: 6, remaining: 0 })
+  reverseDebtPayment('installment:6', storage)
+  assert.equal(loadDebts(storage)[0].currentBalance, 296.74)
+  assert.equal(getNextDebtPaymentDue(loadDebts(storage)[0]), '2026-11-16')
+  assert.equal(loadDebts(storage)[0].paymentSchedule.completedInstallments, 5)
+})
+
+test('Pay in 4 preserves completed baselines, cent remainders and skipped installments without extending the plan', () => {
+  const storage = createStorage()
+  const debt = installmentDebt({ currentBalance: 75.01, paymentSchedule: {
+    kind: 'pay-in-4', frequency: 'biweekly', startDate: '2026-11-16',
+    completedInstallments: 1, totalInstallments: 4, remainingTotal: 75.01
+  } })
+  const slots = getDebtScheduledPayments(debt)
+  assert.deepEqual(slots.map(item => item.amount), [25, 25, 25.01])
+  assert.deepEqual(slots.map(item => item.dueDate), ['2026-11-16', '2026-11-30', '2026-12-14'])
+  assert.equal(slots.reduce((sum, item) => sum + Math.round(item.amount * 100), 0), 7501)
+  saveDebts([debt], storage)
+  let { debts, bills } = synchronizeDebtBills(storage)
+  bills[0] = updateBillOccurrenceSkip(bills[0], '2026-11-16', true)
+  saveBillData({ bills }, storage)
+  assert.equal(getDebtScheduleStatus(debts[0], bills, [], '2026-11-17').nextDueDate, '2026-11-30')
+  assert.equal(getDebtInstallmentProgress(debts[0]).completed, 1)
+  assert.equal(loadDebts(storage)[0].currentBalance, 75.01)
+  synchronizeDebtBills(storage)
+  bills = loadBillData([], storage).bills
+  assert.equal(getBillOccurrencesInRange(bills, '2026-01-01', '2027-12-31').length, 3)
+  bills[0] = updateScheduleOccurrence(updateBillOccurrenceSkip(bills[0], '2026-11-16', false), '2026-11-16', { dueDate: '2026-11-20' })
+  saveBillData({ bills }, storage)
+  ;({ debts, bills } = synchronizeDebtBills(storage))
+  assert.equal(getDebtScheduleStatus(debts[0], bills, [], '2026-11-17').nextDueDate, '2026-11-20')
+  assert.equal(getBillOccurrencesInRange(bills, '2026-11-20', '2026-11-20')[0].occurrenceId, `bill:${bills[0].id}:2026-11-16`)
+  bills[0] = updateBillOccurrenceSkip(bills[0], '2026-11-30', true)
+  saveBillData({ bills }, storage)
+  debts[0].paymentSchedule.frequency = 'monthly'
+  saveDebts(debts, storage)
+  ;({ bills } = synchronizeDebtBills(storage))
+  const adjusted = getBillOccurrencesInRange(bills, '2026-01-01', '2027-12-31')
+  assert.equal(adjusted.length, 3)
+  assert.equal(adjusted.find(item => item.installmentNumber === 3).skipped, true)
+  assert.equal(adjusted.find(item => item.installmentNumber === 3).scheduledDate, '2026-11-30')
+  bills[0] = updateBillOccurrenceSkip(bills[0], '2026-11-30', false)
+  saveBillData({ bills }, storage)
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 1000 }], [{
+    id: 1, accountId: 1, name: debt.name, amount: -25, date: '2026-11-30',
+    linkedBillOccurrenceId: `bill:${bills[0].id}:2026-11-30`
+  }], storage)
+  recordDebtPaymentFromTransaction(7, 1, {}, storage)
+  const paidAfterRescheduling = loadDebts(storage)[0]
+  assert.equal(paidAfterRescheduling.paymentHistory[0].installmentNumber, 3)
+  assert.equal(getDebtInstallmentProgress(paidAfterRescheduling).completed, 2)
+})
+
+test('monthly anchors survive short months and custom schedules support exact day intervals and adjusted dates', () => {
+  const monthly = installmentDebt({ paymentSchedule: {
+    kind: 'monthly', frequency: 'monthly', startDate: '2028-01-31', dueDay: 31, completedInstallments: 0
+  } })
+  assert.deepEqual(getDebtScheduledPayments(monthly, 3).map(item => item.dueDate), ['2028-01-31', '2028-02-29', '2028-03-31'])
+  const custom = installmentDebt({ paymentSchedule: {
+    kind: 'custom', frequency: 'days', intervalDays: 10, startDate: '2026-12-25',
+    completedInstallments: 0, totalInstallments: 3, remainingTotal: 10,
+    dateAdjustments: [{ scheduledDate: '2027-01-04', dueDate: '2027-01-05' }]
+  } })
+  validatePaymentSchedule(custom.paymentSchedule)
+  assert.deepEqual(getDebtScheduledPayments(custom).map(item => [item.dueDate, item.amount]), [
+    ['2026-12-25', 3.33], ['2027-01-05', 3.33], ['2027-01-14', 3.34]
+  ])
+  for (const changes of [{ completedInstallments: 4 }, { intervalDays: 0 }, { installmentAmount: 8 }, { remainingTotal: 1.234 }]) {
+    assert.throws(() => validatePaymentSchedule({ ...custom.paymentSchedule, ...changes }))
+  }
+})
+
+test('changing installment frequency preserves paid installment identities and never schedules them again', () => {
+  const storage = createStorage()
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 2000 }], [], storage)
+  saveDebts([installmentDebt({ currentBalance: 75.01, paymentSchedule: {
+    kind: 'pay-in-4', frequency: 'biweekly', startDate: '2026-11-16',
+    completedInstallments: 1, totalInstallments: 4, remainingTotal: 75.01
+  } })], storage)
+  synchronizeDebtBills(storage)
+  createDebtPayment(7, 'payment:2', { total: 25, principal: 25, accountId: 1, date: '2026-11-16' }, storage)
+  createDebtPayment(7, 'payment:3', { total: 25, principal: 25, accountId: 1, date: '2026-11-30' }, storage)
+  const debt = loadDebts(storage)[0]
+  const history = structuredClone(debt.paymentHistory)
+  debt.paymentSchedule.frequency = 'monthly'
+  saveDebts([debt], storage)
+  const { debts, bills } = synchronizeDebtBills(storage)
+  const transactions = loadSavedAccountData(storage).transactions
+  const upcoming = getBillOccurrencesInRange(bills, '2026-01-01', '2027-12-31', transactions).filter(item => !item.paid && !item.skipped)
+  assert.equal(upcoming.length, 1)
+  assert.equal(upcoming[0].dueDate, '2027-01-16')
+  assert.equal(upcoming[0].amount, 25.01)
+  assert.deepEqual(getDebtInstallmentProgress(debts[0]), { completed: 3, total: 4, remaining: 1 })
+  assert.equal(getNextDebtPaymentDue(debts[0]), '2027-01-16')
+  assert.deepEqual(debts[0].paymentHistory, history)
+})
 
 function createStorage() {
   const values = new Map()
@@ -55,6 +240,140 @@ function seed(storage) {
     paymentHistory: []
   }], storage)
 }
+
+test('credit limits calculate available credit independently of historical payoff balances', () => {
+  const debt = { type: 'Credit Card', startingBalance: 2000, currentBalance: 1500.25, creditLimit: 5000 }
+  const before = structuredClone(debt)
+  assert.equal(getAvailableCredit(debt), 3499.75)
+  assert.equal(getDebtProgress(debt), 24.9875)
+  assert.equal(calculateOverallDebtSummary([debt]).totalStarting, 2000)
+  assert.equal(getAvailableCredit({ ...debt, currentBalance: 5100 }), -100)
+  assert.equal(getAvailableCredit({ ...debt, creditLimit: 0 }), -1500.25)
+  assert.equal(getAvailableCredit({ ...debt, creditLimit: null }), null)
+  assert.equal(getAvailableCredit({ ...debt, creditLimit: undefined }), null)
+  assert.equal(getAvailableCredit({ ...debt, type: 'Auto Loan' }), null)
+  assert.deepEqual(debt, before)
+})
+
+test('legacy debts load and save without migration, name parsing, or inferred credit limits and assignees', () => {
+  const storage = createStorage()
+  seed(storage)
+  const legacy = { ...loadDebts(storage)[0], type: 'Credit Card', name: 'E Visa 0042' }
+  saveDebts([legacy], storage)
+  const original = storage.getItem(DEBT_STORAGE_KEY)
+  const loaded = loadDebts(storage)
+  assert.deepEqual(loaded, [legacy])
+  assert.equal(getDebtAssignee(loaded[0]), undefined)
+  assert.equal(getAvailableCredit(loaded[0]), null)
+  saveDebts(loaded, storage)
+  assert.equal(storage.getItem(DEBT_STORAGE_KEY), original)
+})
+
+test('optional debt metadata preserves leading zeros and validates assignees and credit limits', () => {
+  const storage = createStorage()
+  seed(storage)
+  const base = loadDebts(storage)[0]
+  for (const assignedTo of ['', 'E', 'R', 'Joint', 'Other']) {
+    const debt = validateDebt({ ...base, creditLimit: 10000.25, accountLast4: '0042', assignedTo, customAssignee: 'Household' })
+    saveDebts([debt], storage)
+    assert.deepEqual(loadDebts(storage)[0], debt)
+    assert.equal(getDebtAssignee(debt), assignedTo === 'Other' ? 'Household' : assignedTo)
+  }
+  for (const metadata of [
+    { accountLast4: '123' }, { accountLast4: '12345' }, { accountLast4: '12a4' },
+    { accountLast4: 1234 }, { accountLast4: '1234\n' }, { creditLimit: -1 }, { creditLimit: NaN },
+    { assignedTo: 123 }, { assignedTo: ' ' }, { customAssignee: 123 }
+  ]) {
+    assert.throws(() => validateDebt({ ...base, ...metadata }))
+    assert.throws(() => saveDebts([{ ...base, ...metadata }], storage))
+  }
+})
+
+test('assignees start with editable defaults and adding trims names and rejects duplicates without writing', () => {
+  const storage = createStorage()
+  assert.deepEqual(loadDebtData(storage), { debts: [], assignees: ['E', 'R', 'Joint'] })
+  assert.equal(storage.getItem(DEBT_STORAGE_KEY), null)
+  addDebtAssignee('  Household  ', storage)
+  assert.deepEqual(loadDebtData(storage).assignees, ['E', 'R', 'Joint', 'Household'])
+  const before = storage.getItem(DEBT_STORAGE_KEY)
+  for (const name of ['household', ' HOUSEHOLD ', ' e ', ' ', '']) {
+    assert.throws(() => addDebtAssignee(name, storage), /already exists|Enter an assignee name/)
+    assert.equal(storage.getItem(DEBT_STORAGE_KEY), before)
+  }
+})
+
+test('renaming updates active and archived assignments while preserving every financial field and other storage', () => {
+  const storage = createStorage()
+  seed(storage)
+  const base = loadDebts(storage)[0]
+  const debts = [
+    { ...base, assignedTo: 'E', paymentHistory: [{ id: 'payment', principal: 200, total: 225 }] },
+    { ...base, id: 8, name: 'Archived card', assignedTo: 'E', archived: true },
+    { ...base, id: 9, assignedTo: 'R' },
+    { ...base, id: 10 }
+  ]
+  saveDebts(debts, storage)
+  const accountsBefore = storage.getItem('money-honey-account-data')
+  const original = storage.getItem(DEBT_STORAGE_KEY)
+  assert.throws(() => renameDebtAssignee('E', ' r ', storage), /already exists/)
+  assert.equal(storage.getItem(DEBT_STORAGE_KEY), original)
+  renameDebtAssignee('E', ' Primary ', storage)
+  assert.deepEqual(loadDebtData(storage).assignees, ['Primary', 'R', 'Joint'])
+  assert.deepEqual(loadDebts(storage), debts.map(debt =>
+    debt.assignedTo === 'E' ? { ...debt, assignedTo: 'Primary' } : debt
+  ))
+  assert.equal(storage.getItem('money-honey-account-data'), accountsBefore)
+  saveDebts(loadDebts(storage), storage)
+  assert.deepEqual(loadDebtData(storage).assignees, ['Primary', 'R', 'Joint'])
+})
+
+test('legacy custom assignees become managed options without rewriting records, and deletion only clears assignments', () => {
+  const storage = createStorage()
+  seed(storage)
+  const base = loadDebts(storage)[0]
+  const debts = [
+    { ...base, assignedTo: 'Other', customAssignee: 'Household', paymentHistory: [{ id: 'old', principal: 5 }] },
+    { ...base, id: 8, archived: true, assignedTo: 'Other', customAssignee: 'household' },
+    { ...base, id: 9, assignedTo: 'R' }
+  ]
+  const legacy = JSON.stringify({ version: 1, debts })
+  storage.setItem(DEBT_STORAGE_KEY, legacy)
+  assert.deepEqual(loadDebtData(storage).assignees, ['E', 'R', 'Joint', 'Household'])
+  assert.equal(storage.getItem(DEBT_STORAGE_KEY), legacy)
+  renameDebtAssignee('Household', 'Family', storage)
+  assert.deepEqual(loadDebts(storage), debts.map(debt => {
+    if (debt.assignedTo !== 'Other') return debt
+    const updated = { ...debt, assignedTo: 'Family' }
+    delete updated.customAssignee
+    return updated
+  }))
+  const beforeDelete = loadDebts(storage)
+  deleteDebtAssignee('Family', storage)
+  assert.deepEqual(loadDebts(storage), beforeDelete.map(debt =>
+    debt.assignedTo === 'Family' ? { ...debt, assignedTo: '' } : debt
+  ))
+  for (const name of ['E', 'R', 'Joint']) deleteDebtAssignee(name, storage)
+  assert.deepEqual(loadDebtData(storage).assignees, [])
+  assert.ok(loadDebts(storage).every(debt => !getDebtAssignee(debt)))
+  saveDebts(loadDebts(storage), storage)
+  assert.deepEqual(loadDebtData(storage).assignees, [])
+})
+
+test('assignee changes fail atomically when storage is unavailable', () => {
+  const storage = createStorage()
+  seed(storage)
+  saveDebts([{ ...loadDebts(storage)[0], assignedTo: 'E' }], storage)
+  const before = storage.getItem(DEBT_STORAGE_KEY)
+  const failing = { ...storage, setItem: () => { throw new Error('Storage full') } }
+  for (const update of [
+    () => addDebtAssignee('Household', failing),
+    () => renameDebtAssignee('E', 'Primary', failing),
+    () => deleteDebtAssignee('E', failing)
+  ]) {
+    assert.throws(update, /Storage full/)
+    assert.equal(storage.getItem(DEBT_STORAGE_KEY), before)
+  }
+})
 
 test('monthly due dates preserve the chosen day across short months', () => {
   assert.equal(calculateDebtDueDate('2026-01-31', 0), '2026-01-31')

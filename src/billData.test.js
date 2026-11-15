@@ -13,6 +13,7 @@ import {
   loadBillData,
   getBillOccurrences,
   getBillOccurrencesInRange,
+  groupBillOccurrencesByUrgency,
   loadIncomeSchedules,
   getMonthBillTotals,
   getPaydayBillSummary,
@@ -45,6 +46,58 @@ function bill(overrides = {}) {
 function month(year, monthIndex) {
   return new Date(Date.UTC(year, monthIndex, 1))
 }
+
+test('bill urgency includes today and day 30, sorts dates, and totals only displayed occurrences', () => {
+  const occurrences = [
+    { dueDate: '2027-01-15', amount: 10.11 },
+    { dueDate: '2026-12-16', amount: 20.22 },
+    { dueDate: '2027-01-16', amount: 30.33 },
+    { dueDate: '2026-12-15', amount: 40.44 },
+    { dueDate: '2026-12-01', amount: 50, paid: true },
+    { dueDate: '2026-12-02', amount: 60, skipped: true }
+  ]
+  const before = structuredClone(occurrences)
+  const groups = groupBillOccurrencesByUrgency(occurrences, { today: '2026-12-16' })
+  assert.deepEqual(groups.map(group => group.total), [40.44, 30.33, 30.33])
+  assert.deepEqual(groups[1].visibleOccurrences.map(item => item.dueDate), ['2026-12-16', '2027-01-15'])
+  const completed = groupBillOccurrencesByUrgency(occurrences, { today: '2026-12-16', showCompleted: true })
+  assert.equal(completed[0].total, 150.44)
+  assert.deepEqual(completed[0].visibleOccurrences.map(item => item.dueDate), ['2026-12-01', '2026-12-02', '2026-12-15'])
+  assert.deepEqual(occurrences, before)
+})
+
+test('urgency uses calendar days across leap days and DST, not elapsed local hours', () => {
+  for (const [today, boundary, beyond] of [
+    ['2028-02-01', '2028-03-02', '2028-03-03'],
+    ['2026-03-01', '2026-03-31', '2026-04-01'],
+    ['2026-10-15', '2026-11-14', '2026-11-15']
+  ]) {
+    const groups = groupBillOccurrencesByUrgency([
+      { dueDate: boundary, amount: 1 }, { dueDate: beyond, amount: 2 }
+    ], { today })
+    assert.deepEqual(groups.map(group => group.total), [0, 1, 2])
+  }
+})
+
+test('urgency preserves the finite recurring schedule and counts moved paid or skipped occurrences once', () => {
+  const bills = [bill({
+    dueDate: '2026-01-15',
+    occurrenceOverrides: [{ scheduledDate: '2026-02-15', dueDate: '2026-03-01', amount: 75 }],
+    paymentHistory: [
+      { dueDate: '2026-01-15', paid: true },
+      { dueDate: '2026-03-15', skipped: true }
+    ]
+  })]
+  const occurrences = getBillOccurrencesInRange(bills, '2026-01-01', '2026-12-31')
+  const groups = groupBillOccurrencesByUrgency(occurrences, { today: '2026-03-01' })
+  const displayed = groups.flatMap(group => group.visibleOccurrences)
+  assert.equal(displayed.length, 10)
+  assert.equal(new Set(displayed.map(item => item.occurrenceId)).size, 10)
+  assert.equal(groups[1].total, 75)
+  assert.equal(groups[2].total, 450)
+  const all = groupBillOccurrencesByUrgency(occurrences, { today: '2026-03-01', showCompleted: true })
+  assert.equal(all.flatMap(group => group.visibleOccurrences).length, 12)
+})
 
 test('recurring bills generate the correct weekly, biweekly, monthly, quarterly, and yearly dates', () => {
   const bills = [

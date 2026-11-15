@@ -1,21 +1,31 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ResponsiveText from './ResponsiveText'
+import StatementAutofill from './StatementAutofill'
+import FinancialInput from './FinancialInput'
+import DebtScheduleFields from './DebtScheduleFields'
+import { createPayInFourSchedule, defaultSchedule, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { parseFinancialAmount } from './financialAmounts.js'
+import { DEBT_STATEMENT_FIELDS } from './statementData.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
 import {
   applyPrincipalOnlyToReviewPayments,
+  addDebtAssignee,
   calculateOverallDebtSummary,
   DEBT_PAYMENT_CALCULATION_METHODS,
   createDebtId,
   debtPaymentNeedsBalanceReview,
+  deleteDebtAssignee,
   getDebtPaymentCalculationMethod,
+  getAvailableCredit,
+  getDebtAssignee,
   getMatchingDebtBill,
-  getNextDebtPaymentDue,
   getDebtScheduleStatus,
   getDebtProgress,
   getDebtRemainingPercent,
   getDebtTypes,
-  loadDebts,
+  loadDebtData,
+  renameDebtAssignee,
   saveDebts,
   synchronizeDebtBills,
   validateDebt
@@ -85,29 +95,46 @@ function blankDebt() {
     name: '',
     type: 'Credit Card',
     startingBalance: '',
+    creditLimit: '',
+    accountLast4: '',
+    assignedTo: '',
     currentBalance: '',
     interestRate: '',
     minimumPayment: '',
     nextPaymentDue: '',
     paymentCalculationMethod: DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY,
+    paymentSchedule: defaultSchedule(),
     paymentHistory: []
   }
 }
 
-export default function Debt() {
-  const [debts, setDebts] = useState(() => loadDebts())
+export default function Debt({ statementExtractor } = {}) {
+  const [initialDebtData] = useState(() => loadDebtData())
+  const [debts, setDebts] = useState(initialDebtData.debts)
+  const [assignees, setAssignees] = useState(initialDebtData.assignees)
   const [accountData, setAccountData] = useState(() => loadSavedAccountData())
   const [bills, setBills] = useState(() => loadBillData([]).bills)
   const [showArchived, setShowArchived] = useState(false)
   const [selectedDebtId, setSelectedDebtId] = useState(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
+  const [addMode, setAddMode] = useState(null)
+  const addMenuRef = useRef(null)
+  const [statementReview, setStatementReview] = useState(null)
   const [editingDebtId, setEditingDebtId] = useState(null)
   const [formValues, setFormValues] = useState(blankDebt)
   const [paymentMethodWasSelected, setPaymentMethodWasSelected] = useState(false)
+  const [isNewPayInFour, setIsNewPayInFour] = useState(false)
   const [formError, setFormError] = useState('')
+  const [isAssigneeManagerOpen, setIsAssigneeManagerOpen] = useState(false)
+  const [editingAssignee, setEditingAssignee] = useState(null)
+  const [assigneeName, setAssigneeName] = useState('')
+  const [assigneeError, setAssigneeError] = useState('')
   const visibleDebts = debts.filter(debt => showArchived || !debt.archived)
   const debtSummary = calculateOverallDebtSummary(visibleDebts)
   const editingDebt = debts.find(debt => debt.id === editingDebtId) ?? null
+  const editingDebtBill = editingDebt
+    ? bills.find(bill => bill.id === editingDebt.billId || bill.debtId === editingDebt.id)
+    : null
   const selectedDebt = debts.find(debt => debt.id === selectedDebtId) ?? null
   const selectedDebtBill = selectedDebt
     ? bills.find(bill => bill.id === selectedDebt.billId && bill.debtId === selectedDebt.id)
@@ -127,12 +154,55 @@ export default function Debt() {
     scheduleStatusFor(debt)
   ]))
   const selectedScheduleStatus = selectedDebt ? scheduleStatusFor(selectedDebt) : null
+  const formSchedule = formValues.paymentSchedule
+  let formScheduleStatus
+  let schedulePreviewError = ''
+  try {
+    if (formSchedule) {
+      const paymentSchedule = isNewPayInFour
+        ? createPayInFourSchedule(formValues.currentBalance, formValues.nextPaymentDue)
+        : scheduleFromForm(formSchedule, formValues.nextPaymentDue)
+      validatePaymentSchedule(paymentSchedule)
+      formScheduleStatus = scheduleStatusFor({ ...formValues, paymentSchedule })
+    }
+  } catch (error) {
+    schedulePreviewError = error.message
+  }
   const selectedDueLabel = selectedScheduleStatus?.isDueToday
     ? 'Due Today'
     : displayDate(selectedScheduleStatus?.nextDueDate)
+  let creditPreview = ''
+  if (formValues.creditLimit !== '' && formValues.currentBalance !== '') {
+    try {
+      creditPreview = `Available credit: ${money(parseFinancialAmount(formValues.creditLimit, 'Credit limit') - parseFinancialAmount(formValues.currentBalance, 'Current balance'))}.`
+    } catch (error) { creditPreview = error.message }
+  }
 
   useEffect(() => {
-    const refresh = () => setDebts(loadDebts())
+    if (addMode !== 'menu') return
+    const closeOutside = event => {
+      if (!addMenuRef.current?.contains(event.target)) setAddMode(null)
+    }
+    const closeOnEscape = event => {
+      if (event.key === 'Escape') {
+        setAddMode(null)
+        addMenuRef.current?.querySelector('[aria-expanded]')?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [addMode])
+
+  useEffect(() => {
+    const refresh = () => {
+      const data = loadDebtData()
+      setDebts(data.debts)
+      setAssignees(data.assignees)
+    }
     const refreshAccounts = () => setAccountData(loadSavedAccountData())
     const refreshBills = () => setBills(loadBillData([]).bills)
     window.addEventListener('money-honey-debts-updated', refresh)
@@ -151,27 +221,35 @@ export default function Debt() {
   }, [])
 
   function openNewDebt() {
+    setAddMode(null)
+    setStatementReview(null)
     setSelectedDebtId(null)
     setEditingDebtId(null)
     setFormValues(blankDebt())
     setPaymentMethodWasSelected(false)
+    setIsNewPayInFour(false)
     setFormError('')
     setIsFormOpen(true)
   }
 
   function openEditDebt(debt) {
+    setStatementReview(null)
     setSelectedDebtId(null)
     setEditingDebtId(debt.id)
     setFormValues({
       ...debt,
       startingBalance: String(debt.startingBalance),
+      creditLimit: debt.creditLimit == null ? '' : String(debt.creditLimit),
+      accountLast4: debt.accountLast4 ?? '',
+      assignedTo: getDebtAssignee(debt, assignees) ?? '',
       currentBalance: String(debt.currentBalance),
       interestRate: debt.interestRate == null ? '' : String(debt.interestRate),
       minimumPayment: debt.minimumPayment == null ? '' : String(debt.minimumPayment),
-      nextPaymentDue: getNextDebtPaymentDue(debt),
+      nextPaymentDue: scheduleStatusFor(debt).nextDueDate,
       paymentCalculationMethod: getDebtPaymentCalculationMethod(debt)
     })
     setPaymentMethodWasSelected(true)
+    setIsNewPayInFour(false)
     setFormError('')
     setIsFormOpen(true)
   }
@@ -213,20 +291,99 @@ export default function Debt() {
 
   function saveDebt(event) {
     event.preventDefault()
-    const numeric = value => value === '' ? null : Number(value)
+    const numeric = (value, label) => parseFinancialAmount(value, label, { optional: true })
     try {
+      const values = { ...formValues }
+      delete values.customAssignee
       const debt = validateDebt({
-        ...formValues,
+        ...values,
         id: editingDebtId ?? createDebtId(debts),
-        startingBalance: Number(formValues.startingBalance),
-        currentBalance: Number(formValues.currentBalance),
-        interestRate: numeric(formValues.interestRate),
-        minimumPayment: numeric(formValues.minimumPayment),
+        startingBalance: formValues.type === 'Credit Card' || formSchedule?.kind === 'pay-in-4'
+          ? editingDebt?.startingBalance ?? parseFinancialAmount(formValues.currentBalance, 'Current balance')
+          : parseFinancialAmount(formValues.startingBalance, 'Starting balance'),
+        creditLimit: numeric(formValues.creditLimit, 'Credit limit'),
+        currentBalance: parseFinancialAmount(formValues.currentBalance, 'Current balance'),
+        interestRate: numeric(formValues.interestRate, 'APR'),
+        minimumPayment: numeric(formValues.minimumPayment, 'Minimum payment'),
+        ...(formSchedule ? { paymentSchedule: isNewPayInFour
+          ? createPayInFourSchedule(formValues.currentBalance, formValues.nextPaymentDue)
+          : formSchedule === editingDebt?.paymentSchedule
+            ? formSchedule : scheduleFromForm(formSchedule, formValues.nextPaymentDue) } : {}),
         nextPaymentDue: formValues.nextPaymentDue || null
       })
       persistDebt(debt)
     } catch (error) {
       setFormError(error.message)
+    }
+  }
+
+  function applyStatement(values, current) {
+    const updated = { ...current }
+    const detailKeys = ['purchaseAmount', 'totalRepayment', 'totalInterest', 'amountAlreadyPaid', 'nextPaymentAmount']
+    for (const [key, value] of Object.entries(values)) {
+      if (detailKeys.includes(key)) updated.statementDetails = { ...updated.statementDetails, [key]: parseFinancialAmount(value, key) }
+      else if (!['totalInstallments', 'completedInstallments'].includes(key)) updated[key] = value
+    }
+    if (values.nextPaymentDue && updated.paymentSchedule) {
+      const next = editingDebt ? scheduleStatusFor(editingDebt).nextScheduledDate : null
+      updated.paymentSchedule = next && current.paymentHistory.length
+        ? { ...updated.paymentSchedule, dateAdjustments: [...(updated.paymentSchedule.dateAdjustments ?? []).filter(item => item.scheduledDate !== next), { scheduledDate: next, dueDate: values.nextPaymentDue }] }
+        : { ...updated.paymentSchedule, startDate: values.nextPaymentDue }
+    }
+    if (Object.hasOwn(values, 'interestRate') && !paymentMethodWasSelected) {
+      updated.paymentCalculationMethod = Number(values.interestRate) > 0
+        ? DEBT_PAYMENT_CALCULATION_METHODS.MANUAL_PRINCIPAL : DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
+    }
+    return updated
+  }
+
+  function openAssigneeManager() {
+    setEditingAssignee(null)
+    setAssigneeName('')
+    setAssigneeError('')
+    setIsAssigneeManagerOpen(true)
+  }
+
+  function saveAssignee(event) {
+    event.preventDefault()
+    try {
+      const data = editingAssignee === null
+        ? addDebtAssignee(assigneeName)
+        : renameDebtAssignee(editingAssignee, assigneeName)
+      setDebts(data.debts)
+      setAssignees(data.assignees)
+      if (editingAssignee !== null) {
+        setFormValues(values => ({
+          ...values,
+          assignedTo: values.assignedTo === editingAssignee ? assigneeName.trim() : values.assignedTo
+        }))
+      }
+      setEditingAssignee(null)
+      setAssigneeName('')
+      setAssigneeError('')
+    } catch (error) {
+      setAssigneeError(error.message)
+    }
+  }
+
+  function removeAssignee(name) {
+    try {
+      const current = loadDebtData()
+      const count = current.debts.filter(debt => getDebtAssignee(debt, current.assignees) === name).length
+      if (!window.confirm(
+        `Delete "${name}"? ${count} ${count === 1 ? 'debt' : 'debts'} will be set to Unassigned. No debts, balances, or payment histories will be deleted or otherwise changed.`
+      )) return
+      const data = deleteDebtAssignee(name)
+      setDebts(data.debts)
+      setAssignees(data.assignees)
+      setFormValues(values => ({ ...values, assignedTo: values.assignedTo === name ? '' : values.assignedTo }))
+      if (editingAssignee === name) {
+        setEditingAssignee(null)
+        setAssigneeName('')
+      }
+      setAssigneeError('')
+    } catch (error) {
+      setAssigneeError(error.message)
     }
   }
 
@@ -264,7 +421,7 @@ export default function Debt() {
   }
 
   return (
-    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 8 }}>
+    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: addMode === 'menu' ? 128 : 8 }}>
       <ResponsiveText style={{
         margin: '0 0 14px',
         color: '#B87522',
@@ -352,6 +509,9 @@ export default function Debt() {
                 </strong>
                 <span style={{ display: 'block', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#9B7955', fontSize: 10, lineHeight: 1.3 }}>
                   {debt.type} · {dueLabel}
+                  {debt.accountLast4 ? ` · ••${debt.accountLast4}` : ''}
+                  {getDebtAssignee(debt) ? ` · ${getDebtAssignee(debt)}` : ''}
+                  {getDebtInstallmentProgress(debt) ? ` · ${getDebtInstallmentProgress(debt).completed}/${getDebtInstallmentProgress(debt).total} installments` : ''}
                 </span>
                 {scheduleStatus.isPastDue && (
                   <span style={{ display: 'block', marginTop: 2, color: '#B5473C', fontSize: 10, fontWeight: 700, lineHeight: 1.2 }}>
@@ -365,7 +525,9 @@ export default function Debt() {
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6, color: '#79502A', fontSize: 10, lineHeight: 1.2 }}>
-              <span>Min. payment {debt.minimumPayment == null ? '—' : money(debt.minimumPayment)}</span>
+              <span>{debt.paymentSchedule?.kind === 'pay-in-4'
+                ? `Next payment ${scheduleStatus.nextPaymentAmount == null ? '—' : money(scheduleStatus.nextPaymentAmount)}`
+                : `Min. payment ${debt.minimumPayment == null ? '—' : money(debt.minimumPayment)}`}</span>
               <strong>{getDebtRemainingPercent(debt).toFixed(0)}% left to pay</strong>
             </div>
             <div
@@ -402,26 +564,46 @@ export default function Debt() {
         >{showArchived ? 'Hide Archived' : 'Show Archived'}</button>
       )}
 
-      <button
-        type="button"
-        aria-label="Add debt"
-        onClick={openNewDebt}
-        style={{
-          position: 'fixed',
-          right: 'max(20px, calc((100vw - 460px) / 2))',
-          bottom: 'calc(100px + env(safe-area-inset-bottom))',
-          zIndex: 20,
-          width: 58,
-          height: 58,
-          border: 'none',
-          borderRadius: '50%',
-          background: '#B87522',
-          color: '#FFFFFF',
-          boxShadow: '0 4px 14px #76552255',
-          fontSize: 32,
-          cursor: 'pointer'
-        }}
-      >+</button>
+      <div ref={addMenuRef} className="debt-fab">
+        <button
+          type="button"
+          className="debt-fab-toggle"
+          aria-label={addMode === 'menu' ? 'Close add debt menu' : 'Add debt'}
+          aria-expanded={addMode === 'menu'}
+          aria-controls={addMode === 'menu' ? 'debt-add-actions' : undefined}
+          onClick={() => {
+            setSelectedDebtId(null)
+            setAddMode(mode => mode === 'menu' ? null : 'menu')
+          }}
+        >
+          <svg aria-hidden="true" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        {addMode === 'menu' && <div id="debt-add-actions" role="group" aria-label="Add debt actions" className="debt-fab-actions">
+          <button type="button" className="debt-fab-action" onClick={openNewDebt}>
+            <span className="debt-fab-label">Add Manually</span>
+            <span className="debt-fab-circle">
+              <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m16 3 5 5L8 21H3v-5L16 3ZM13 6l5 5" />
+              </svg>
+            </span>
+          </button>
+          <button type="button" className="debt-fab-action" onClick={() => {
+            setEditingDebtId(null)
+            setPaymentMethodWasSelected(false)
+            setAddMode('scan')
+          }}>
+            <span className="debt-fab-label">Scan / Upload</span>
+            <span className="debt-fab-circle">
+              <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+                <path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11H3V8a1 1 0 0 1 1-1Z" />
+                <circle cx="12" cy="12" r="4" />
+              </svg>
+            </span>
+          </button>
+        </div>}
+      </div>
 
       {selectedDebt && (
         <div style={overlay} onMouseDown={event => {
@@ -462,9 +644,19 @@ export default function Debt() {
             </div>
             <div style={{ ...detailGrid, marginTop: 11 }}>
               {detailValue('Minimum Payment', selectedDebt.minimumPayment == null ? '—' : money(selectedDebt.minimumPayment))}
+              {selectedDebt.paymentSchedule?.kind === 'pay-in-4' && detailValue('Next Scheduled Payment', selectedScheduleStatus.nextPaymentAmount == null ? '—' : money(selectedScheduleStatus.nextPaymentAmount))}
               {detailValue('Next Payment Due', selectedDueLabel)}
               {detailValue('Starting Balance', money(selectedDebt.startingBalance))}
               {detailValue('APR %', selectedDebt.interestRate == null ? '—' : `${selectedDebt.interestRate}%`)}
+              {selectedDebt.type === 'Credit Card' && (
+                <>
+                  {detailValue('Credit Limit', selectedDebt.creditLimit == null ? '—' : money(selectedDebt.creditLimit))}
+                  {detailValue('Available Credit', getAvailableCredit(selectedDebt) == null ? '—' : money(getAvailableCredit(selectedDebt)))}
+                </>
+              )}
+              {selectedDebt.accountLast4 && detailValue('Account Last 4 Digits', `••${selectedDebt.accountLast4}`)}
+              {getDebtInstallmentProgress(selectedDebt) && detailValue('Installments', `${getDebtInstallmentProgress(selectedDebt).completed} of ${getDebtInstallmentProgress(selectedDebt).total} paid`)}
+              {getDebtAssignee(selectedDebt) && detailValue('Assigned To', getDebtAssignee(selectedDebt))}
             </div>
             {selectedScheduleStatus.isPastDue && (
               <div role="status" style={{ marginTop: 8, color: '#B5473C', fontSize: 11, fontWeight: 700 }}>
@@ -567,64 +759,174 @@ export default function Debt() {
         </div>
       )}
 
-      {isFormOpen && (
+      {addMode === 'scan' && (
+        <div style={overlay} onMouseDown={event => { if (event.target === event.currentTarget) setAddMode(null) }}>
+          <section role="dialog" aria-modal="true" aria-label="Scan / Upload Statement" style={dialog}>
+            <h2 style={{ margin: '0 0 10px', color: '#79502A', fontSize: 18 }}>Scan / Upload Statement</h2>
+            <StatementAutofill
+              initialOpen currentValues={{}} fieldStyle={inputStyle} buttonStyle={control} extract={statementExtractor}
+              onManual={openNewDebt} onClose={() => setAddMode(null)}
+              onExtract={result => {
+                const draft = applyStatement(result.values, { ...blankDebt(), type: '' })
+                setFormValues(draft)
+                setStatementReview({
+                  count: DEBT_STATEMENT_FIELDS.filter(field => Object.hasOwn(result.values, field.key)).length,
+                  hasWarnings: Boolean(result.warnings?.length)
+                })
+                setSelectedDebtId(null)
+                setEditingDebtId(null)
+                setIsNewPayInFour(false)
+                setFormError('')
+                setAddMode(null)
+                setIsFormOpen(true)
+              }}
+            />
+          </section>
+        </div>
+      )}
+
+      {isAssigneeManagerOpen && (
+        <div style={overlay} onMouseDown={event => {
+          if (event.target === event.currentTarget) setIsAssigneeManagerOpen(false)
+        }}>
+          <section role="dialog" aria-modal="true" aria-label="Manage Assignees" style={dialog}>
+            <h2 style={{ margin: '0 0 8px', color: '#79502A', fontSize: 18 }}>Manage Assignees</h2>
+            <p style={{ margin: '0 0 10px', color: '#9B7955', fontSize: 11 }}>
+              Changes save immediately. Renaming updates assigned debts, including archived debts.
+            </p>
+            <form onSubmit={saveAssignee} style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+              <label style={formLabel}>{editingAssignee === null ? 'New Assignee' : 'Rename Assignee'}
+                <input aria-label={editingAssignee === null ? 'New assignee name' : 'Assignee name'} value={assigneeName} onChange={event => setAssigneeName(event.target.value)} style={inputStyle} required />
+              </label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="submit" style={control}>{editingAssignee === null ? 'Add Assignee' : 'Save Assignee'}</button>
+                {editingAssignee !== null && (
+                  <button type="button" onClick={() => { setEditingAssignee(null); setAssigneeName(''); setAssigneeError('') }} style={control}>Cancel Rename</button>
+                )}
+              </div>
+            </form>
+            {assigneeError && <p role="alert" style={{ color: '#B5473C', fontSize: 12 }}>{assigneeError}</p>}
+            <div style={{ display: 'grid', gap: 6 }}>
+              {assignees.map(name => (
+                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 0', borderTop: '1px solid #E9D6B7' }}>
+                  <strong style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: '#79502A', fontSize: 12 }}>{name}</strong>
+                  <button type="button" aria-label={`Rename assignee ${name}`} onClick={() => { setEditingAssignee(name); setAssigneeName(name); setAssigneeError('') }} style={{ ...control, padding: '6px 8px', fontSize: 11 }}>Rename</button>
+                  <button type="button" aria-label={`Delete assignee ${name}`} onClick={() => removeAssignee(name)} style={{ ...control, padding: '6px 8px', fontSize: 11 }}>Delete</button>
+                </div>
+              ))}
+              {assignees.length === 0 && <p style={{ color: '#9B7955', fontSize: 12 }}>No assignees. Debts can remain Unassigned.</p>}
+            </div>
+            <button type="button" onClick={() => setIsAssigneeManagerOpen(false)} style={{ ...control, width: '100%', marginTop: 12 }}>Done</button>
+          </section>
+        </div>
+      )}
+
+      {isFormOpen && !isAssigneeManagerOpen && (
         <div style={overlay} onMouseDown={event => {
           if (event.target === event.currentTarget) setIsFormOpen(false)
         }}>
           <section role="dialog" aria-modal="true" aria-label={editingDebtId === null ? 'Add debt form' : 'Edit debt form'} style={dialog}>
             <h2 style={{ margin: '0 0 12px', color: '#79502A' }}>{editingDebtId === null ? 'Add Debt' : 'Edit Debt'}</h2>
             <form onSubmit={saveDebt} style={{ display: 'grid', gap: 10 }}>
+              {statementReview && <div role="status" style={{ fontSize: 11, color: '#79502A' }}>
+                {statementReview.count
+                  ? `We filled in ${statementReview.count} ${statementReview.count === 1 ? 'field' : 'fields'}. Review and complete the rest.`
+                  : 'We read text, but could not match any debt fields. You can enter them manually.'}
+                {statementReview.hasWarnings && <p style={{ margin: '4px 0 0' }}>Some statement totals differ. Check the provider's figures before saving.</p>}
+              </div>}
+              {editingDebt && <StatementAutofill
+                currentValues={formValues}
+                fieldStyle={inputStyle}
+                buttonStyle={control}
+                extract={statementExtractor}
+                onApply={values => setFormValues(current => applyStatement(values, current))}
+              />}
               <label style={formLabel}>Debt Name
                 <input aria-label="Debt name" placeholder="e.g. Auto loan" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
               </label>
               <label style={formLabel}>Debt Type
-                <select aria-label="Debt type" value={formValues.type} onChange={event => setFormValues({ ...formValues, type: event.target.value })} style={inputStyle}>
+                <select aria-label="Debt type" value={formValues.type} onChange={event => setFormValues({ ...formValues, type: event.target.value })} style={inputStyle} required>
+                  {!formValues.type && <option value="">Choose debt type</option>}
                   {getDebtTypes().map(type => <option key={type}>{type}</option>)}
                 </select>
               </label>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label style={formLabel}>Account Last 4 Digits
+                  <input aria-label="Account Last 4 Digits" type="text" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" placeholder="Optional" value={formValues.accountLast4} onChange={event => setFormValues({ ...formValues, accountLast4: event.target.value })} style={inputStyle} />
+                </label>
+                <div style={{ display: 'grid', gap: 2 }}>
+                  <label style={formLabel}>Assigned To
+                    <select aria-label="Assigned To" value={formValues.assignedTo} onChange={event => setFormValues({ ...formValues, assignedTo: event.target.value })} style={inputStyle}>
+                      <option value="">Unassigned</option>
+                      {assignees.map(assignee => <option key={assignee}>{assignee}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" onClick={openAssigneeManager} style={{ ...control, justifySelf: 'start', padding: '2px 0', border: 'none', background: 'transparent', fontSize: 11 }}>Manage Assignees</button>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                 {[
-                  ['Starting Balance', 'startingBalance', 'Starting balance · original amount borrowed or owed'],
+                  ...(formValues.type === 'Credit Card'
+                    ? [['Credit Limit', 'creditLimit', 'Credit Limit']]
+                    : !formValues.type || formSchedule?.kind === 'pay-in-4' ? [] : [['Starting Balance', 'startingBalance', 'Starting balance · original amount borrowed or owed']]),
                   ['Current Balance', 'currentBalance', 'Current balance · amount still owed']
                 ].map(([label, key, ariaLabel]) => (
                   <label key={key} style={formLabel}>{label}
-                    <input
+                    <FinancialInput
                       aria-label={ariaLabel}
-                      type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       placeholder="$0.00"
                       value={formValues[key]}
-                      onChange={event => setFormValues({ ...formValues, [key]: event.target.value })}
+                      onChange={event => setFormValues({
+                        ...formValues, [key]: event.target.value,
+                        ...(key === 'currentBalance' && !isNewPayInFour && formSchedule?.kind === 'pay-in-4'
+                          && formSchedule.frequency === 'biweekly' && formSchedule.completedInstallments === 0
+                          && formSchedule.installmentAmount == null && !formValues.paymentHistory.length
+                          && !editingDebtBill?.paymentHistory?.length
+                          ? { paymentSchedule: { ...formSchedule, remainingTotal: event.target.value } } : {})
+                      })}
                       style={inputStyle}
-                      required
+                      required={key !== 'creditLimit'}
                     />
                   </label>
                 ))}
               </div>
+              {formValues.type === 'Credit Card' && (
+                <p style={{ margin: 0, color: '#9B7955', fontSize: 11 }}>
+                  {creditPreview && <>{creditPreview} </>}
+                  {editingDebt
+                    ? `Historical starting balance ${money(editingDebt.startingBalance)} is preserved for payoff tracking.`
+                    : 'Payoff tracking starts with the current balance, not the credit limit.'}
+                </p>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                 {[
                   ['APR %', 'interestRate', 'Interest rate · annual percentage (optional)', '%'],
                   ['Min. Payment', 'minimumPayment', 'Minimum payment · amount due each cycle (optional)', '$0.00']
                 ].map(([label, key, ariaLabel, placeholder]) => (
                   <label key={key} style={formLabel}>{label}
-                    <input
+                    <FinancialInput
                       aria-label={ariaLabel}
-                      type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       placeholder={placeholder}
                       value={formValues[key]}
                       onChange={event => {
                         const value = event.target.value
+                        let method
+                        if (key === 'interestRate' && !paymentMethodWasSelected) {
+                          try {
+                            method = parseFinancialAmount(value, 'APR', { optional: true }) > 0
+                              ? DEBT_PAYMENT_CALCULATION_METHODS.MANUAL_PRINCIPAL : DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
+                          } catch { method = formValues.paymentCalculationMethod }
+                        }
                         setFormValues({
                           ...formValues,
                           [key]: value,
-                          ...(key === 'interestRate' && !paymentMethodWasSelected ? {
-                            paymentCalculationMethod: value !== '' && Number(value) > 0
-                              ? DEBT_PAYMENT_CALCULATION_METHODS.MANUAL_PRINCIPAL
-                              : DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
-                          } : {})
+                          ...(method ? { paymentCalculationMethod: method } : {})
                         })
                       }}
                       style={inputStyle}
@@ -632,12 +934,41 @@ export default function Debt() {
                   </label>
                 ))}
               </div>
-              <label style={formLabel}>Next Payment Due
+              <DebtScheduleFields value={formSchedule} nextDate={formValues.nextPaymentDue}
+                nextPayment={formScheduleStatus} error={schedulePreviewError}
+                onChange={paymentSchedule => {
+                  if (editingDebt?.paymentSchedule?.totalInstallments != null
+                    && (editingDebt.paymentHistory.length || editingDebtBill?.paymentHistory?.length)) {
+                    setFormError('This saved installment schedule has payment or skip history and is kept to protect its links. You can still edit the debt details and next payment due date.')
+                    return
+                  }
+                  setFormError('')
+                  setIsNewPayInFour(paymentSchedule.kind === 'pay-in-4')
+                  setFormValues({ ...formValues, paymentSchedule })
+                }}
+                fieldStyle={inputStyle} labelStyle={formLabel} />
+              <label style={formLabel}>{isNewPayInFour ? 'First Payment Due Date' : 'Next Payment Due'}
                 <input
-                  aria-label="Next Payment Due"
+                  aria-label={isNewPayInFour ? 'First Payment Due Date' : 'Next Payment Due'}
                   type="date"
                   value={formValues.nextPaymentDue}
-                  onChange={event => setFormValues({ ...formValues, nextPaymentDue: event.target.value })}
+                  required={isNewPayInFour}
+                  onChange={event => {
+                    let next
+                    try {
+                      if (!isNewPayInFour && editingDebt && formValues.paymentHistory.length && formSchedule) {
+                        const paymentSchedule = scheduleFromForm(formSchedule, formValues.nextPaymentDue)
+                        validatePaymentSchedule(paymentSchedule)
+                        next = getDebtScheduleStatus({ ...formValues, paymentSchedule }, bills, accountData?.transactions ?? []).nextScheduledDate
+                      }
+                    } catch (error) { setFormError(error.message); return }
+                    setFormValues({ ...formValues, nextPaymentDue: event.target.value,
+                      ...(formValues.paymentSchedule ? { paymentSchedule: next && formValues.paymentHistory.length ? {
+                        ...formValues.paymentSchedule,
+                        dateAdjustments: [...(formValues.paymentSchedule.dateAdjustments ?? []).filter(item => item.scheduledDate !== next), { scheduledDate: next, dueDate: event.target.value }]
+                      } : { ...formValues.paymentSchedule, startDate: event.target.value } } : {})
+                    })
+                  }}
                   style={inputStyle}
                 />
               </label>

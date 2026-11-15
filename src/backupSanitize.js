@@ -15,7 +15,7 @@ import {
   loadBudgetSettings
 } from './budgetData.js'
 import { CATEGORY_STORAGE_KEY, CATEGORY_STORAGE_VERSION, loadCategoryConfig } from './categoryData.js'
-import { DEBT_STORAGE_KEY, DEBT_STORAGE_VERSION } from './debtData.js'
+import { DEBT_STORAGE_KEY, DEBT_STORAGE_VERSION, validateDebtAssignees, validateDebtMetadata } from './debtData.js'
 import { APPEARANCE_SIZES, APPEARANCE_SIZE_STORAGE_KEY } from './appearanceData.js'
 import { PAYEE_STORAGE_KEY, loadPayees } from './payeeData.js'
 import { CUSTOM_THEME_STORAGE_KEY, THEME_STORAGE_KEY } from './themeData.js'
@@ -239,7 +239,19 @@ export const SANITIZERS = {
       currentBalance: is.num,
       paymentHistory: is.objects
     })
-    return JSON.stringify({ version: DEBT_STORAGE_VERSION, debts })
+    for (const debt of debts) {
+      try {
+        validateDebtMetadata(debt)
+      } catch (error) {
+        fail(`Debts: ${error.message}`)
+      }
+    }
+    if (data.assignees !== undefined) validateDebtAssignees(data.assignees, debts)
+    return JSON.stringify({
+      version: DEBT_STORAGE_VERSION,
+      debts,
+      ...(data.assignees === undefined ? {} : { assignees: cleanJson(data.assignees, 'Debt assignees') })
+    })
   },
   [BUDGET_STORAGE_KEY]: sanitizeBudgets,
   [MANUAL_BUDGET_STORAGE_KEY]: sanitizeBudgets,

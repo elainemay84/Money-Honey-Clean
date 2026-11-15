@@ -1,0 +1,235 @@
+import { parseDebtStatement } from './statementData.js'
+import { createLocalStatementReader, StatementScanError } from './statementReader.js'
+export { StatementScanError } from './statementReader.js'
+
+export const MAX_STATEMENT_BYTES = 15 * 1024 * 1024
+export const MAX_STATEMENT_PAGES = 5
+const MAX_PIXELS = 4_000_000
+const MAX_SCAN_MS = 120_000
+
+export function getStatementFileKind(file) {
+  if (!file || file.size === 0) throw new StatementScanError('Choose a non-empty image or PDF statement.')
+  if (file.size > MAX_STATEMENT_BYTES) throw new StatementScanError('This statement is too large. Choose a file under 15 MB.')
+  const extension = file.name?.split('.').at(-1)?.toLowerCase()
+  const genericType = !file.type || file.type === 'application/octet-stream'
+  if (file.type === 'application/pdf' || (genericType && extension === 'pdf')) return 'pdf'
+  if (/^image\/(?:jpeg|png|webp|heic|heif|avif|bmp|tiff)$/.test(file.type)
+    || (genericType && ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif', 'bmp', 'tif', 'tiff'].includes(extension))) return 'image'
+  throw new StatementScanError('Unsupported file. Choose a JPEG, PNG, another supported photo, or a PDF.')
+}
+
+function abortError() {
+  return new DOMException('Statement reading cancelled.', 'AbortError')
+}
+
+function abortable(promise, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? abortError())
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    promise.then(value => {
+      signal.removeEventListener('abort', abort)
+      if (signal.aborted) {
+        reject(signal.reason ?? abortError())
+      } else resolve(value)
+    }, error => {
+      signal.removeEventListener('abort', abort)
+      reject(error)
+    })
+  })
+}
+
+export function getPdfTextLines(items) {
+  const rows = []
+  for (const item of items) {
+    if (typeof item.str !== 'string' || !item.str.trim()) continue
+    const y = item.transform[5]
+    let row = rows.find(candidate => Math.abs(candidate.y - y) < 3)
+    if (!row) {
+      row = { y, items: [] }
+      rows.push(row)
+    }
+    row.items.push(item)
+  }
+  const sorted = rows.sort((a, b) => b.y - a.y)
+  for (const row of sorted) row.items.sort((a, b) => a.transform[4] - b.transform[4])
+  return sorted.flatMap((row, index) => {
+    const text = row.items.map(item => item.str).join(' ')
+    const next = sorted[index + 1]
+    // Do not pair a label with the next row's value from a different column.
+    return next && Math.abs(next.items[0].transform[4] - row.items[0].transform[4]) > 36
+      ? [text, ''] : [text]
+  })
+}
+
+async function imageCanvas(file, signal) {
+  const url = URL.createObjectURL(file)
+  const image = new Image()
+  let canvas
+  try {
+    image.src = url
+    await abortable(image.decode(), signal)
+    if (!image.naturalWidth || !image.naturalHeight) throw new Error('Empty image')
+    const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (image.naturalWidth * image.naturalHeight)))
+    canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas unavailable')
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    return canvas
+  } catch {
+    if (canvas) canvas.width = canvas.height = 0
+    if (signal.aborted) throw signal.reason
+    throw new StatementScanError('This photo cannot be decoded. Try a clear JPEG or PNG; HEIC support depends on your iPhone/browser.')
+  } finally {
+    image.src = ''
+    URL.revokeObjectURL(url)
+  }
+}
+
+export async function extractDebtStatement(file, { signal: externalSignal, onProgress = () => {} } = {}) {
+  const kind = getStatementFileKind(file)
+  const controller = new AbortController()
+  const { signal } = controller
+  const cancel = () => controller.abort(externalSignal.reason ?? abortError())
+  externalSignal?.addEventListener('abort', cancel, { once: true })
+  if (externalSignal?.aborted) cancel()
+  const timeout = setTimeout(() => controller.abort(new StatementScanError(
+    'Reading took too long. Try one clear page or a smaller file.'
+  )), MAX_SCAN_MS)
+  let ocrReader
+  let loadingTask
+  let pdfPort
+  let pdfWorker
+  let pdfInitializationTimer
+  const stopPdf = () => {
+    pdfPort?.terminate()
+    pdfWorker?.destroy()
+  }
+  const assets = new URL(`${import.meta.env.BASE_URL}statement-assets/`, location.href).href
+  async function recognize(canvas) {
+    onProgress('Preparing image for the on-device reader...')
+    const blob = await abortable(new Promise((resolve, reject) => canvas.toBlob(
+      value => value ? resolve(value) : reject(new StatementScanError('This image could not be prepared for reading. Try a smaller JPEG or PNG.')),
+      'image/png'
+    )), signal)
+    const image = await abortable(blob.arrayBuffer(), signal)
+    ocrReader ??= createLocalStatementReader({ assets, signal, onProgress })
+    onProgress('Starting the on-device reader (up to 35 seconds)...')
+    return ocrReader.recognize(image)
+  }
+  try {
+    let lines = []
+    if (kind === 'image') {
+      const canvas = await imageCanvas(file, signal)
+      try {
+        lines = await recognize(canvas)
+      } finally {
+        canvas.width = canvas.height = 0
+      }
+    } else {
+      onProgress('Reading PDF on your device...')
+      const pdf = await abortable(import('pdfjs-dist/build/pdf.mjs'), signal)
+      const { default: workerUrl } = await abortable(import('pdfjs-dist/build/pdf.worker.min.mjs?url'), signal)
+      pdfPort = new Worker(workerUrl, { type: 'module' })
+      pdfPort.onerror = event => {
+        event.preventDefault()
+        controller.abort(new StatementScanError('The local PDF reader could not start. Retry with a connection, use an updated browser, or enter manually.'))
+      }
+      pdfWorker = new pdf.PDFWorker({ port: pdfPort })
+      signal.addEventListener('abort', stopPdf, { once: true })
+      if (signal.aborted) stopPdf()
+      pdfInitializationTimer = setTimeout(() => controller.abort(new StatementScanError(
+        'The local PDF reader did not open this document within 35 seconds. Try a smaller, unlocked text PDF or enter manually.'
+      )), 35_000)
+      loadingTask = pdf.getDocument({
+        worker: pdfWorker,
+        data: new Uint8Array(await abortable(file.arrayBuffer(), signal)),
+        cMapUrl: `${assets}pdf/cmaps/`,
+        cMapPacked: true,
+        standardFontDataUrl: `${assets}pdf/standard_fonts/`,
+        wasmUrl: `${assets}pdf/wasm/`,
+        iccUrl: `${assets}pdf/iccs/`,
+        isEvalSupported: false,
+        enableXfa: false,
+        useSystemFonts: true
+      })
+      const document = await abortable(loadingTask.promise, signal)
+      clearTimeout(pdfInitializationTimer)
+      if (document.numPages > MAX_STATEMENT_PAGES) {
+        throw new StatementScanError('This PDF has more than 5 pages. Export just the statement summary pages and try again.')
+      }
+      for (let index = 1; index <= document.numPages; index += 1) {
+        onProgress(`Reading PDF page ${index} of ${document.numPages}...`)
+        const page = await abortable(document.getPage(index), signal)
+        try {
+          const text = await abortable(page.getTextContent(), signal)
+          let pageLines = getPdfTextLines(text.items)
+          if (!Object.keys(parseDebtStatement(pageLines).values).some(key => key !== 'name' && key !== 'type')) {
+            const viewport = page.getViewport({ scale: 2 })
+            const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (viewport.width * viewport.height)))
+            const bounded = page.getViewport({ scale: 2 * scale })
+            const canvas = window.document.createElement('canvas')
+            canvas.width = Math.ceil(bounded.width)
+            canvas.height = Math.ceil(bounded.height)
+            const render = page.render({ canvasContext: canvas.getContext('2d'), canvas, viewport: bounded })
+            const cancelRender = () => render.cancel()
+            signal.addEventListener('abort', cancelRender, { once: true })
+            try {
+              await abortable(render.promise, signal)
+              pageLines = await recognize(canvas)
+            } finally {
+              signal.removeEventListener('abort', cancelRender)
+              canvas.width = canvas.height = 0
+            }
+          }
+          lines.push(...pageLines, '')
+        } finally {
+          page.cleanup()
+        }
+      }
+    }
+    onProgress('Matching statement fields on your device...')
+    const result = parseDebtStatement(lines)
+    const hasText = lines.some(line => line.trim())
+    lines = []
+    if (!Object.keys(result.values).length) {
+      throw new StatementScanError(hasText
+        ? 'We read text, but could not identify debt fields. Try the summary page or enter them manually.'
+        : 'We could not read clear text. Try a sharper image or enter the debt manually.')
+    }
+    return result
+  } catch (error) {
+    if (signal.aborted) throw signal.reason
+    if (error instanceof StatementScanError) throw error
+    if (error?.name === 'PasswordException') throw new StatementScanError('This PDF is password-protected. Choose an unlocked copy; Money Honey does not ask for statement passwords.')
+    if (error?.name === 'InvalidPDFException') throw new StatementScanError('This PDF is damaged or unreadable. Export a fresh copy or use a clear photo.')
+    throw new StatementScanError('The statement could not be read. Check your connection to load the on-device reader, or try a clear JPEG, PNG, or PDF. No document was uploaded.')
+  } finally {
+    clearTimeout(timeout)
+    clearTimeout(pdfInitializationTimer)
+    externalSignal?.removeEventListener('abort', cancel)
+    ocrReader?.terminate()
+    let cleanupTimer
+    try {
+      if (loadingTask) await Promise.race([
+        loadingTask.destroy(),
+        new Promise(resolve => {
+          cleanupTimer = setTimeout(() => {
+            console.warn('Statement PDF cleanup timed out; terminating its worker.')
+            resolve()
+          }, 1000)
+        })
+      ])
+    } catch {
+      console.warn('Statement PDF cleanup failed; terminating its worker.')
+    } finally {
+      clearTimeout(cleanupTimer)
+      signal.removeEventListener('abort', stopPdf)
+      stopPdf()
+    }
+  }
+}

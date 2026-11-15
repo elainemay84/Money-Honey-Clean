@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import FinancialInput from './FinancialInput'
+import { parseFinancialAmount } from './financialAmounts.js'
 import ResponsiveText from './ResponsiveText'
 import {
   createIncomeId,
   createBillId,
   createDemoBills,
   formatLocalDate,
+  groupBillOccurrencesByUrgency,
   getBillOccurrencesInRange,
   getIncomeOccurrences,
   getIncomeOccurrencesInRange,
@@ -34,7 +37,6 @@ import {
   saveDebts
 } from './debtData.js'
 
-const today = formatLocalDate(new Date())
 const frequencies = ['one-time', 'weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'yearly']
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
@@ -124,6 +126,7 @@ const smallAction = {
 }
 
 export default function Bills() {
+  const [today, setToday] = useState(() => formatLocalDate(new Date()))
   const [initialData] = useState(() => loadBillData(createDemoBills()))
   const [bills, setBills] = useState(initialData.bills)
   const [incomes, setIncomes] = useState(initialData.incomes)
@@ -132,7 +135,7 @@ export default function Bills() {
   const accountOptions = accountData?.accounts.filter(account => !account.archived) ?? []
   const accountTransactions = accountData?.transactions ?? []
   const [flow, setFlow] = useState('out')
-  const [currentMonth] = useState(() => monthStart(new Date()))
+  const currentMonth = new Date(`${today.slice(0, 7)}-01T00:00:00Z`)
   const [selectedMonth, setSelectedMonth] = useState(() => monthStart(new Date()))
   const [view, setView] = useState('list')
   const [showCompleted, setShowCompleted] = useState(false)
@@ -168,7 +171,7 @@ export default function Bills() {
   const listSchedules = flow === 'out' ? bills : incomes
   const earliestScheduleDate = getEarliestScheduleDate(listSchedules)
   const earliestScheduleMonth = earliestScheduleDate
-    ? monthStart(new Date(`${earliestScheduleDate}T00:00:00Z`))
+    ? new Date(`${earliestScheduleDate.slice(0, 7)}-01T00:00:00Z`)
     : currentMonth
   const listStartMonth = earliestScheduleMonth < currentMonth ? earliestScheduleMonth : currentMonth
   const listStartDate = firstDateOfMonth(listStartMonth)
@@ -212,6 +215,9 @@ export default function Bills() {
     )
   const initialScrollMonthKey = listMonths.find(group => group.month >= currentMonth)?.monthKey
     ?? listMonths.at(-1)?.monthKey
+  const listGroups = flow === 'out'
+    ? groupBillOccurrencesByUrgency(listBillOccurrences, { today, showCompleted })
+    : listMonths.map(group => ({ ...group, key: group.monthKey, label: monthLabel(group.month) }))
   const scheduleView = getScheduleViewData(flow, billOccurrences, incomeOccurrences, selectedDay, view)
   const { occurrences: calendarOccurrences, selectedDayOccurrences, calendarDates } = scheduleView
   const inactiveSchedules = (flow === 'in' ? incomes : bills)
@@ -238,6 +244,25 @@ export default function Bills() {
 
   useEffect(() => {
     currentMonthRef.current?.scrollIntoView?.({ block: 'start' })
+  }, [])
+
+  useEffect(() => {
+    let timer
+    const refreshToday = () => {
+      const now = new Date()
+      setToday(formatLocalDate(now))
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(refreshToday, midnight.getTime() - now.getTime() + 100)
+    }
+    refreshToday()
+    window.addEventListener('focus', refreshToday)
+    document.addEventListener('visibilitychange', refreshToday)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('focus', refreshToday)
+      document.removeEventListener('visibilitychange', refreshToday)
+    }
   }, [])
 
   function persistData(nextBills = bills, nextIncomes = incomes) {
@@ -559,8 +584,11 @@ export default function Bills() {
   function saveBill(event) {
     event.preventDefault()
     setFormError('')
-    const numericAmount = Number(amount)
-    if (!name.trim() || !dueDate || !Number.isFinite(numericAmount) || numericAmount <= 0) return
+    let numericAmount
+    try {
+      numericAmount = parseFinancialAmount(amount, 'Amount')
+      if (!name.trim() || !dueDate || numericAmount <= 0) throw new Error('Enter a name, date, and amount greater than zero.')
+    } catch (error) { setFormError(error.message); return }
     if (flow === 'out' && editingScope === 'schedule' && linkedDebtId !== '' && frequency === 'one-time') {
       setFormError('Only recurring bills can be linked to a debt.')
       return
@@ -616,6 +644,9 @@ export default function Bills() {
         dueDate,
         accountId: accountId === '' ? null : Number(accountId),
         notes: notes.trim()
+      }
+      if (editingSchedule?.frequency === 'debt-installments' && numericAmount !== editingOccurrence.amount) {
+        occurrenceChanges.debtAmountOverride = true
       }
       if (flow === 'out') occurrenceChanges.autopay = autopay
       const updatedSchedules = (flow === 'out' ? bills : incomes).map(schedule =>
@@ -990,12 +1021,12 @@ export default function Bills() {
           </>
         ) : (
           <>
-            {listMonths.length ? listMonths.map(group => (
+            {listGroups.length ? listGroups.map(group => (
               <section
-                key={group.monthKey}
+                key={group.key}
                 className="bill-list-month"
-                ref={group.monthKey === initialScrollMonthKey ? currentMonthRef : undefined}
-                aria-label={`${monthLabel(group.month)} ${flow === 'out' ? 'bills' : 'income'}`}
+                ref={flow === 'in' && group.monthKey === initialScrollMonthKey ? currentMonthRef : undefined}
+                aria-label={`${group.label} ${flow === 'out' ? 'bills' : 'income'}`}
                 style={{ boxSizing: 'border-box', minWidth: 0, padding: '0 8px' }}
               >
                 <div style={{
@@ -1010,7 +1041,7 @@ export default function Bills() {
                   background: '#F5D6A5',
                   color: '#79502A'
                 }}>
-                  <h2 style={{ margin: 0, minWidth: 0, fontSize: 13, overflowWrap: 'anywhere' }}>{monthLabel(group.month)}</h2>
+                  <h2 style={{ margin: 0, minWidth: 0, fontSize: 13, overflowWrap: 'anywhere' }}>{group.label}</h2>
                   <strong style={{ minWidth: 0, fontSize: 11, fontVariantNumeric: 'tabular-nums', textAlign: 'right', overflowWrap: 'anywhere' }}>
                     Total scheduled · {money(group.total)}
                   </strong>
@@ -1021,6 +1052,9 @@ export default function Bills() {
                   openOccurrenceForEdit,
                   handleOccurrenceAction
                 ))}
+                {flow === 'out' && group.visibleOccurrences.length === 0 && (
+                  <p style={{ margin: '4px 0 8px', color: '#9B7955', fontSize: 11 }}>No bills.</p>
+                )}
               </section>
             )) : (
               <p style={{ color: '#79502A', fontSize: 13 }}>
@@ -1249,7 +1283,7 @@ export default function Bills() {
                   {[
                     ['occurrence', 'This occurrence'],
                     ['schedule', 'Recurring schedule']
-                  ].map(([scope, label]) => (
+                  ].filter(([scope]) => scope === 'occurrence' || !['debt-installments', 'interval'].includes(editingSchedule?.frequency)).map(([scope, label]) => (
                     <label key={scope} style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1269,8 +1303,9 @@ export default function Bills() {
                   ))}
                 </fieldset>
               )}
+              {['debt-installments', 'interval'].includes(editingSchedule?.frequency) && <p style={{ fontSize: 11, margin: 0 }}>Edit the overall payment schedule in Debt. This form can adjust this occurrence; undo a skip before rescheduling it.</p>}
               <input aria-label={flow === 'out' ? 'Bill name' : 'Income name'} placeholder={flow === 'out' ? 'Bill name' : 'Income name'} value={name} onChange={event => setName(event.target.value)} style={field} required />
-              <input aria-label="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" value={amount} onChange={event => setAmount(event.target.value)} style={field} required />
+              <FinancialInput aria-label="Amount" min="0.01" placeholder="Amount" value={amount} onChange={event => setAmount(event.target.value)} style={field} required />
               <input aria-label={flow === 'out' ? 'Due date' : 'First expected date'} type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} style={field} required />
               {editingScope === 'schedule' && (
                 <label style={{ display: 'grid', gap: 5, color: '#79502A', fontSize: 12 }}>
@@ -1289,6 +1324,7 @@ export default function Bills() {
                       {index === 0 ? 'First day of month' : 'Second day of month'}
                       <input
                         type="number"
+                        inputMode="numeric"
                         aria-label={index === 0 ? 'First day of month' : 'Second day of month'}
                         min="1"
                         max="31"

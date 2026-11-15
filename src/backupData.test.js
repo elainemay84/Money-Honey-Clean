@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ACCOUNT_STORAGE_KEY, saveAccountData } from './accountStorage.js'
+import { ACCOUNT_STORAGE_KEY, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { BILL_STORAGE_KEY, PAY_SCHEDULE_STORAGE_KEY, saveBillData, savePaySchedule } from './billData.js'
 import { BUDGET_MODE_STORAGE_KEY, BUDGET_SETTINGS_STORAGE_KEY, BUDGET_STORAGE_KEY, MANUAL_BUDGET_STORAGE_KEY, SMART_BUDGET_STORAGE_KEY, SMART_DISMISSED_STORAGE_KEY, saveBudgets } from './budgetData.js'
 import { CATEGORY_STORAGE_KEY, saveCategories } from './categoryData.js'
-import { DEBT_STORAGE_KEY } from './debtData.js'
+import {
+  DEBT_STORAGE_KEY, addDebtAssignee, deleteDebtAssignee, loadDebtData,
+  loadDebts, renameDebtAssignee, saveDebts, createDebtPayment, getDebtScheduleStatus, synchronizeDebtBills
+} from './debtData.js'
 import { APPEARANCE_SIZE_STORAGE_KEY } from './appearanceData.js'
 import { PAYEE_STORAGE_KEY, savePayees } from './payeeData.js'
 import {
@@ -112,6 +115,7 @@ function sampleStorage() {
       backgroundStyle: { type: 'gradient', color1: '#fff', color2: '#eee', direction: 'to bottom' },
       colors: { background: '#fff', card: '#eee', accent: '#b87522', text: '#000', glow: '#ff0' }
     }
+
   ]))
   return { storage, values }
 }
@@ -121,6 +125,147 @@ function backupText(mutate) {
   mutate?.(snapshot)
   return JSON.stringify(snapshot)
 }
+
+test('a partially paid automatic Pay in 4 plan restores its exact schedule, links, balances and cleared transactions', () => {
+  const { storage } = sampleStorage()
+  saveDebts([{
+    id: 9, name: 'Four payments', type: 'Other', startingBalance: 100.03, currentBalance: 100.03,
+    interestRate: 0, nextPaymentDue: '2026-11-16', paymentHistory: [],
+    statementDetails: { purchaseAmount: 125, amountAlreadyPaid: 24.97 },
+    paymentSchedule: { kind: 'pay-in-4', frequency: 'biweekly', startDate: '2026-11-16',
+      completedInstallments: 0, totalInstallments: 4, remainingTotal: 100.03 }
+  }], storage)
+  synchronizeDebtBills(storage)
+  createDebtPayment(9, 'first', { total: 25, principal: 25, accountId: 1, date: '2026-11-16' }, storage)
+  const accounts = loadSavedAccountData(storage)
+  accounts.transactions.find(item => item.linkedDebtPaymentId === 'first').cleared = true
+  saveAccountData(accounts.accounts, accounts.transactions, storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+  const before = loadSavedAccountData(target).transactions
+  const { debts, bills } = synchronizeDebtBills(target)
+  const status = getDebtScheduleStatus(debts[0], bills, before, '2026-11-15')
+  assert.equal(status.nextPaymentAmount, 25)
+  assert.equal(status.nextDueDate, '2026-11-30')
+  assert.equal(debts[0].currentBalance, 75.03)
+  createDebtPayment(9, 'first', { total: 25, principal: 25, accountId: 1, date: '2026-11-16' }, target)
+  assert.deepEqual(loadSavedAccountData(target).transactions, before)
+  assert.deepEqual(loadDebts(target), loadDebts(storage))
+})
+
+test('installment schedules and statement reference totals round-trip without rewriting legacy debts or payment histories', () => {
+  const { storage } = sampleStorage()
+  const debts = [
+    { id: 8, name: 'Legacy loan', startingBalance: 1000, currentBalance: 700, assignedTo: 'E', paymentHistory: [{ id: 'legacy', principal: 300, total: 300 }] },
+    { id: 9, name: 'The Home Depot', startingBalance: 1780.64, currentBalance: 296.74, assignedTo: 'Joint', accountLast4: '0012',
+      statementDetails: { purchaseAmount: 1568, totalRepayment: 1780.64, totalInterest: 121.90, amountAlreadyPaid: 1483.90, nextPaymentAmount: 296.74 },
+      paymentSchedule: { kind: 'custom', frequency: 'biweekly', startDate: '2026-11-16', totalInstallments: 6, completedInstallments: 5, remainingTotal: 296.74,
+        dateAdjustments: [{ scheduledDate: '2026-11-16', dueDate: '2026-11-17' }] },
+      paymentHistory: [] }
+  ]
+  saveDebts(debts, storage)
+  const before = storage.getItem(DEBT_STORAGE_KEY)
+  loadDebts(storage)
+  assert.equal(storage.getItem(DEBT_STORAGE_KEY), before)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  assert.deepEqual(loadDebts(target), debts)
+  assert.equal(Object.hasOwn(loadDebts(target)[0], 'paymentSchedule'), false)
+  const invalid = structuredClone(snapshot)
+  const data = JSON.parse(invalid.data[DEBT_STORAGE_KEY])
+  data.debts[1].paymentSchedule.completedInstallments = 7
+  invalid.data[DEBT_STORAGE_KEY] = JSON.stringify(data)
+  assert.throws(() => parseBackup(JSON.stringify(invalid), target), /installments/i)
+  assert.equal(storage.getItem(DEBT_STORAGE_KEY), before)
+})
+
+test('backup restore preserves new debt metadata, historical balances and histories, and legacy records', () => {
+  const { storage } = sampleStorage()
+  const legacy = {
+    id: 1, name: 'E Visa 0042', type: 'Credit Card', startingBalance: 900,
+    currentBalance: 700, paymentHistory: [{ id: 1, total: 200, principal: 200 }]
+  }
+  const enriched = {
+    ...legacy, id: 2, name: 'R Card', creditLimit: 5000.25,
+    accountLast4: '0012', assignedTo: 'Other', customAssignee: 'Household'
+  }
+  saveDebts([legacy, enriched], storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  const { backup } = parseBackup(JSON.stringify(snapshot), target)
+  restoreBackup(backup, target)
+  assert.deepEqual(loadDebts(target), [legacy, enriched])
+  assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+  for (const metadata of [
+    { accountLast4: '12345' }, { accountLast4: 12 }, { creditLimit: -1 },
+    { assignedTo: 123 }, { customAssignee: 123 }
+  ]) {
+    const invalid = structuredClone(snapshot)
+    invalid.data[DEBT_STORAGE_KEY] = JSON.stringify({ version: 1, debts: [{ ...enriched, ...metadata }] })
+    assert.throws(() => parseBackup(JSON.stringify(invalid), target), BackupImportError)
+    assert.deepEqual(loadDebts(target), [legacy, enriched])
+  }
+})
+
+test('backup restore preserves managed assignees, renamed assignments and intentionally deleted defaults', () => {
+  const { storage } = sampleStorage()
+  const debt = {
+    id: 1, name: 'Card', startingBalance: 1000, currentBalance: 800, assignedTo: 'E',
+    paymentHistory: [{ id: 'payment', principal: 200, total: 200 }]
+  }
+  saveDebts([debt], storage)
+  addDebtAssignee('Household', storage)
+  renameDebtAssignee('E', 'Primary', storage)
+  deleteDebtAssignee('R', storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  addDebtAssignee('Replace me', target)
+  const { backup, preview } = parseBackup(JSON.stringify(snapshot), target)
+  assert.equal(preview.items.find(item => item.id === 'debts').backupDetail, '1 debt, 3 assignees')
+  restoreBackup(backup, target)
+  assert.deepEqual(loadDebtData(target), {
+    debts: [{ ...debt, assignedTo: 'Primary' }],
+    assignees: ['Primary', 'Joint', 'Household']
+  })
+  assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+  for (const assignees of [['E', 'e'], [''], 'E', [], ['Joint']]) {
+    const invalid = structuredClone(snapshot)
+    invalid.data[DEBT_STORAGE_KEY] = JSON.stringify({
+      version: 1, debts: [{ ...debt, assignedTo: 'Primary' }], assignees
+    })
+    assert.throws(() => parseBackup(JSON.stringify(invalid), target), BackupImportError)
+    assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+  }
+})
+
+test('older backups recover custom assignee options without changing their debt records', () => {
+  const { storage } = sampleStorage()
+  const debts = [{
+    id: 1, name: 'Card', startingBalance: 1000, currentBalance: 800,
+    assignedTo: 'Other', customAssignee: 'Household', paymentHistory: []
+  }]
+  storage.setItem(DEBT_STORAGE_KEY, JSON.stringify({ version: 1, debts }))
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  assert.deepEqual(loadDebtData(target), { debts, assignees: ['E', 'R', 'Joint', 'Household'] })
+  assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+})
+
+test('restoring an explicitly empty assignee list does not bring back deleted defaults', () => {
+  const { storage } = withStorage()
+  for (const name of ['E', 'R', 'Joint']) deleteDebtAssignee(name, storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  addDebtAssignee('Replace me', target)
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  assert.deepEqual(loadDebtData(target), { debts: [], assignees: [] })
+  saveDebts([], target)
+  assert.deepEqual(loadDebtData(target), { debts: [], assignees: [] })
+})
 
 const existingData = {
   'money-honey-account-data': '{"version":1,"accounts":[{"id":9,"name":"Old"}],"transactions":[]}',
