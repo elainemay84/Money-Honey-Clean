@@ -22,7 +22,8 @@ export default function statementAssets() {
   for (const [name, path] of [
     ['tesseract-LICENSE', 'tesseract.js/LICENSE.md'],
     ['tesseract-core-LICENSE', 'tesseract.js-core/LICENSE'],
-    ['pdfjs-LICENSE', 'pdfjs-dist/LICENSE']
+    ['pdfjs-LICENSE', 'pdfjs-dist/LICENSE'],
+    ['libheif-LICENSE', 'libheif-js/LICENSE']
   ]) add(name, require.resolve(path))
   let base = '/'
   return {

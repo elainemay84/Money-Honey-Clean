@@ -1,5 +1,6 @@
 import { parseDebtStatement } from './statementData.js'
 import { createLocalStatementReader, StatementScanError } from './statementReader.js'
+import { decodeHeicFile, sniffStatementFile } from './statementImageFormat.js'
 export { StatementScanError } from './statementReader.js'
 
 export const MAX_STATEMENT_BYTES = 15 * 1024 * 1024
@@ -16,6 +17,15 @@ export function getStatementFileKind(file) {
   if (/^image\/(?:jpeg|png|webp|heic|heif|avif|bmp|tiff)$/.test(file.type)
     || (genericType && ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif', 'bmp', 'tif', 'tiff'].includes(extension))) return 'image'
   throw new StatementScanError('Unsupported file. Choose a JPEG, PNG, another supported photo, or a PDF.')
+}
+
+// Browsers sometimes report HEIC or PDF files with a blank, generic or wrong MIME type.
+export async function resolveStatementFileKind(file, signature) {
+  if (!file || file.size === 0 || file.size > MAX_STATEMENT_BYTES) return getStatementFileKind(file)
+  const detected = signature === undefined ? await sniffStatementFile(file) : signature
+  if (detected === 'pdf') return 'pdf'
+  if (detected) return 'image'
+  return getStatementFileKind(file)
 }
 
 function abortError() {
@@ -62,7 +72,19 @@ export function getPdfTextLines(items) {
   })
 }
 
-async function imageCanvas(file, signal) {
+function boundedCanvas(width, height) {
+  const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (width * height)))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(width * scale))
+  canvas.height = Math.max(1, Math.round(height * scale))
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Canvas unavailable')
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  return { canvas, context }
+}
+
+async function nativeImageCanvas(file, signal) {
   const url = URL.createObjectURL(file)
   const image = new Image()
   let canvas
@@ -70,28 +92,56 @@ async function imageCanvas(file, signal) {
     image.src = url
     await abortable(image.decode(), signal)
     if (!image.naturalWidth || !image.naturalHeight) throw new Error('Empty image')
-    const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (image.naturalWidth * image.naturalHeight)))
-    canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('Canvas unavailable')
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    const target = boundedCanvas(image.naturalWidth, image.naturalHeight)
+    canvas = target.canvas
+    target.context.drawImage(image, 0, 0, canvas.width, canvas.height)
     return canvas
-  } catch {
+  } catch (error) {
     if (canvas) canvas.width = canvas.height = 0
-    if (signal.aborted) throw signal.reason
-    throw new StatementScanError('This photo cannot be decoded. Try a clear JPEG or PNG; HEIC support depends on your iPhone/browser.')
+    throw error
   } finally {
     image.src = ''
     URL.revokeObjectURL(url)
   }
 }
 
+async function heicCanvas(file, signal) {
+  const { width, height, data } = await decodeHeicFile(file, { signal })
+  const source = document.createElement('canvas')
+  try {
+    source.width = width
+    source.height = height
+    const context = source.getContext('2d')
+    if (!context) throw new Error('Canvas unavailable')
+    context.putImageData(new ImageData(data, width, height), 0, 0)
+    const target = boundedCanvas(width, height)
+    target.context.drawImage(source, 0, 0, target.canvas.width, target.canvas.height)
+    return target.canvas
+  } catch {
+    if (signal.aborted) throw signal.reason
+    throw new StatementScanError('This HEIC photo could not be prepared on this device. Choose a JPEG or PNG copy, or take a screenshot, and try again.')
+  } finally {
+    source.width = source.height = 0
+  }
+}
+
+// Safari decodes HEIC natively; other browsers use the bundled on-device converter.
+async function imageCanvas(file, signal, signature, onProgress) {
+  try {
+    return await nativeImageCanvas(file, signal)
+  } catch {
+    if (signal.aborted) throw signal.reason
+  }
+  if (signature === 'heif') {
+    onProgress('Converting HEIC photo on your device...')
+    return heicCanvas(file, signal)
+  }
+  throw new StatementScanError('This photo cannot be decoded. Try a clear JPEG or PNG, or take a screenshot.')
+}
+
 export async function extractDebtStatement(file, { signal: externalSignal, onProgress = () => {} } = {}) {
-  const kind = getStatementFileKind(file)
+  const signature = file?.size > 0 && file.size <= MAX_STATEMENT_BYTES ? await sniffStatementFile(file) : null
+  const kind = await resolveStatementFileKind(file, signature)
   const controller = new AbortController()
   const { signal } = controller
   const cancel = () => controller.abort(externalSignal.reason ?? abortError())
@@ -124,7 +174,7 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
   try {
     let lines = []
     if (kind === 'image') {
-      const canvas = await imageCanvas(file, signal)
+      const canvas = await imageCanvas(file, signal, signature, onProgress)
       try {
         lines = await recognize(canvas)
       } finally {
