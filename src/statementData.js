@@ -97,7 +97,7 @@ function captionKey(caption) {
 
 // A caption row such as "You've paid  Remaining" followed by an amount row such as "$1,483.90  $296.74".
 function pairColumns(header, amounts) {
-  if (!header || /\$\s*\d/.test(header)) return []
+  if (!header || /\$\s*\d/.test(header) || header.includes(UNREADABLE)) return []
   const captions = header.match(CAPTIONS) ?? []
   const values = amounts?.match(MONEY) ?? []
   const leftover = (amounts ?? '').replace(MONEY, ' ').trim()
@@ -258,28 +258,38 @@ function positionalPairs(header, amounts) {
   })
   for (const match of text.matchAll(CAPTIONS)) {
     const words = header.words.filter((_, index) => offsets[index][0] < match.index + match[0].length && offsets[index][1] > match.index)
-    const centers = words.map(wordCenter)
-    if (!centers.length || centers.some(center => center == null)) return []
-    captions.push({ key: captionKey(match[0]), x: centers.reduce((sum, value) => sum + value, 0) / centers.length })
+    if (!words.length || words.some(word => !word.bbox)) return []
+    const x0 = Math.min(...words.map(word => word.bbox.x0))
+    const x1 = Math.max(...words.map(word => word.bbox.x1))
+    captions.push({ key: captionKey(match[0]), x: (x0 + x1) / 2, x0, x1 })
   }
   const values = amounts.words.filter(word => /^\$\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$/.test(word.text))
-    .map(word => ({ text: word.text, x: wordCenter(word) }))
+    .map(word => ({ text: word.text, x: wordCenter(word), x0: word.bbox?.x0, x1: word.bbox?.x1 }))
   if (!captions.length || !values.length || values.some(value => value.x == null)) return []
   const nearest = (item, list) => list.reduce((best, other) => Math.abs(other.x - item.x) < Math.abs(best.x - item.x) ? other : best)
+  // A caption only describes an amount that sits horizontally beneath it.
+  const overlaps = (caption, value) => value.x0 < caption.x1 && value.x1 > caption.x0
   return captions.flatMap(caption => {
     const value = nearest(caption, values)
-    return nearest(value, captions) === caption ? [`${caption.key === 'currentBalance' ? 'Remaining' : caption.key === 'amountAlreadyPaid' ? 'Already paid' : caption.key === 'totalRepayment' ? 'Total amount' : caption.key === 'purchaseAmount' ? 'Purchase amount' : 'Total interest'} ${value.text}`] : []
+    return nearest(value, captions) === caption && overlaps(caption, value) ? [`${caption.key === 'currentBalance' ? 'Remaining' : caption.key === 'amountAlreadyPaid' ? 'Already paid' : caption.key === 'totalRepayment' ? 'Total amount' : caption.key === 'purchaseAmount' ? 'Purchase amount' : 'Total interest'} ${value.text}`] : []
   })
 }
 
+const UNREADABLE = '[?]'
+const trusted = word => word.confidence >= 80
+  // Progress rings such as "5 of 6" (often read as "50f6") only bound the due-date year, never an amount.
+  || (word.confidence >= 60 && /^\d{1,2}[o0]f\d{1,2}$/i.test(word.text))
+
 // Logos, icons and buttons beside text are read as low-confidence noise; trim them instead of losing the line.
+// Smaller images (for example iPhone photo-picker copies) lower confidence word by word, so an uncertain word
+// becomes a placeholder that no label or amount accepts instead of discarding confident words on the same line.
 function withoutNoise(line) {
   const words = [...(line?.words ?? [])]
-  const edgeNoise = word => word.confidence < 80 && (word.confidence < 40 || !/\d/.test(word.text))
+  const edgeNoise = word => !trusted(word) && (!/\d/.test(word.text) || (word.confidence < 40 && !/\d{2}|[$%]/.test(word.text)))
   while (words.length && edgeNoise(words[0])) words.shift()
   while (words.length && edgeNoise(words.at(-1))) words.pop()
-  const kept = words.filter(word => word.confidence >= 80 || /[\da-z]/i.test(word.text))
-  if (!kept.length || kept.some(word => word.confidence < 80)) return null
+  if (!words.some(word => trusted(word) && /[\da-z]/i.test(word.text))) return null
+  const kept = words.map(word => trusted(word) ? word : { ...word, text: UNREADABLE })
   return { text: kept.map(word => word.text).join(' '), words: kept }
 }
 

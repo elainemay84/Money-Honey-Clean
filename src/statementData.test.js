@@ -245,9 +245,57 @@ test('real Tesseract word output keeps a heading beside a logo, reads 50f6 as 5 
     { text: 'Total interest $121.9O', words: [word('Total', 96), word('interest', 96), word('$121.9O', 60)] },
     { text: 'Remaining $296.74', words: [word('Remaining', 96), word('$296.74', 70)] }
   ] }] }] })
-  assert.deepEqual(noisy, ['', ''])
+  assert.deepEqual(noisy, ['Total interest [?]', 'Remaining [?]'])
+  assert.deepEqual(parseDebtStatement(noisy).values, {})
+  assert.deepEqual(parseDebtStatement([...noisy, '$296.74']).values, {})
   assert.equal(parseDebtStatement(['50f6 payments', '$1,483.90']).values.completedInstallments, '5')
   assert.equal(parseDebtStatement(['50f6 $1,483.90']).values.completedInstallments, undefined)
+})
+
+test('downscaled iPhone photo-picker OCR keeps confident values beside lower-confidence words', () => {
+  const ocr = rows => ({ blocks: [{ paragraphs: [{ lines: rows.map(words => ({
+    text: words.map(([text]) => text).join(' '),
+    words: words.map(([text, confidence, x0, x1]) => ({ text, confidence, bbox: { x0, x1 } }))
+  })) }] }] })
+  // Real Tesseract words from a half-size JPEG, as the iOS picker's "Large" option can provide.
+  const half = ocr([
+    [['3:03', 96, 49, 95], ['5G', 96, 496, 522]],
+    [['Payment', 96, 213, 317], ['plan', 95, 326, 376]],
+    [['[|', 70, 44, 99], ['The', 96, 117, 170], ['Home', 96, 181, 262], ['Depot', 95, 273, 355]],
+    [["You've", 95, 256, 312], ['paid', 95, 319, 354], ['Remaining', 95, 422, 512]],
+    [['50f6', 77, 100, 170], ['$1,483.90', 95, 256, 375], ['$296.74', 88, 421, 517]],
+    [['Paid', 96, 117, 153]],
+    [['$296.74', 96, 49, 129], ['scheduled', 96, 136, 237], ['for', 96, 245, 271], ['Nov', 96, 279, 317], ['16', 96, 325, 348]],
+    [['Purchase', 96, 50, 142], ['date', 96, 150, 192], ['May', 96, 407, 448], ['15,', 96, 456, 484], ['2026', 96, 492, 541]],
+    [['Purchase', 96, 50, 142], ['amount', 96, 150, 224], ['$1,568.00', 96, 442, 541]],
+    [['Total', 96, 48, 94], ['interest', 96, 103, 175], ['$121.90', 96, 311, 391], ['(APR', 95, 399, 451], ['24.99%)', 96, 459, 541]],
+    [['Total', 95, 48, 94], ['amount', 96, 103, 177], ['$1,780.64', 96, 442, 541]]
+  ])
+  const values = parseDebtStatement(getReliableOcrLines(half)).values
+  assert.equal(values.name, 'The Home Depot')
+  assert.equal(values.currentBalance, '296.74')
+  assert.equal(values.amountAlreadyPaid, '1483.9')
+  assert.equal(values.nextPaymentDue, '2026-11-16')
+  assert.equal(values.interestRate, '24.99')
+  assert.equal(values.purchaseAmount, '1568')
+
+  // Smaller images: an uncertain paid amount is masked without shifting Remaining or losing the balance.
+  const third = ocr([
+    [["You've", 77, 256, 312], ['paid', 90, 319, 354], ['Remaining', 92, 422, 512]],
+    [['5', 85, 100, 115], ['of', 85, 120, 140], ['6', 85, 145, 170], ['$1,483.90', 73, 256, 375], ['$296.74', 82, 421, 517]]
+  ])
+  const small = parseDebtStatement(getReliableOcrLines(third)).values
+  assert.equal(small.currentBalance, '296.74')
+  assert.equal(small.amountAlreadyPaid, undefined)
+
+  // A masked amount never lends its column to a neighbour.
+  const masked = ocr([
+    [["You've", 95, 256, 312], ['paid', 95, 319, 354], ['Remaining', 95, 422, 512]],
+    [['$1,483.90', 95, 256, 375], ['$296.74', 60, 421, 517]]
+  ])
+  const guarded = parseDebtStatement(getReliableOcrLines(masked)).values
+  assert.equal(guarded.currentBalance, undefined)
+  assert.notEqual(guarded.amountAlreadyPaid, '296.74')
 })
 
 test('split columns and yearless due dates stay blank when the association is not unambiguous', () => {
