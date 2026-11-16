@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import FinancialInput from './FinancialInput'
 import { parseFinancialAmount } from './financialAmounts.js'
 import ResponsiveText from './ResponsiveText'
+import StatementAutofill from './StatementAutofill'
 import {
   createIncomeId,
   createBillId,
@@ -142,7 +143,7 @@ const smallAction = {
   cursor: 'pointer'
 }
 
-export default function Bills() {
+export default function Bills({ statementExtractor } = {}) {
   const [today, setToday] = useState(() => formatLocalDate(new Date()))
   const [initialData] = useState(() => loadBillData(createDemoBills()))
   const [bills, setBills] = useState(initialData.bills)
@@ -1305,6 +1306,17 @@ export default function Bills() {
               </button>
             </div>
             <form onSubmit={saveBill} style={{ display: 'grid', gap: 10 }}>
+              {flow === 'out' && editingSchedule?.debtId == null && <StatementAutofill mode="bill"
+                currentValues={{ name, amount, dueDate, category }} fieldStyle={field} buttonStyle={smallAction}
+                extract={statementExtractor} onApply={values => {
+                  if (values.name != null) setName(values.name)
+                  if (values.amount != null) setAmount(values.amount)
+                  if (values.dueDate != null) setDueDate(values.dueDate)
+                  if (values.category != null) {
+                    const matched = categoryOptions.find(option => option.toLowerCase() === values.category.toLowerCase())
+                    if (matched) setCategory(matched)
+                  }
+                }} />}
               {editingBillId !== null && editingOccurrence && editingSchedule?.frequency !== 'one-time' && (
                 <fieldset style={{
                   display: 'grid',

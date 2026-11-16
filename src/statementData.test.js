@@ -1,8 +1,54 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getReliableOcrLines, parseDebtStatement, validateStatementSuggestions } from './statementData.js'
+import { getReliableOcrLines, parseBillStatement, parseDebtStatement, validateStatementSuggestions } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
 import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
+
+test('payment plans keep exact unequal amounts, arbitrary counts, and explicit paid statuses', () => {
+  for (const [provider, count] of [['Afterpay', 3], ['Klarna', 4], ['Affirm', 6], ['PayPal Pay Later', 7]]) {
+    const lines = [provider, 'Merchant: Example Store', 'Purchase amount: $240.50', 'Remaining balance: $180.50', 'Category: Shopping',
+      ...Array.from({ length: count }, (_, index) => `Installment ${index + 1} 2027-${String(index + 1).padStart(2, '0')}-16 $${index === count - 1 ? '30.50' : '30.00'} ${index === 0 ? 'Paid' : 'Unpaid'}`)]
+    const result = parseDebtStatement(lines)
+    assert.equal(result.values.provider, provider)
+    assert.equal(result.values.merchant, 'Example Store')
+    assert.equal(result.values.purchaseCategory, 'Shopping')
+    assert.equal(result.values.purchaseAmount, '240.5')
+    assert.equal(result.values.currentBalance, '180.5')
+    assert.equal(result.installments.length, count)
+    assert.deepEqual(result.installments[0], { dueDate: '2027-01-16', amount: '30', paid: true })
+    assert.deepEqual(result.installments.at(-1), { dueDate: `2027-0${count}-16`, amount: '30.5', paid: false })
+  }
+})
+
+test('installment OCR preserves incomplete rows and does not invent a year, amount, or category', () => {
+  const result = parseDebtStatement([
+    'Afterpay', 'Installment 1 11/12/2026 $20 Paid', 'Installment 2 2026-12-30',
+    'Installment 3 $25 Upcoming', '2027-01-13', '$26.25', 'Completed'
+  ])
+  assert.deepEqual(result.installments, [
+    { dueDate: '', amount: '20', paid: true },
+    { dueDate: '2026-12-30', amount: '', paid: false },
+    { dueDate: '', amount: '25', paid: false },
+    { dueDate: '2027-01-13', amount: '26.25', paid: true }
+  ])
+  assert.equal(result.values.purchaseCategory, undefined)
+  assert.deepEqual(parseDebtStatement(['Klarna', 'Nov 16', '$25', 'Completed', 'Nov 30 $30 Unpaid']).installments, [
+    { dueDate: '', amount: '25', paid: true }, { dueDate: '', amount: '30', paid: false }
+  ])
+  assert.equal(parseDebtStatement(['Credit Card Statement', 'Next payment: $25 on November 16, 2026']).installments, undefined)
+})
+
+test('ordinary bills extract only explicit fields and leave conflicting or ambiguous values for review', () => {
+  assert.deepEqual(parseBillStatement([
+    'Biller: City Electric', 'Amount due: $81.23', 'Due date: November 30, 2026', 'Category: Housing & Utilities'
+  ]).values, { name: 'City Electric', amount: '81.23', dueDate: '2026-11-30', category: 'Housing & Utilities' })
+  const result = parseBillStatement(['Amount due: $20', 'Total due: $21', 'Due date: 11/12/2026'])
+  assert.deepEqual(result.values, {})
+  assert.deepEqual(result.conflicts, ['amount'])
+  assert.deepEqual(parseBillStatement([
+    'City Electric', 'Amount due', '$81.23', 'Due date', 'November 30, 2026', 'Category', 'Housing & Utilities'
+  ]).values, { name: 'City Electric', amount: '81.23', dueDate: '2026-11-30', category: 'Housing & Utilities' })
+})
 
 test('labeled statement fields extract exact amounts, complete dates, debt type and only the account suffix', () => {
   const result = parseDebtStatement([
