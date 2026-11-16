@@ -5,7 +5,7 @@ import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
 import PaymentPlanFields from './PaymentPlanFields'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
-import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
+import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, getInstallmentStatus, getPaidInstallmentNumbers, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
@@ -152,6 +152,11 @@ export default function Debt({ statementExtractor } = {}) {
       ?? bills.find(bill => bill.debtId === selectedDebt.id)
     : null
   const selectedPaymentHistory = selectedDebt ? getDebtPaymentHistory(selectedDebt, selectedDebtBill) : []
+  const selectedPaidNumbers = selectedDebt ? getPaidInstallmentNumbers(selectedDebt) : new Set()
+  const selectedPendingInstallments = selectedDebt?.paymentSchedule?.kind === 'payment-plan'
+    ? sortPaymentPlanInstallments(selectedDebt.paymentSchedule.installments)
+      .filter(row => getInstallmentStatus(row) === 'pending' && !selectedPaidNumbers.has(row.installmentNumber))
+    : []
   const scheduleStatusFor = debt => getDebtScheduleStatus(
     debt,
     bills,
@@ -787,6 +792,14 @@ export default function Debt({ statementExtractor } = {}) {
                 }} />
               </div>
             </div>
+            {selectedPendingInstallments.length > 0 && <section aria-label="Pending payments" style={{ flexShrink: 0 }}>
+              <h3 style={{ margin: '12px 0 5px', color: '#79502A', fontSize: 13 }}>Pending Payments</h3>
+              <div style={{ maxHeight: 'min(16dvh, 110px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                {selectedPendingInstallments.map(row => <p key={row.installmentNumber} style={{ margin: '6px 0', fontSize: 12 }}>
+                  {displayDate(row.dueDate)} · {money(row.amount)} · Pending on statement (not completed)
+                </p>)}
+              </div>
+            </section>}
             <h3 style={{ margin: '12px 0 5px', color: '#79502A', fontSize: 13 }}>Payment History</h3>
             <div aria-label="Payment History" style={{ minHeight: 0, maxHeight: 'min(30dvh, 220px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
               {selectedPaymentHistory.length ? selectedPaymentHistory.map(payment => {
@@ -1111,7 +1124,7 @@ export default function Debt({ statementExtractor } = {}) {
                   <legend>Installments</legend>
                   {!formSchedule?.installments?.length && <p style={{ margin: 0, fontSize: 11 }}>No installment rows found. Complete the schedule settings or add installments manually.</p>}
                   {sortPaymentPlanInstallments(formSchedule?.installments ?? []).map((row, index, rows) => <details key={row.installmentNumber}>
-                    <summary>Installment {index + 1} · {row.dueDate || 'Missing date'} · {String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'}{row.paid ? ' · Paid' : ''}</summary>
+                    <summary>Installment {index + 1} · {row.dueDate || 'Missing date'} · {String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'} · {getInstallmentStatus(row) === 'paid' ? 'Paid' : getInstallmentStatus(row) === 'pending' ? 'Pending' : 'Due'}</summary>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
                       <label style={formLabel}>Due date {index + 1}
                         <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate ?? ''} style={inputStyle}
@@ -1123,8 +1136,12 @@ export default function Debt({ statementExtractor } = {}) {
                       </label>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 12 }}>
-                      <label><input type="checkbox" checked={row.paid === true}
-                        onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, paid: event.target.checked } : item))} />Paid on statement</label>
+                      <label>Status <select aria-label={`Installment ${index + 1} status`} value={getInstallmentStatus(row)}
+                        onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, status: event.target.value, paid: event.target.value === 'paid' } : item))}>
+                        <option value="due">Due</option>
+                        <option value="pending">Pending</option>
+                        <option value="paid">Paid on statement</option>
+                      </select></label>
                       <button type="button" onClick={() => changeNewPlanRows(rows.filter((_, i) => i !== index))}>Remove installment {index + 1}</button>
                     </div>
                   </details>)}
@@ -1132,7 +1149,7 @@ export default function Debt({ statementExtractor } = {}) {
                     const rows = formSchedule?.installments ?? []
                     changeNewPlanRows([...rows, { dueDate: '', amount: '', paid: false, installmentNumber: Math.max(0, ...rows.map((row, index) => row.installmentNumber ?? index + 1)) + 1 }])
                   }}>Add installment</button>
-                  {statementReview && <p style={{ margin: 0, fontSize: 11 }}>Review paid statuses: an unchecked box may mean an unrecognized status.</p>}
+                  {statementReview && <p style={{ margin: 0, fontSize: 11 }}>Paid and pending do not change balances or create transactions. Confirm pending in Edit Debt when the provider marks it paid.</p>}
                 </fieldset>
               </>}
               {!isNewPaymentPlan && (formSchedule?.kind === 'payment-plan' ? <PaymentPlanFields rows={formSchedule.installments}

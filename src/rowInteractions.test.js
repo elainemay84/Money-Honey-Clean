@@ -3,9 +3,10 @@ import { after, afterEach, beforeEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
-import { electricScooterMarkerOcrData, homeDepotOcrData } from './statementOcrFixture.js'
+import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
-import { createPaymentPlan } from './debtSchedule.js'
+import { createPaymentPlan, getDebtInstallmentProgress, getInstallmentStatus } from './debtSchedule.js'
+import { createBackupSnapshot, parseBackup } from './backupData.js'
 import { getBillOccurrencesInRange } from './billData.js'
 import { getSpendingByCategory } from './reportData.js'
 import { getBudgetSpendingByCategory } from './budgetData.js'
@@ -237,6 +238,92 @@ test('activity timeline OCR scan fills the payment plan form and saves exact sca
   assert.equal(saved.paymentSchedule.installments.at(-1).amount, 52.36)
 })
 
+test('Loveseat scan reviews all six statuses, saves history without transactions and confirms pending only once', async () => {
+  saveDebts([{
+    id: 7, name: 'Existing debt', type: 'Other', startingBalance: 100, currentBalance: 100,
+    interestRate: 0, minimumPayment: 10, accountId: 1, paymentHistory: []
+  }])
+  createDebtPayment(7, 'existing-payment', { total: 10, principal: 10, date: localDate(), accountId: 1 })
+  const existing = loadDebts()[0]
+  const accounts = readAccountData()
+  const categories = browser.localStorage.getItem('money-honey-categories')
+  const expected = [
+    ['2026-09-16', 64.24, 'paid'],
+    ['2026-10-16', 64.24, 'paid'],
+    ['2026-11-13', 64.24, 'pending'],
+    ['2026-12-13', 64.24, 'due'],
+    ['2027-01-13', 64.24, 'due'],
+    ['2027-02-13', 63.82, 'due']
+  ]
+  let container = await render(() => React.createElement(Debt, {
+    statementExtractor: async () => parsePaymentPlanScan(loveseatActivityLines)
+  }))
+  await openPaymentPlan(container, true)
+  await chooseStatementFile(container, 'Statement image')
+  let form = container.querySelector('[aria-label="Add payment plan form"] form')
+  assert.ok(form)
+  assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '197.38')
+  assert.equal(form.querySelector('[aria-label="Number of payments"]').value, '6')
+  assert.equal(form.querySelector('[aria-label="First payment date"]').value, expected[0][0])
+  const summaries = [...form.querySelectorAll('details > summary')].filter(row => row.textContent.startsWith('Installment '))
+  assert.equal(summaries.length, 6)
+  expected.forEach(([date, amount, status], index) => {
+    assert.equal(form.querySelector(`[aria-label="Installment ${index + 1} date"]`).value, date)
+    assert.equal(Number(form.querySelector(`[aria-label="Installment ${index + 1} amount"]`).value), amount)
+    assert.equal(form.querySelector(`[aria-label="Installment ${index + 1} status"]`).value, status)
+    assert.match(summaries[index].textContent, new RegExp(`${date}.*\\$${String(amount).replace('.', '\\.')}.*${status}`, 'i'))
+  })
+  assert.equal(loadDebts().length, 1)
+  assert.deepEqual(readAccountData(), accounts)
+  await submit(form)
+  assert.equal(container.querySelector('form'), null)
+  const saved = loadDebts().find(debt => debt.name === 'Christopher Knight Loveseat')
+  assert.ok(saved)
+  assert.equal(saved.currentBalance, 197.38)
+  assert.deepEqual(saved.paymentHistory, [])
+  assert.deepEqual(saved.paymentSchedule.installments.map(row => [row.dueDate, row.amount, getInstallmentStatus(row)]), expected)
+  assert.deepEqual(getDebtInstallmentProgress(saved), { completed: 2, total: 6, remaining: 4 })
+  assert.deepEqual(loadDebts().find(debt => debt.id === existing.id), existing)
+  assert.deepEqual(readAccountData(), accounts)
+  assert.equal(browser.localStorage.getItem('money-honey-categories'), categories)
+  const assertDueBills = () => {
+    const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.filter(bill => bill.debtId === saved.id)
+    assert.equal(bills.length, 1)
+    assert.deepEqual(getBillOccurrencesInRange(bills, '2026-09-01', '2027-03-01').map(row => [row.dueDate, row.amount]),
+      expected.slice(3).map(([date, amount]) => [date, amount]))
+  }
+  assertDueBills()
+  const snapshot = createBackupSnapshot(browser.localStorage)
+  const imported = parseBackup(JSON.stringify(snapshot), browser.localStorage).backup
+  assert.deepEqual(JSON.parse(imported.data['money-honey-debts']), JSON.parse(snapshot.data['money-honey-debts']))
+  container = await reload(Debt, container)
+  await click(container.querySelector('[aria-label="Debt row: Christopher Knight Loveseat"]'))
+  let history = container.querySelector('[aria-label="Payment History"]')
+  assert.equal(history.children.length, 2)
+  assert.ok([...history.children].every(row => row.textContent.includes('Paid on statement')))
+  assert.match(container.querySelector('[aria-label="Pending payments"]').textContent, /Nov 13, 2026.*\$64\.24.*Pending.*not completed/)
+  assert.match(container.textContent, /2 of 6 paid/)
+  await click(button(container, 'Edit Debt'))
+  form = container.querySelector('form')
+  assert.equal(form.querySelector('[aria-label="Installment 3 status"]').value, 'pending')
+  await changeValue(form.querySelector('[aria-label="Installment 3 status"]'), 'paid')
+  await submit(form)
+  assert.equal(container.querySelector('form'), null)
+  // Reopening and saving again must not record a second payment or change the balance.
+  await click(container.querySelector('[aria-label="Debt row: Christopher Knight Loveseat"]'))
+  await click(button(container, 'Edit Debt'))
+  await submit(container.querySelector('form'))
+  await click(container.querySelector('[aria-label="Debt row: Christopher Knight Loveseat"]'))
+  history = container.querySelector('[aria-label="Payment History"]')
+  assert.equal(history.children.length, 3)
+  assert.equal(container.querySelector('[aria-label="Pending payments"]'), null)
+  assert.match(container.textContent, /3 of 6 paid/)
+  assert.equal(loadDebts().find(debt => debt.id === saved.id).currentBalance, 197.38)
+  assert.deepEqual(loadDebts().find(debt => debt.id === saved.id).paymentHistory, [])
+  assert.deepEqual(readAccountData(), accounts)
+  assertDueBills()
+})
+
 test('scanned payment plan rows are editable before save and Bills records one linked payment with the chosen date', async () => {
   const date = localDate()
   const previous = shiftDate(date, -14)
@@ -255,7 +342,7 @@ test('scanned payment plan rows are editable before save and Bills records one l
   let form = container.querySelector('form')
   assert.ok(container.querySelector('[aria-label="Add payment plan form"]'))
   assert.equal(form.querySelector('[aria-label="Purchase Category"]').value, 'Shopping')
-  assert.equal(form.querySelectorAll('input[type="checkbox"]:checked').length, 1)
+  assert.equal(form.querySelector('[aria-label="Installment 1 status"]').value, 'paid')
   await changeValue(form.querySelector('[aria-label="Installment 2 amount"]'), '30')
   await changeValue(form.querySelector('[aria-label="Installment 3 amount"]'), '50')
   await changeValue(form.querySelector('[aria-label="Installment 3 date"]'), shiftDate(following, 1))
@@ -317,7 +404,7 @@ test('partial scanned cards populate recognized fields and preserve missing valu
   assert.equal(form.querySelector('[aria-label="Installment 2 date"]').value, date)
   assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '20.01')
   assert.equal(form.querySelector('[aria-label="Installment 3 amount"]').value, '')
-  assert.equal(form.querySelectorAll('input[type="checkbox"]:checked').length, 1)
+  assert.equal(form.querySelector('[aria-label="Installment 1 status"]').value, 'paid')
   await changeValue(form.querySelector('[aria-label="Debt name"]'), 'PayPal plan')
   await changeValue(form.querySelector('[aria-label="Purchase Category"]'), 'Shopping')
   await changeValue(form.querySelector('[aria-label="Installment 3 amount"]'), '29.99')
@@ -353,7 +440,7 @@ test('scanned and manually inserted installments reorder automatically, keeping 
   assert.equal(addedDetails.open, true)
   assert.match(addedDetails.querySelector('summary').textContent, /Installment 2/)
   assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '30')
-  assert.equal(form.querySelector('[aria-label="Installment 3 date"]').closest('details').querySelector('input[type="checkbox"]').checked, true)
+  assert.equal(form.querySelector('[aria-label="Installment 3 status"]').value, 'paid')
   await submit(form)
   assert.equal(container.querySelector('form'), null)
   await click(container.querySelector('[aria-label="Debt row: Ordering plan"]'))

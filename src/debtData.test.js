@@ -289,10 +289,13 @@ test('explicit plans preserve unequal dates, completed rows, linked payments, re
   assert.equal(getDebtInstallmentProgress(loadDebts(storage)[0]).completed, 2)
 })
 
-test('explicit plans reject missing or duplicate dates and invalid amounts instead of generating payments', () => {
+test('explicit plans reject missing or duplicate dates, invalid amounts and contradictory statuses', () => {
   for (const rows of [
     [], [{ dueDate: '', amount: 10 }], [{ dueDate: '2026-02-30', amount: 10 }],
     [{ dueDate: '2026-11-16', amount: 0 }],
+    [{ dueDate: '2026-11-16', amount: 10, status: 'processing' }],
+    [{ dueDate: '2026-11-16', amount: 10, status: 'paid', paid: false }],
+    [{ dueDate: '2026-11-16', amount: 10, status: 'pending', paid: true }],
     [{ dueDate: '2026-11-16', amount: 10 }, { dueDate: '2026-11-16', amount: 20 }]
   ]) assert.throws(() => validatePaymentSchedule(createPaymentPlan(rows)))
   assert.throws(() => createPaymentPlan([{ dueDate: '2026-11-16', amount: '' }]))

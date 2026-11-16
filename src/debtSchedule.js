@@ -58,6 +58,10 @@ export function sortPaymentPlanInstallments(installments) {
   })
 }
 
+export function getInstallmentStatus(row) {
+  return row.paid ? 'paid' : row.status === 'pending' ? 'pending' : 'due'
+}
+
 export function createPaymentPlan(installments = []) {
   const rows = sortPaymentPlanInstallments(installments.map((row, index) => ({
     ...row,
@@ -146,7 +150,10 @@ export function validatePaymentSchedule(schedule) {
       || rows.some(row => !row || !isScheduleDate(row.scheduledDate) || !isScheduleDate(row.dueDate)
         || !Number.isFinite(row.amount) || row.amount <= 0 || !Number.isSafeInteger(Math.round(row.amount * 100))
         || Math.abs(Math.round(row.amount * 100) / 100 - row.amount) > 0.000001
-        || typeof row.paid !== 'boolean' || !Number.isInteger(row.installmentNumber)
+        || typeof row.paid !== 'boolean'
+        || (row.status != null && !['paid', 'pending', 'due'].includes(row.status))
+        || (row.status != null && row.status !== getInstallmentStatus(row))
+        || !Number.isInteger(row.installmentNumber)
         || row.installmentNumber < 1 || row.installmentNumber > 600)
       || new Set(rows.map(row => row.scheduledDate)).size !== rows.length
       || new Set(rows.map(row => row.installmentNumber)).size !== rows.length) {
@@ -248,7 +255,7 @@ function scheduledDate(schedule, index) {
 
 export function getDebtScheduledPayments(debt, limit = 12) {
   const schedule = debt.paymentSchedule
-  if (schedule?.kind === 'payment-plan') return sortPaymentPlanInstallments(schedule.installments.filter(row => !row.paid)
+  if (schedule?.kind === 'payment-plan') return sortPaymentPlanInstallments(schedule.installments.filter(row => getInstallmentStatus(row) === 'due')
     .map(row => ({ ...row, dueDate: schedule.dateAdjustments?.find(item => item.scheduledDate === row.scheduledDate)?.dueDate ?? row.dueDate })))
   if (!schedule || !isScheduleDate(schedule.startDate)) return []
   const finite = schedule.totalInstallments != null
