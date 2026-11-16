@@ -5,6 +5,7 @@ import { createServer } from 'vite'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
 import { electricScooterMarkerOcrData, homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
+import { createPaymentPlan } from './debtSchedule.js'
 import { getBillOccurrencesInRange } from './billData.js'
 import { getSpendingByCategory } from './reportData.js'
 import { getBudgetSpendingByCategory } from './budgetData.js'
@@ -324,6 +325,93 @@ test('partial scanned cards populate recognized fields and preserve missing valu
   assert.equal(container.querySelector('form'), null)
   assert.equal(loadDebts()[0].paymentSchedule.installments[2].amount, 29.99)
   assert.deepEqual(readAccountData(), before)
+})
+
+test('scanned and manually inserted installments reorder automatically, keeping expansion and payment details attached', async () => {
+  const container = await render(() => React.createElement(Debt, {
+    statementExtractor: async () => ({
+      ...parseDebtStatement(['Afterpay', 'Remaining balance: $90', 'Installment 1 2027-06-14 $20 Unpaid']),
+      installments: [
+        { dueDate: '2027-10-14', amount: 40, paid: true },
+        { dueDate: '2027-06-14', amount: 20, paid: false }
+      ]
+    })
+  }))
+  await openPaymentPlan(container, true)
+  await chooseStatementFile(container, 'Statement image')
+  let form = container.querySelector('form')
+  const dates = () => [...form.querySelectorAll('input[aria-label^="Installment"][type="date"]')].map(input => input.value)
+  assert.deepEqual(dates(), ['2027-06-14', '2027-10-14'])
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Ordering plan')
+  await click(button(form, 'Add installment'))
+  await changeValue(form.querySelector('[aria-label="Installment 3 amount"]'), '30')
+  const addedDetails = form.querySelector('[aria-label="Installment 3 date"]').closest('details')
+  addedDetails.open = true
+  await changeValue(form.querySelector('[aria-label="Installment 3 date"]'), '2027-07-14')
+  assert.deepEqual(dates(), ['2027-06-14', '2027-07-14', '2027-10-14'])
+  assert.equal(form.querySelector('[aria-label="Installment 2 date"]').closest('details'), addedDetails)
+  assert.equal(addedDetails.open, true)
+  assert.match(addedDetails.querySelector('summary').textContent, /Installment 2/)
+  assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '30')
+  assert.equal(form.querySelector('[aria-label="Installment 3 date"]').closest('details').querySelector('input[type="checkbox"]').checked, true)
+  await submit(form)
+  assert.equal(container.querySelector('form'), null)
+  await click(container.querySelector('[aria-label="Debt row: Ordering plan"]'))
+  await click(button(container, 'Edit Debt'))
+  form = container.querySelector('form')
+  await changeValue(form.querySelector('[aria-label="Installment 1 date"]'), '2027-11-14')
+  assert.deepEqual(dates(), ['2027-07-14', '2027-10-14', '2027-11-14'])
+  assert.equal(form.querySelector('[aria-label="Installment 3 amount"]').value, '20')
+  await submit(form)
+  const saved = loadDebts()[0]
+  assert.deepEqual(saved.paymentSchedule.installments.map(row => [row.dueDate, row.amount, row.paid, row.installmentNumber]), [
+    ['2027-07-14', 30, false, 3], ['2027-10-14', 40, true, 1], ['2027-11-14', 20, false, 2]
+  ])
+})
+
+test('payment plan history shows statement and linked payments once without changing balances, transactions or bills', async () => {
+  saveDebts([{
+    id: 7, name: 'History plan', type: 'Other', startingBalance: 100, currentBalance: 90,
+    interestRate: 0, minimumPayment: null, accountId: 1, paymentHistory: [],
+    paymentSchedule: createPaymentPlan([
+      { dueDate: '2027-08-14', amount: 70 },
+      { dueDate: '2027-06-14', amount: 10, paid: true },
+      { dueDate: '2027-07-14', amount: 20 }
+    ])
+  }])
+  synchronizeDebtBills()
+  createDebtPayment(7, 'history-payment', { total: 20, principal: 20, date: '2027-07-12', accountId: 1 })
+  const debts = loadDebts()
+  debts[0].paymentSchedule = createPaymentPlan(debts[0].paymentSchedule.installments.map(row =>
+    row.dueDate === '2027-07-14' ? { ...row, paid: true } : row))
+  saveDebts(debts)
+  synchronizeDebtBills()
+  const accounts = readAccountData()
+  accounts.transactions[0].cleared = true
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accounts))
+  const savedDebts = loadDebts()
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  const container = await render(Debt)
+  await click(container.querySelector('[aria-label="Debt row: History plan"]'))
+  const details = container.querySelector('[aria-label="History plan debt details"]')
+  const history = details.querySelector('[aria-label="Payment History"]')
+  assert.equal(history.children.length, 2)
+  assert.match(history.children[0].textContent, new RegExp(`Scheduled ${displayDate('2027-06-14')}`))
+  assert.match(history.children[0].textContent, /\$10\.00.*Paid on statement/)
+  assert.doesNotMatch(history.children[0].textContent, new RegExp(`Paid ${displayDate('2027-06-14')}`))
+  assert.match(history.children[1].textContent, new RegExp(`Paid ${displayDate('2027-07-12')}`))
+  assert.match(history.children[1].textContent, /Money Honey.*Bills \/ Accounts.*\$20\.00.*Cleared/)
+  assert.match(details.textContent, /2 of 3 paid/)
+  assert.match(details.textContent, /30% of balance paid off/)
+  assert.equal(details.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '30')
+  assert.deepEqual(readAccountData(), accounts)
+  assert.deepEqual(loadDebts(), savedDebts)
+  assert.deepEqual(JSON.parse(browser.localStorage.getItem('money-honey-bills')), savedBills)
+  await click(button(details, 'Edit Debt'))
+  await submit(container.querySelector('form'))
+  assert.equal(loadDebts()[0].currentBalance, 70)
+  assert.deepEqual(loadDebts()[0].paymentHistory, savedDebts[0].paymentHistory)
+  assert.deepEqual(readAccountData(), accounts)
 })
 
 test('manual payment plans generate immediately and save using only the required fields', async () => {

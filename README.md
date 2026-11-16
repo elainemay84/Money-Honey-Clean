@@ -108,6 +108,18 @@ it (for example, the next row "Jan 15, 2027"); otherwise it stays blank. Matches
 with neither a usable date nor an amount are not added as rows. Correct these
 fields or add missing rows.
 
+Installments automatically stay in due-date order, including after adding a
+missing payment or editing a date. Display numbers follow that order; payment
+identities and linked Bills/history stay attached to their original installments.
+Rows with missing or invalid dates stay at the bottom until corrected.
+
+Debt details show statement-paid installments alongside Money Honey payments in
+oldest-first Payment History. Statement entries say **Paid on statement** and show
+the scheduled date, not an assumed actual payment date. Linked payments appear
+only once. This history is display-only: statement-paid rows do not create bank
+transactions or reduce the outstanding balance again. Installment counts and
+financial payoff progress are shown separately.
+
 Dark-mode screenshots are inverted and small screenshots are enlarged on your
 device before reading, so light-on-dark timeline text is read reliably.
 Timeline circles and connector lines beside rows are ignored.
