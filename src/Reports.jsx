@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getHistoricalCategories, getReportingTransactions, loadCategoryConfig } from './categoryData.js'
 import PageHeader from './PageHeader'
 import ClassificationReviewReport from './ClassificationReviewReport.jsx'
 import IncomeVsExpensesReport from './IncomeVsExpensesReport.jsx'
-import { formatMonthLabel, getMonthBounds, shiftMonth } from './reportData.js'
+import { formatMonthLabel, getMonthBounds, getMonthKey, shiftMonth } from './reportData.js'
 import SpendingByCategoryReport from './SpendingByCategoryReport.jsx'
+import { classifyTransactions, getSpendingEntries } from './transactionRules.js'
+
+let monthToRestore = null
 
 const card = {
   background: '#FFFFFF',
@@ -35,11 +38,29 @@ const REPORT_SECTIONS = [
 
 export default function Reports({ transactions, accounts = [], today, cardColor = '#FFFFFF', onBack, onEditTransaction }) {
   const currentMonth = today.slice(0, 7)
-  const [month, setMonth] = useState(currentMonth)
+  const [month, setMonth] = useState(() => monthToRestore ?? currentMonth)
+  const [expanded, setExpanded] = useState(null)
+  useEffect(() => { monthToRestore = null }, [])
   const categoryConfig = loadCategoryConfig()
   const categories = getHistoricalCategories(categoryConfig)
   const categorizedTransactions = getReportingTransactions(transactions, categoryConfig)
   const bounds = getMonthBounds(transactions, currentMonth)
+  const inMonth = classifyTransactions({ transactions: categorizedTransactions, categories, accounts })
+    .filter(record => getMonthKey(record.date) === month)
+  const breakdowns = {
+    spending: getSpendingEntries(inMonth),
+    income: inMonth.filter(record => record.kind === 'income').map(record => ({ transaction: record.transaction, cents: record.cents })),
+    debtPayments: inMonth.filter(record => record.kind === 'debt-payment').map(record => ({ transaction: record.transaction, cents: -record.signedCents }))
+  }
+  const changeMonth = delta => {
+    setExpanded(null)
+    setMonth(shiftMonth(month, delta))
+  }
+  const editTransaction = request => {
+    if (!onEditTransaction) return
+    monthToRestore = month
+    onEditTransaction(request)
+  }
 
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 30 }}>
@@ -50,7 +71,7 @@ export default function Reports({ transactions, accounts = [], today, cardColor 
           type="button"
           aria-label="Previous month"
           disabled={month <= bounds.first}
-          onClick={() => setMonth(shiftMonth(month, -1))}
+          onClick={() => changeMonth(-1)}
           style={{ ...arrowButton, opacity: month <= bounds.first ? 0.4 : 1, cursor: month <= bounds.first ? 'not-allowed' : 'pointer' }}
         >
           ‹
@@ -60,7 +81,7 @@ export default function Reports({ transactions, accounts = [], today, cardColor 
           type="button"
           aria-label="Next month"
           disabled={month >= bounds.last}
-          onClick={() => setMonth(shiftMonth(month, 1))}
+          onClick={() => changeMonth(1)}
           style={{ ...arrowButton, opacity: month >= bounds.last ? 0.4 : 1, cursor: month >= bounds.last ? 'not-allowed' : 'pointer' }}
         >
           ›
@@ -75,7 +96,10 @@ export default function Reports({ transactions, accounts = [], today, cardColor 
           accounts={accounts}
           month={month}
           cardColor={cardColor}
-onEditTransaction={onEditTransaction}
+          breakdowns={breakdowns}
+          expanded={expanded}
+          onToggleBreakdown={key => setExpanded(current => current === key ? null : key)}
+          onEditTransaction={editTransaction}
         />
       ))}
     </main>

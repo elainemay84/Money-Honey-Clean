@@ -4,6 +4,7 @@ import {
   getDoughnutSegments,
   getSpendingByCategory
 } from './reportData.js'
+import ReportBreakdown, { BreakdownButton, BreakdownChevron } from './ReportBreakdown.jsx'
 
 const RADIUS = 44
 const STROKE = 15
@@ -22,12 +23,13 @@ function formatPercent(item) {
   return item.percent === 0 ? '<1%' : `${item.percent}%`
 }
 
-export default function SpendingByCategoryReport({ transactions, categories, accounts, month, cardColor }) {
+export default function SpendingByCategoryReport({ transactions, categories, accounts, month, cardColor, breakdowns, expanded, onToggleBreakdown, onEditTransaction }) {
   const report = getSpendingByCategory({ transactions, month, categories, accounts })
   const label = formatMonthLabel(month)
   const colors = getChartColors(report.items, cardColor)
   const segments = getDoughnutSegments(report.items, RADIUS)
   const totalText = money(report.total)
+  const allCategories = getSpendingByCategory({ transactions, month, categories, accounts, maxSlices: Infinity }).items
 
   return (
     <section aria-labelledby="spending-by-category-title" style={card}>
@@ -77,24 +79,41 @@ export default function SpendingByCategoryReport({ transactions, categories, acc
           </div>
 
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: 13 }}>
-            {report.items.map((item, index) => (
-              <li
-                key={item.category}
-                data-report-row={item.category}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderTop: '1px solid var(--theme-border, #EADBC8)' }}
-              >
-                <span
-                  aria-hidden="true"
-                  data-report-swatch={item.category}
-                  style={{ flex: '0 0 10px', width: 10, height: 10, borderRadius: '50%', background: colors[index] }}
-                />
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textAlign: 'left', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.isGroup ? `${item.category} (${item.count})` : item.category}
-                </span>
-                <strong>{money(item.amount)}</strong>
-                <span style={{ flex: '0 0 36px', textAlign: 'right', fontSize: 12 }}>{formatPercent(item)}</span>
-              </li>
-            ))}
+            {report.items.map((item, index) => {
+              const key = item.isGroup ? 'category-group' : `category:${item.category}`
+              const isExpanded = expanded === key
+              const includedCategories = item.isGroup
+                ? new Set(allCategories.slice(-item.count).map(category => category.category))
+                : new Set([item.category])
+              return (
+                <li
+                  key={key}
+                  data-report-row={item.category}
+                  style={{ borderTop: '1px solid var(--theme-border, #EADBC8)' }}
+                >
+                  <BreakdownButton aria-expanded={isExpanded} onClick={() => onToggleBreakdown(key)}>
+                    <span
+                      aria-hidden="true"
+                      data-report-swatch={item.category}
+                      style={{ flex: '0 0 10px', width: 10, height: 10, borderRadius: '50%', background: colors[index] }}
+                    />
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textAlign: 'left', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.isGroup ? `${item.category} (${item.count})` : item.category}
+                    </span>
+                    <strong>{money(item.amount)}</strong>
+                    <span style={{ flex: '0 0 36px', textAlign: 'right', fontSize: 12 }}>{formatPercent(item)}</span>
+                    <BreakdownChevron expanded={isExpanded} />
+                  </BreakdownButton>
+                  {isExpanded && (
+                    <ReportBreakdown
+                      entries={breakdowns.spending.filter(entry => includedCategories.has(entry.category))}
+                      subtotal={item.amount}
+                      onEditTransaction={onEditTransaction}
+                    />
+                  )}
+                </li>
+              )
+            })}
           </ul>
 
           {report.refundTotal > 0 && (

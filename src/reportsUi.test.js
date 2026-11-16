@@ -657,3 +657,140 @@ test('suspected card payments can be classified as Debt Payments, updating net c
   assert.match(flowCard(container).textContent, /Debt payments \(\$200\.00\) are not counted as expenses\./)
 })
 
+test('category breakdowns are exclusive, sorted, monthly, and reconcile purchases and refunds', async () => {
+  seed([
+    txn('Groceries', -50, day(currentMonth, 2), { id: 501, name: 'Market', cleared: false }),
+    txn('Groceries', 10, day(currentMonth, 8), { id: 502, name: 'Market refund' }),
+    txn('Groceries', -20, day(currentMonth, 5), { id: 503, name: 'Bakery' }),
+    txn('Groceries', -999, day(month(-1), 5), { id: 504, name: 'Last month' }),
+    txn('Pets', -30, day(currentMonth, 1), { id: 505 })
+  ])
+  const before = browser.localStorage.getItem('money-honey-account-data')
+  const container = await renderApp()
+  await openReports(container)
+
+  const category = name => spendingCard(container).querySelector(`[data-report-row="${name}"]`)
+  const groceryButton = category('Groceries').querySelector('button')
+  assert.equal(groceryButton.getAttribute('aria-expanded'), 'false')
+  assert.equal(container.querySelector('[data-breakdown-transaction]'), null)
+  await click(groceryButton)
+  assert.equal(groceryButton.getAttribute('aria-expanded'), 'true')
+  assert.deepEqual([...category('Groceries').querySelectorAll('[data-breakdown-transaction]')].map(button => button.dataset.breakdownTransaction), ['502', '503', '501'])
+  assert.match(category('Groceries').textContent, /Market refund.*-\$10\.00/)
+  assert.match(category('Groceries').textContent, /Market.*Uncleared/)
+  assert.match(category('Groceries').textContent, /Subtotal\$60\.00/)
+  assert.doesNotMatch(category('Groceries').textContent, /Last month/)
+
+  await click(category('Pets').querySelector('button'))
+  assert.equal(groceryButton.getAttribute('aria-expanded'), 'false')
+  assert.equal(category('Groceries').querySelector('[data-breakdown-transaction]'), null)
+  await click(category('Pets').querySelector('button'))
+  assert.equal(category('Pets').querySelector('button').getAttribute('aria-expanded'), 'false')
+
+  await click(groceryButton)
+  await click(container.querySelector('[aria-label="Previous month"]'))
+  assert.equal(category('Groceries').querySelector('button').getAttribute('aria-expanded'), 'false')
+  await click(category('Groceries').querySelector('button'))
+  assert.deepEqual([...category('Groceries').querySelectorAll('[data-breakdown-transaction]')].map(button => button.dataset.breakdownTransaction), ['504'])
+  assert.match(category('Groceries').textContent, /Subtotal\$999\.00/)
+  assert.equal(browser.localStorage.getItem('money-honey-account-data'), before)
+})
+
+test('income, expenses and debt breakdowns use the same classifications and reconcile excess refunds', async () => {
+  seed([
+    txn('Paycheck', 1000, day(currentMonth, 1), { id: 510, linkedOccurrenceId: 'income:1' }),
+    txn('Paycheck', 1000, day(currentMonth, 1), { id: 511, linkedOccurrenceId: 'income:1' }),
+    txn('Other Income', 200, day(currentMonth, 3), { id: 512, type: 'transfer' }),
+    txn('Groceries', -100, day(currentMonth, 2), { id: 513 }),
+    txn('Shopping', -30, day(currentMonth, 3), { id: 514 }),
+    txn('Shopping', 80, day(currentMonth, 4), { id: 515 }),
+    txn('Debt Payments', -200, day(currentMonth, 5), { id: 516, linkedDebtId: 1 }),
+    txn('Debt Payments', 20, day(currentMonth, 6), { id: 517, linkedDebtId: 1 }),
+    txn('Paycheck', 900, day(month(-1), 1), { id: 518 })
+  ])
+  const container = await renderApp()
+  await openReports(container)
+  const bar = label => flowCard(container).querySelector(`[data-report-bar="${label}"]`)
+  const ids = element => [...element.querySelectorAll('[data-breakdown-transaction]')].map(button => button.dataset.breakdownTransaction)
+  const incomeButton = bar('Income').querySelector('button')
+  const expensesButton = bar('Expenses').querySelector('button')
+
+  await click(incomeButton)
+  assert.deepEqual(ids(bar('Income')), ['510'])
+  assert.match(bar('Income').textContent, /Subtotal\$1,000\.00/)
+  await click(expensesButton)
+  assert.equal(incomeButton.getAttribute('aria-expanded'), 'false')
+  assert.deepEqual(ids(bar('Expenses')), ['515', '514', '513'])
+  assert.match(bar('Expenses').textContent, /Unmatched refunds excluded\+\$50\.00/)
+  assert.match(bar('Expenses').textContent, /Subtotal\$100\.00/)
+  assert.match(netText(container), /\+\$900\.00/)
+
+  const debtButton = buttonWithText(flowCard(container), 'Debt Payments')
+  await click(debtButton)
+  assert.equal(expensesButton.getAttribute('aria-expanded'), 'false')
+  assert.deepEqual(ids(flowCard(container)), ['517', '516'])
+  assert.match(debtButton.parentElement.textContent, /Subtotal\$180\.00/)
+  await click(debtButton)
+  assert.equal(debtButton.getAttribute('aria-expanded'), 'false')
+})
+
+test('remaining categories expand to the transactions included in their grouped total', async () => {
+  const categories = Array.from({ length: 14 }, (_, index) => `Custom ${index}`)
+  seed(categories.map((category, index) => txn(category, -(100 - index), day(currentMonth, 2), { id: 600 + index })))
+  browser.localStorage.setItem('money-honey-categories', JSON.stringify({
+    customCategories: categories.map(name => ({ name, type: 'expense' }))
+  }))
+  const container = await renderApp()
+  await openReports(container)
+
+  const group = spendingCard(container).querySelector('[data-report-row="Remaining categories"]')
+  await click(group.querySelector('button'))
+  assert.deepEqual([...group.querySelectorAll('[data-breakdown-transaction]')].map(button => button.dataset.breakdownTransaction), ['611', '612', '613'])
+  assert.match(group.textContent, /Subtotal\$264\.00/)
+  assert.match(group.textContent, /Custom 11/)
+})
+
+test('editing a breakdown transaction returns to the selected month with updated totals', async () => {
+  seed([
+    txn('Groceries', -45, day(month(-1), 5), { id: 701, name: 'Market', cleared: false }),
+    txn('Groceries', -10, day(currentMonth, 5), { id: 702, name: 'Current month' })
+  ])
+  const container = await renderApp()
+  await openReports(container)
+  await click(container.querySelector('[aria-label="Previous month"]'))
+  await click(spendingCard(container).querySelector('[data-report-row="Groceries"] button'))
+  await click(container.querySelector('[data-breakdown-transaction="701"]'))
+
+  const dialog = container.querySelector('[role="dialog"]')
+  assert.equal(dialog.querySelector('input[aria-label="Payee or description"]').value, 'Market')
+  assert.equal(dialog.querySelector('input[aria-label="Transaction date"]').value, day(month(-1), 5))
+  await changeValue(dialog.querySelector('input[aria-label="Amount"]'), '70')
+  await submit(dialog.querySelector('form'))
+
+  assert.equal(container.querySelector('h1').textContent, 'Reports')
+  assert.equal(monthLabel(container), formatMonthLabel(month(-1)))
+  assert.equal(barAmount(container, 'Expenses'), '$70.00')
+  assert.match(rows(container)[0].text, /\$70\.00/)
+  const saved = JSON.parse(browser.localStorage.getItem('money-honey-account-data')).transactions.find(item => item.id === 701)
+  assert.equal(saved.amount, -70)
+  assert.equal(saved.cleared, false)
+  assert.equal(saved.category, 'Groceries')
+})
+
+test('classification review and transaction breakdowns do not remain open together', async () => {
+  seed([txn(undefined, -25, day(currentMonth, 4), { id: 801, name: 'Unknown' })])
+  const container = await renderApp()
+  await openReports(container)
+
+  const review = reviewCard(container).querySelector('details')
+  const categoryButton = spendingCard(container).querySelector('[data-report-row="Uncategorized"] button')
+  await click(review.querySelector('summary'))
+  assert.equal(review.open, true)
+  await click(categoryButton)
+  assert.equal(review.open, false)
+  assert.equal(categoryButton.getAttribute('aria-expanded'), 'true')
+  await click(review.querySelector('summary'))
+  assert.equal(review.open, true)
+  assert.equal(categoryButton.getAttribute('aria-expanded'), 'false')
+})
+
