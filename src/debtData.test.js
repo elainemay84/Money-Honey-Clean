@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createOccurrenceTransaction, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { getBillOccurrencesInRange, loadBillData, saveBillData, updateBillOccurrenceSkip, updateScheduleOccurrence } from './billData.js'
-import { createPaymentPlan, createPayInFourSchedule, createRecurringSchedule, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { createPaymentPlan, createPayInFourSchedule, createRecurringSchedule, generatePaymentPlan, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import { SANITIZERS } from './backupSanitize.js'
 import { getIncomeVsExpenses, getSpendingByCategory } from './reportData.js'
 import {
@@ -47,6 +47,51 @@ function installmentDebt(changes = {}) {
     ...changes
   }
 }
+
+test('generated explicit plans divide cents evenly and preserve calendar anchors', () => {
+  const biweekly = generatePaymentPlan('100.03', '4', '2026-12-25', 'biweekly')
+  assert.deepEqual(biweekly.installments.map(row => [row.dueDate, row.amount]), [
+    ['2026-12-25', 25.01], ['2027-01-08', 25.01], ['2027-01-22', 25.01], ['2027-02-05', 25]
+  ])
+  const monthly = generatePaymentPlan('99.99', 4, '2028-01-31', 'monthly')
+  assert.deepEqual(monthly.installments.map(row => row.dueDate), ['2028-01-31', '2028-02-29', '2028-03-31', '2028-04-30'])
+  for (const [balance, count] of [['0.05', 4], ['99.99', 4], ['1,000,000.01', 13], ['6.01', 600]]) {
+    const plan = generatePaymentPlan(balance, count, '2026-11-16', 'weekly')
+    const cents = plan.installments.map(row => Math.round(row.amount * 100))
+    assert.equal(cents.reduce((sum, amount) => sum + amount, 0), Math.round(Number(balance.replaceAll(',', '')) * 100))
+    assert.ok(Math.max(...cents) - Math.min(...cents) <= 1)
+    assert.equal(plan.completedInstallments, 0)
+    validatePaymentSchedule(plan)
+  }
+  for (const args of [
+    ['', 4, '2026-11-16'], ['0.03', 4, '2026-11-16'], ['100', 0, '2026-11-16'],
+    ['100', 601, '2026-11-16'], ['100', '2.5', '2026-11-16'],
+    ['100', 4, '2026-02-30'], ['100', 4, ''], ['100', 4, '2026-11-16', 'unknown']
+  ]) assert.throws(() => generatePaymentPlan(...args))
+})
+
+test('generated plans synchronize once and Bills payments reduce the balance exactly once', () => {
+  const storage = createStorage()
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 1000 }], [], storage)
+  const paymentSchedule = generatePaymentPlan('100.03', 4, '2026-11-16', 'biweekly')
+  saveDebts([installmentDebt({ currentBalance: 100.03, interestRate: 0, paymentSchedule })], storage)
+  synchronizeDebtBills(storage)
+  const { bills } = synchronizeDebtBills(storage)
+  assert.equal(bills.length, 1)
+  const occurrences = getBillOccurrencesInRange(bills, '2026-01-01', '2028-01-01')
+  assert.deepEqual(occurrences.map(row => [row.dueDate, row.amount]), paymentSchedule.installments.map(row => [row.dueDate, row.amount]))
+  for (const occurrence of occurrences) {
+    const { transaction } = createOccurrenceTransaction('out', occurrence, occurrence.dueDate, storage)
+    assert.equal(createOccurrenceTransaction('out', occurrence, occurrence.dueDate, storage).transaction.id, transaction.id)
+    const details = { billOccurrenceId: occurrence.occurrenceId, scheduledDueDate: occurrence.scheduledDate }
+    recordDebtPaymentFromTransaction(7, transaction.id, details, storage)
+    recordDebtPaymentFromTransaction(7, transaction.id, details, storage)
+    synchronizeDebtBills(storage)
+  }
+  assert.equal(loadDebts(storage)[0].currentBalance, 0)
+  assert.equal(loadDebts(storage)[0].paymentHistory.length, 4)
+  assert.equal(loadSavedAccountData(storage).transactions.length, 4)
+})
 
 test('explicit plans preserve unequal dates, completed rows, linked payments, reporting, and backup metadata', () => {
   const storage = createStorage()

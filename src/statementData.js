@@ -48,7 +48,9 @@ function parseDate(value) {
       if (+numeric[1] <= 12 && +numeric[2] <= 12 && +numeric[1] !== +numeric[2]) return null
       parts = [value, numeric[3], numeric[1], numeric[2]]
     } else {
-      const named = /^([a-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/i.exec(value)
+      const dayFirst = /^(\d{1,2})\s+([a-z]+)\.?,?\s+(\d{4})$/i.exec(value)
+      const named = dayFirst ? [value, dayFirst[2], dayFirst[1], dayFirst[3]]
+        : /^([a-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/i.exec(value)
       const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
       const month = named && months.findIndex(item =>
         item === named[1].toLowerCase() || item.slice(0, 3) === named[1].toLowerCase())
@@ -260,8 +262,20 @@ export function parseDebtStatement(lines) {
   return { values, missing, conflicts, ...(planDetails.installments.length ? { installments: planDetails.installments } : {}), ...(warnings.length ? { warnings } : {}) }
 }
 
-const ROW_DATE = /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*|\s+)\d{4})\b/i
+const ROW_DATE = /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?,?\s+\d{4})\b/i
 const PARTIAL_ROW_DATE = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}\b/i
+const INSTALLMENT_LABEL = /^(?:installment|payment)\s*#?\s*\d+\b(?:\s*(?:of|\/)\s*\d+)?\s*[:.)-]?\s*/i
+const INSTALLMENT_STATUS = /^(?:paid|completed|unpaid|not paid|not completed|upcoming|scheduled|due|pending|overdue|autopay)$/i
+
+function installmentAmount(text) {
+  if (/\bCR\b/i.test(text)) return ''
+  const amounts = text.match(/(?:[-(]\s*)?\$\s*[^\s|;]+/g) ?? []
+  if (amounts.length) return amounts.length === 1 ? parseValue('nextPaymentAmount', amounts[0]) ?? '' : ''
+  // Currency-free table cells are accepted only as a complete amount with explicit cents.
+  const cell = text.replace(ROW_DATE, '').replace(PARTIAL_ROW_DATE, '').replace(INSTALLMENT_LABEL, '')
+    .replace(/\b(?:paid|completed|unpaid|not|upcoming|scheduled|due|pending|overdue|autopay|on)\b/gi, '').trim()
+  return /^(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?$/.test(cell) ? parseValue('nextPaymentAmount', cell) ?? '' : ''
+}
 
 export function parsePaymentPlanStatement(lines) {
   const values = {}
@@ -270,37 +284,40 @@ export function parsePaymentPlanStatement(lines) {
   const categories = new Set()
   const installments = []
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].trim()
-    const brand = /^(?:provider\s*:\s*)?(Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)$/i.exec(line)
+    const line = lines[index].trim().replace(/\s*\|\s*/g, ' ')
+    const brand = /^(?:provider\s*:\s*)?(Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)(?:\s*[-:]\s*.*|\s+(?:payment plan|payment schedule|pay in (?:3|4)))?$/i.exec(line)
     if (brand) provider.add(brand[1])
     const merchant = /^(?:merchant|purchased? (?:at|from)|store)\s*:\s*(.+)$/i.exec(line)
     if (merchant && parseValue('merchant', merchant[1])) merchants.add(merchant[1])
     const category = /^(?:purchase )?category\s*:\s*(.+)$/i.exec(line)
     if (category && parseValue('purchaseCategory', category[1])) categories.add(category[1])
-    const dateMatch = ROW_DATE.exec(line)
-    const rowLabel = /^(?:installment|payment)\s*#?\d+\b/i.test(line)
-    const partialDate = PARTIAL_ROW_DATE.exec(line)
-    const hasDate = Boolean(dateMatch || (partialDate && (rowLabel || partialDate.index === 0)))
-    // Pair a date-only row with its adjacent amount/status, never with a summary caption.
+    const rowLabel = INSTALLMENT_LABEL.test(line)
+    const initialDate = ROW_DATE.exec(line) ?? PARTIAL_ROW_DATE.exec(line)
+    const dateRow = initialDate && /^(?:(?:due|upcoming|scheduled|unpaid|paid|completed|pending|overdue)\s*:?\s*)?(?:(?:\$\s*[\d,.]+|\d[\d,]*\.\d{2})\s+)?$/i.test(line.slice(0, initialDate.index))
+    const summaryDate = /^(?:(?:purchase|order|statement) date|next (?:scheduled )?payment(?: due)?(?: date)?|payment (?:due )?date|due date)\s*:?\s*$/i.test(lines[index - 1]?.trim() ?? '')
+    if (!rowLabel && (!dateRow || summaryDate)) continue
+    // Read a bounded vertical card (label, date, amount, status), stopping at the next installment.
     let consumed = 0
     let rowText = line
-    if (hasDate && !line.match(MONEY)
-      && /^(?:(?:paid|completed|due|upcoming|scheduled|unpaid)\s+)?\$\s*[\d,.]+(?:\s+(?:paid|completed|due|upcoming|scheduled|unpaid))?$/i.test(lines[index + 1]?.trim() ?? '')
-    ) {
-      rowText += ` ${lines[index + 1].trim()}`
-      consumed = 1
-    }
-    if (hasDate && /^(?:paid|completed|unpaid|upcoming|scheduled|due)$/i.test(lines[index + consumed + 1]?.trim() ?? '')) {
-      rowText += ` ${lines[index + consumed + 1].trim()}`
+    while (consumed < 3) {
+      const next = lines[index + consumed + 1]?.trim().replace(/\s*\|\s*/g, ' ') ?? ''
+      if (!next || INSTALLMENT_LABEL.test(next)) break
+      const nextDate = ROW_DATE.exec(next) ?? PARTIAL_ROW_DATE.exec(next)
+      const hasDate = ROW_DATE.test(rowText) || PARTIAL_ROW_DATE.test(rowText)
+      const amountCell = /^(?:(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue)\s+)?(?:\$\s*[\d,.]+|(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?)(?:\s+(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue))?$/i.test(next)
+      if (nextDate && !hasDate && rowLabel && !rowText.includes('$') && !installmentAmount(rowText) && nextDate.index === 0) rowText += ` ${next}`
+      else if (!nextDate && amountCell && !rowText.includes('$') && !installmentAmount(rowText)) rowText += ` ${next}`
+      else if (INSTALLMENT_STATUS.test(next) && !/\b(?:paid|completed|unpaid|pending|overdue)\b/i.test(rowText)) rowText += ` ${next}`
+      else break
       consumed += 1
     }
-    const amounts = rowText.match(MONEY) ?? []
-    if ((hasDate && (amounts.length || rowLabel)) || (rowLabel && amounts.length)) {
-      if (/\b(?:purchase date|statement date|total repayment|remaining balance)\b/i.test(line)) continue
+    const dateMatch = ROW_DATE.exec(rowText)
+    const amount = installmentAmount(rowText)
+    if (rowLabel || initialDate) {
       installments.push({
         dueDate: dateMatch ? parseDate(dateMatch[0]) ?? '' : '',
-        amount: amounts.length === 1 ? parseValue('nextPaymentAmount', amounts[0]) ?? '' : '',
-        paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not paid|not completed)\b/i.test(rowText)
+        amount,
+        paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not(?: yet)? (?:paid|completed)|partially paid)\b/i.test(rowText)
       })
       index += consumed
     }

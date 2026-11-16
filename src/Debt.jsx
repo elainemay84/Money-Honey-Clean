@@ -371,6 +371,8 @@ export default function Debt({ statementExtractor } = {}) {
       if (!current.paymentHistory.length && !(current.id != null && bills.some(bill => bill.debtId === current.id && bill.paymentHistory?.length))) {
         updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: result.installments.map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
       }
+    } else if (values.provider && !editingDebt && current.paymentSchedule?.kind !== 'payment-plan' && !current.paymentHistory.length) {
+      updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: [] }
     }
     return updated
   }
@@ -1022,6 +1024,7 @@ export default function Debt({ statementExtractor } = {}) {
               </label>
               {formSchedule?.kind === 'payment-plan' ? <PaymentPlanFields rows={formSchedule.installments}
                 paymentHistory={formValues.paymentHistory} fieldStyle={inputStyle} labelStyle={formLabel}
+                balance={formValues.currentBalance} hasBillHistory={Boolean(editingDebtBill?.paymentHistory?.length)}
                 onChange={installments => setFormValues({ ...formValues, paymentSchedule: { ...formSchedule, installments } })} />
                 : <DebtScheduleFields value={formSchedule} nextDate={formValues.nextPaymentDue}
                 nextPayment={formScheduleStatus} error={schedulePreviewError}

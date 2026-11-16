@@ -86,9 +86,11 @@ export default function StatementAutofill({
 
   function apply() {
     try {
-      const values = (mode === 'bill' ? validateBillStatementSuggestions : validateStatementSuggestions)(Object.fromEntries(
+      const selectedValues = Object.fromEntries(
         Object.entries(suggestions).filter(([key]) => selected[key])
-      ))
+      )
+      const values = mode !== 'bill' && installments?.length && !Object.keys(selectedValues).length
+        ? {} : (mode === 'bill' ? validateBillStatementSuggestions : validateStatementSuggestions)(selectedValues)
       const overwritten = fields.filter(({ key, type }) => {
         if (!Object.hasOwn(values, key)) return false
         const current = currentValues[key]
@@ -103,7 +105,7 @@ export default function StatementAutofill({
       setSuggestions(null)
       setSelected({})
       setError('')
-      setApplied(Object.keys(values).length)
+      setApplied(Object.keys(values).length + (installments?.length ?? 0))
     } catch (failure) {
       setError(failure.message)
     }
@@ -142,10 +144,12 @@ export default function StatementAutofill({
           {error && <p role="alert" style={{ color: '#9B463E' }}>{error}</p>}
           {error && <p className="statement-scan-help">Try a clear English summary page, up to 5 PDF pages.</p>}
           {error && <button type="button" className="statement-scan-retry" onClick={() => { if (lastFile.current) scan(lastFile.current) }} style={{ ...buttonStyle, minHeight: 48 }}>Retry Reading</button>}
-          {suggestions && <p role="status">{suggestedFields.length
+          {suggestions && <p role="status">{installments?.length && !suggestedFields.length
+            ? `We found ${installments.length} installment rows. Review and complete the rest.`
+            : suggestedFields.length
             ? `We found ${suggestedFields.length} ${suggestedFields.length === 1 ? 'field' : 'fields'}. Review and complete the rest.`
             : 'We read text, but could not match any debt fields. You can enter them manually.'}</p>}
-          {suggestedFields.length > 0 && (
+          {(suggestedFields.length > 0 || installments?.length > 0) && (
             <div aria-label="Review statement suggestions" style={{ display: 'grid', gap: 8, marginTop: 10 }}>
               <strong>Review extracted values</strong>
               {warnings.map(warning => <p key={warning} role="status">{warning}</p>)}
