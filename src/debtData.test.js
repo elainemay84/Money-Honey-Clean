@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createOccurrenceTransaction, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { getBillOccurrencesInRange, loadBillData, saveBillData, updateBillOccurrenceSkip, updateScheduleOccurrence } from './billData.js'
-import { createPaymentPlan, createPayInFourSchedule, createRecurringSchedule, generatePaymentPlan, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { createPaymentPlan, createPayInFourSchedule, createRecurringSchedule, generatePaymentPlan, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 import { SANITIZERS } from './backupSanitize.js'
 import { getIncomeVsExpenses, getSpendingByCategory } from './reportData.js'
 import {
@@ -16,6 +16,7 @@ import {
   deleteDebt,
   deleteDebtAssignee,
   getDebtPaymentCalculationMethod,
+  getDebtPaymentHistory,
   getDebtPrincipalPaid,
   getDebtProgress,
   getAvailableCredit,
@@ -47,6 +48,133 @@ function installmentDebt(changes = {}) {
     ...changes
   }
 }
+
+test('installment sorting is stable, keeps incomplete dates last, and preserves entire rows without duplication', () => {
+  const rows = [
+    { id: 'missing', dueDate: '', amount: '' },
+    { id: 'october', dueDate: '2027-10-14', amount: 40, paid: true, installmentNumber: 1 },
+    { id: 'invalid', dueDate: '2027-02-30', amount: 10 },
+    { id: 'june', dueDate: '2027-06-14', amount: 20, installmentNumber: 2 },
+    { id: 'july', dueDate: '2027-07-14', amount: 30, installmentNumber: 3 },
+    { id: 'same-date', dueDate: '2027-07-14', amount: 15 }
+  ]
+  const original = [...rows]
+  const sorted = sortPaymentPlanInstallments(rows)
+  assert.deepEqual(sorted.map(row => row.id), ['june', 'july', 'same-date', 'october', 'missing', 'invalid'])
+  assert.deepEqual(rows, original)
+  assert.equal(new Set(sorted).size, rows.length)
+  assert.ok(sorted.every(row => rows.includes(row)))
+  assert.deepEqual(sortPaymentPlanInstallments(sorted), sorted)
+  const plan = createPaymentPlan(rows.slice(1, 2).concat(rows.slice(3, 5)))
+  assert.deepEqual(plan.installments.map(row => [row.id, row.installmentNumber, row.amount, row.paid]), [
+    ['june', 2, 20, false], ['july', 3, 30, false], ['october', 1, 40, true]
+  ])
+})
+
+test('display history merges statement and recorded payments chronologically without mutating financial data', () => {
+  const paymentSchedule = createPaymentPlan([
+    { dueDate: '2027-10-14', amount: 40, paid: true },
+    { dueDate: '2027-06-14', amount: 10, paid: true },
+    { dueDate: '2027-07-14', amount: 20, paid: true },
+    { dueDate: '2027-08-14', amount: 30, paid: false }
+  ])
+  for (const reference of [
+    { installmentNumber: 3 },
+    { scheduledDueDate: '2027-07-14' },
+    { billOccurrenceId: 'bill:15:2027-07-14' }
+  ]) {
+    const debt = installmentDebt({
+      billId: 15, startingBalance: 100, currentBalance: 30, paymentSchedule,
+      paymentHistory: [
+        { id: 'later', date: '2027-08-13', total: 30, principal: 30, installmentNumber: 4 },
+        { id: 'linked', date: '2027-07-12', total: 20, principal: 20, ...reference }
+      ]
+    })
+    const before = structuredClone(debt)
+    const history = getDebtPaymentHistory(debt)
+    assert.deepEqual(history.map(entry => [entry.source, entry.total, entry.dueDate]), [
+      ['statement', 10, '2027-06-14'], ['money-honey', 20, '2027-07-12'],
+      ['money-honey', 30, '2027-08-13'], ['statement', 40, '2027-10-14']
+    ])
+    assert.equal(history[0].date, undefined)
+    assert.equal(history[0].scheduledDueDate, '2027-06-14')
+    assert.deepEqual(getDebtInstallmentProgress(debt), { completed: 4, total: 4, remaining: 0 })
+    assert.equal(getDebtProgress(debt), 70)
+    assert.deepEqual(debt, before)
+  }
+})
+
+test('statement history does not hide unrelated or reversed payments and undated entries stay last', () => {
+  const debt = installmentDebt({
+    billId: 15,
+    paymentSchedule: createPaymentPlan([{ dueDate: '2027-07-14', amount: 20, paid: true }]),
+    paymentHistory: [
+      { id: 'undated', total: 5, principal: 5 },
+      { id: 'unrelated', date: '2027-07-14', total: 20, principal: 20 },
+      { id: 'reversed', date: '2027-07-12', total: 20, principal: 20, installmentNumber: 1, reversedAt: '2027-07-13' }
+    ]
+  })
+  const bill = { id: 15, amount: 20, paymentHistory: [
+    { dueDate: '2027-08-14', skipped: true, changedAt: '2027-07-13T10:00:00Z' }
+  ] }
+  const before = structuredClone({ debt, bill })
+  assert.deepEqual(getDebtPaymentHistory(debt, bill).map(entry => entry.id), [
+    'reversed', 'skip:15:0', 'unrelated', 'statement:1', 'undated'
+  ])
+  assert.deepEqual({ debt, bill }, before)
+  assert.deepEqual(getDebtInstallmentProgress(debt), { completed: 1, total: 1, remaining: 0 })
+})
+
+test('inserting and moving plan installments preserves payment, skip, transaction and occurrence identities', () => {
+  const storage = createStorage()
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 1000 }], [], storage)
+  const schedule = createPaymentPlan([
+    { id: 'june', dueDate: '2027-06-14', amount: 20 },
+    { id: 'october', dueDate: '2027-10-14', amount: 40 }
+  ])
+  saveDebts([installmentDebt({ currentBalance: 90, interestRate: 0, paymentSchedule: schedule })], storage)
+  let { bills, debts } = synchronizeDebtBills(storage)
+  const occurrences = getBillOccurrencesInRange(bills, '2027-01-01', '2027-12-31')
+  const paidOccurrence = occurrences[1]
+  const { transaction } = createOccurrenceTransaction('out', paidOccurrence, '2027-10-13', storage)
+  recordDebtPaymentFromTransaction(7, transaction.id, {
+    billOccurrenceId: paidOccurrence.occurrenceId, scheduledDueDate: paidOccurrence.scheduledDate
+  }, storage)
+  ;({ bills, debts } = synchronizeDebtBills(storage))
+  saveBillData({ bills: [updateBillOccurrenceSkip(bills[0], '2027-06-14', true)] }, storage)
+  const history = structuredClone(debts[0].paymentHistory)
+  const accountData = loadSavedAccountData(storage)
+  // Save an unsorted plan, as an older backup or manual addition might supply.
+  debts[0].paymentSchedule = {
+    ...createPaymentPlan([...schedule.installments, { id: 'july', dueDate: '2027-07-14', amount: 30, installmentNumber: 3 }]),
+    installments: [...schedule.installments, { id: 'july', scheduledDate: '2027-07-14', dueDate: '2027-07-14', amount: 30, paid: false, installmentNumber: 3 }]
+  }
+  saveDebts(debts, storage)
+  assert.deepEqual(loadDebts(storage)[0].paymentSchedule.installments.map(row => row.id), ['june', 'july', 'october'])
+  ;({ bills, debts } = synchronizeDebtBills(storage))
+  debts[0].paymentSchedule = createPaymentPlan(debts[0].paymentSchedule.installments.map(row =>
+    row.id === 'june' ? { ...row, dueDate: '2027-11-14' } : row))
+  saveDebts(debts, storage)
+  ;({ bills, debts } = synchronizeDebtBills(storage))
+  const again = synchronizeDebtBills(storage)
+  assert.deepEqual(again, { bills, debts })
+  assert.deepEqual(debts[0].paymentSchedule.installments.map(row => [row.id, row.installmentNumber, row.amount]), [
+    ['july', 3, 30], ['october', 2, 40], ['june', 1, 20]
+  ])
+  assert.deepEqual(debts[0].paymentHistory, history)
+  assert.deepEqual(loadSavedAccountData(storage), accountData)
+  const updated = getBillOccurrencesInRange(bills, '2027-01-01', '2027-12-31', accountData.transactions)
+  assert.deepEqual(updated.map(row => [row.dueDate, row.amount]), [
+    ['2027-07-14', 30], ['2027-10-14', 40], ['2027-11-14', 20]
+  ])
+  assert.equal(updated[1].occurrenceId, paidOccurrence.occurrenceId)
+  assert.equal(updated[1].paid, true)
+  assert.equal(updated[2].occurrenceId, occurrences[0].occurrenceId)
+  assert.equal(updated[2].skipped, true)
+  assert.deepEqual(bills[0].occurrenceOverrides.map(row => row.dueDate), updated.map(row => row.dueDate))
+  assert.deepEqual(getDebtScheduledPayments(debts[0]).map(row => row.dueDate), updated.map(row => row.dueDate))
+  assert.deepEqual(JSON.parse(SANITIZERS[DEBT_STORAGE_KEY](storage.getItem(DEBT_STORAGE_KEY))).debts, debts)
+})
 
 test('generated explicit plans divide cents evenly and preserve calendar anchors', () => {
   const example = generatePaymentPlan('188.28', 4, '2026-11-20', 'biweekly')

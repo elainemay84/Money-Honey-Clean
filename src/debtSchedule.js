@@ -49,14 +49,24 @@ export function scheduleFromForm(schedule, nextDate) {
   }
 }
 
+export function sortPaymentPlanInstallments(installments) {
+  return [...installments].sort((a, b) => {
+    const aValid = isScheduleDate(a.dueDate)
+    const bValid = isScheduleDate(b.dueDate)
+    if (aValid !== bValid) return aValid ? -1 : 1
+    return aValid ? a.dueDate.localeCompare(b.dueDate) : 0
+  })
+}
+
 export function createPaymentPlan(installments = []) {
-  const rows = installments.map((row, index) => ({
+  const rows = sortPaymentPlanInstallments(installments.map((row, index) => ({
+    ...row,
     scheduledDate: row.scheduledDate || row.dueDate,
     dueDate: row.dueDate,
     amount: parseFinancialAmount(row.amount, `Installment ${index + 1} amount`),
     paid: row.paid === true,
     installmentNumber: row.installmentNumber ?? index + 1
-  }))
+  })))
   return {
     kind: 'payment-plan', frequency: 'explicit',
     startDate: rows.map(row => row.scheduledDate).sort()[0] ?? '',
@@ -238,8 +248,8 @@ function scheduledDate(schedule, index) {
 
 export function getDebtScheduledPayments(debt, limit = 12) {
   const schedule = debt.paymentSchedule
-  if (schedule?.kind === 'payment-plan') return schedule.installments.filter(row => !row.paid)
-    .map(row => ({ ...row, dueDate: schedule.dateAdjustments?.find(item => item.scheduledDate === row.scheduledDate)?.dueDate ?? row.dueDate }))
+  if (schedule?.kind === 'payment-plan') return sortPaymentPlanInstallments(schedule.installments.filter(row => !row.paid)
+    .map(row => ({ ...row, dueDate: schedule.dateAdjustments?.find(item => item.scheduledDate === row.scheduledDate)?.dueDate ?? row.dueDate })))
   if (!schedule || !isScheduleDate(schedule.startDate)) return []
   const finite = schedule.totalInstallments != null
   const count = finite ? schedule.totalInstallments - schedule.completedInstallments : limit
@@ -273,9 +283,13 @@ export function getDebtInstallmentProgress(debt) {
 }
 
 export function getPaidInstallmentNumbers(debt) {
-  const slots = getDebtScheduledPayments(debt)
+  const slots = debt.paymentSchedule?.kind === 'payment-plan'
+    ? debt.paymentSchedule.installments : getDebtScheduledPayments(debt)
   return new Set((debt.paymentHistory ?? []).filter(payment => !payment.reversedAt)
-    .map(payment => payment.installmentNumber ?? slots.find(item => item.scheduledDate === payment.scheduledDueDate)?.installmentNumber)
+    .map(payment => payment.installmentNumber ?? slots.find(item =>
+      item.scheduledDate === payment.scheduledDueDate
+      || (debt.billId != null && payment.billOccurrenceId === `bill:${debt.billId}:${item.scheduledDate}`)
+    )?.installmentNumber)
     .filter(Number.isInteger))
 }
 

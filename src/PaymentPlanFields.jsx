@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import FinancialInput from './FinancialInput'
-import { createPaymentPlan, generatePaymentPlan, PAYMENT_FREQUENCY_OPTIONS, validatePaymentSchedule } from './debtSchedule.js'
+import { createPaymentPlan, generatePaymentPlan, PAYMENT_FREQUENCY_OPTIONS, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 
-export default function PaymentPlanFields({ rows, onChange, fieldStyle, labelStyle, paymentHistory = [], balance, hasBillHistory = false }) {
+export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldStyle, labelStyle, paymentHistory = [], balance, hasBillHistory = false }) {
+  const rows = useMemo(() => sortPaymentPlanInstallments(sourceRows), [sourceRows])
   const [count, setCount] = useState('4')
   const [firstDate, setFirstDate] = useState('')
   const [frequency, setFrequency] = useState('biweekly')
@@ -12,7 +13,7 @@ export default function PaymentPlanFields({ rows, onChange, fieldStyle, labelSty
   const canGenerate = !paymentHistory.length && !hasBillHistory
   const visiblePreview = preview?.source === rows && preview.balance === balance ? preview.rows : null
   function change(index, changes) {
-    onChange(rows.map((row, i) => i === index ? { ...row, ...changes } : row))
+    onChange(sortPaymentPlanInstallments(rows.map((row, i) => i === index ? { ...row, ...changes } : row)))
   }
   function generate() {
     try {
@@ -20,7 +21,7 @@ export default function PaymentPlanFields({ rows, onChange, fieldStyle, labelSty
       const firstNumber = Math.max(0, ...paid.map((row, index) => row.installmentNumber ?? index + 1))
       const generated = generatePaymentPlan(balance, count, firstDate, frequency).installments
         .map((row, index) => ({ ...row, installmentNumber: firstNumber + index + 1 }))
-      const combined = [...paid, ...generated]
+      const combined = sortPaymentPlanInstallments([...paid, ...generated])
       validatePaymentSchedule(createPaymentPlan(combined))
       setPreview({ source: rows, balance, rows: combined })
       setError('')
@@ -67,7 +68,7 @@ export default function PaymentPlanFields({ rows, onChange, fieldStyle, labelSty
       {rows.map((row, index) => {
         const locked = recorded.has(row.installmentNumber)
         return (
-          <div key={index} style={{ display: 'grid', gap: 4, paddingBottom: 8, borderBottom: '1px solid #E9D6B7' }}>
+          <div key={row.installmentNumber} style={{ display: 'grid', gap: 4, paddingBottom: 8, borderBottom: '1px solid #E9D6B7' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               <label style={labelStyle}>Due date {index + 1}
                 <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate} disabled={locked}

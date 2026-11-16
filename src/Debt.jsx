@@ -5,7 +5,7 @@ import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
 import PaymentPlanFields from './PaymentPlanFields'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
-import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
@@ -19,6 +19,7 @@ import {
   deleteDebt,
   deleteDebtAssignee,
   getDebtPaymentCalculationMethod,
+  getDebtPaymentHistory,
   getAvailableCredit,
   getDebtAssignee,
   getMatchingDebtBill,
@@ -150,10 +151,7 @@ export default function Debt({ statementExtractor } = {}) {
     ? bills.find(bill => bill.id === selectedDebt.billId && bill.debtId === selectedDebt.id)
       ?? bills.find(bill => bill.debtId === selectedDebt.id)
     : null
-  const selectedSkipHistory = (selectedDebtBill?.paymentHistory ?? [])
-    .filter(entry => typeof entry.skipped === 'boolean')
-    .slice()
-    .reverse()
+  const selectedPaymentHistory = selectedDebt ? getDebtPaymentHistory(selectedDebt, selectedDebtBill) : []
   const scheduleStatusFor = debt => getDebtScheduleStatus(
     debt,
     bills,
@@ -394,7 +392,7 @@ export default function Debt({ statementExtractor } = {}) {
     if (result.installments?.length || addMode === 'plan-scan') {
       if (!current.paymentHistory.length && !(current.id != null && bills.some(bill => bill.debtId === current.id && bill.paymentHistory?.length))) {
         updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit',
-          installments: (result.installments ?? []).map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
+          installments: sortPaymentPlanInstallments((result.installments ?? []).map((row, index) => ({ ...row, installmentNumber: index + 1 }))) }
       }
     } else if (values.provider && !editingDebt && current.paymentSchedule?.kind !== 'payment-plan' && !current.paymentHistory.length) {
       updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: [] }
@@ -404,7 +402,7 @@ export default function Debt({ statementExtractor } = {}) {
 
   function changeNewPlanRows(installments) {
     setPreservePlanRows(true)
-    setFormValues(current => ({ ...current, paymentSchedule: { ...current.paymentSchedule, installments } }))
+    setFormValues(current => ({ ...current, paymentSchedule: { ...current.paymentSchedule, installments: sortPaymentPlanInstallments(installments) } }))
   }
 
   function openAssigneeManager() {
@@ -771,7 +769,7 @@ export default function Debt({ statementExtractor } = {}) {
             <div style={{ marginTop: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#79502A', fontSize: 11 }}>
                 <strong>Payoff Progress</strong>
-                <span>{getDebtProgress(selectedDebt).toFixed(0)}% paid</span>
+                <span>{getDebtProgress(selectedDebt).toFixed(0)}% of balance paid off</span>
               </div>
               <div
                 role="progressbar"
@@ -790,23 +788,25 @@ export default function Debt({ statementExtractor } = {}) {
               </div>
             </div>
             <h3 style={{ margin: '12px 0 5px', color: '#79502A', fontSize: 13 }}>Payment History</h3>
-            <div style={{ minHeight: 0, maxHeight: 'min(30dvh, 220px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-              {selectedDebt.paymentHistory.length || selectedSkipHistory.length ? (
-                <>
-              {[...selectedDebt.paymentHistory].reverse().map(payment => {
+            <div aria-label="Payment History" style={{ minHeight: 0, maxHeight: 'min(30dvh, 220px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+              {selectedPaymentHistory.length ? selectedPaymentHistory.map(payment => {
+                const statementPaid = payment.source === 'statement'
+                const skip = payment.source === 'skip'
                 const transaction = linkedTransactions.find(item => item.id === payment.transactionId)
-                const status = payment.reversedAt
+                const status = statementPaid ? 'Paid on statement'
+                  : skip ? payment.skipped ? 'Skipped' : 'Restored'
+                  : payment.reversedAt
                   ? 'Reversed'
                   : transaction?.cleared
                     ? 'Cleared'
                     : transaction
                       ? 'Uncleared'
                       : 'Transaction unavailable'
-                const paymentStatus = debtPaymentNeedsBalanceReview(selectedDebt, payment)
+                const paymentStatus = !statementPaid && !skip && debtPaymentNeedsBalanceReview(selectedDebt, payment)
                   ? `${status} · Review balance`
                   : status
                 return (
-                  <div key={payment.id} style={{
+                  <div key={`${payment.source}:${payment.id}`} style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
@@ -815,7 +815,15 @@ export default function Debt({ statementExtractor } = {}) {
                     borderTop: '1px solid #F1E6D7',
                     fontSize: 12
                   }}>
-                    <strong>Paid {displayDate(payment.date)}</strong>
+                    <div>
+                      <strong>{skip ? payment.skipped ? 'Skipped' : 'Skip undone'
+                        : statementPaid || !payment.date ? `Scheduled ${displayDate(payment.scheduledDueDate)}`
+                        : `Paid ${displayDate(payment.date)}`}</strong>
+                      {!statementPaid && <div style={{ marginTop: 1, color: '#9B7955', fontSize: 10 }}>
+                        {skip ? `Scheduled ${displayDate(payment.scheduledDueDate)}`
+                          : payment.billOccurrenceId ? 'Money Honey · Bills / Accounts' : 'Money Honey · Accounts'}
+                      </div>}
+                    </div>
                     <strong style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>{money(payment.total)}</strong>
                     <span style={{
                       minWidth: 54,
@@ -825,33 +833,7 @@ export default function Debt({ statementExtractor } = {}) {
                     }}>{paymentStatus}</span>
                   </div>
                 )
-              })}
-              {selectedSkipHistory.map((entry, index) => (
-                <div key={`skip:${selectedDebtBill.id}:${entry.dueDate}:${entry.changedAt}:${index}`} style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '6px 0',
-                  borderTop: '1px solid #F1E6D7',
-                  fontSize: 12
-                }}>
-                  <div>
-                    <strong>{entry.skipped ? 'Skipped' : 'Skip undone'}</strong>
-                    <div style={{ marginTop: 1, color: '#9B7955', fontSize: 10 }}>
-                      Scheduled {displayDate(entry.dueDate)}
-                    </div>
-                  </div>
-                  <strong style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
-                    {money(selectedDebtBill.amount)}
-                  </strong>
-                  <span style={{ minWidth: 54, textAlign: 'right', color: '#9B7955', fontSize: 10 }}>
-                    {entry.skipped ? 'Skipped' : 'Restored'}
-                  </span>
-                </div>
-              ))}
-                </>
-              ) : (
+              }) : (
                 <p style={{ margin: '3px 0 0', color: '#9B7955', fontSize: 12 }}>No payments recorded.</p>
               )}
             </div>
@@ -1128,8 +1110,8 @@ export default function Debt({ statementExtractor } = {}) {
                 <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'grid', gap: 8 }}>
                   <legend>Installments</legend>
                   {!formSchedule?.installments?.length && <p style={{ margin: 0, fontSize: 11 }}>No installment rows found. Complete the schedule settings or add installments manually.</p>}
-                  {(formSchedule?.installments ?? []).map((row, index, rows) => <details key={index}>
-                    <summary>{row.dueDate || 'Missing date'} · {String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'}{row.paid ? ' · Paid' : ''}</summary>
+                  {sortPaymentPlanInstallments(formSchedule?.installments ?? []).map((row, index, rows) => <details key={row.installmentNumber}>
+                    <summary>Installment {index + 1} · {row.dueDate || 'Missing date'} · {String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'}{row.paid ? ' · Paid' : ''}</summary>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
                       <label style={formLabel}>Due date {index + 1}
                         <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate ?? ''} style={inputStyle}

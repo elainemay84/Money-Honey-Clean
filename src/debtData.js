@@ -1,5 +1,5 @@
 import { loadSavedAccountData, saveAccountData } from './accountStorage.js'
-import { getDebtScheduledPayments, getNextScheduledDebtPayment, getPaidInstallmentNumbers, validatePaymentSchedule } from './debtSchedule.js'
+import { getDebtScheduledPayments, getNextScheduledDebtPayment, getPaidInstallmentNumbers, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 import {
   createBillId,
   getBillOccurrencesInRange,
@@ -171,7 +171,15 @@ export function loadDebts(storage = localStorage) {
   return loadDebtData(storage).debts
 }
 
+function sortDebtInstallments(debt) {
+  if (debt.paymentSchedule?.kind !== 'payment-plan') return debt
+  const installments = sortPaymentPlanInstallments(debt.paymentSchedule.installments)
+  if (installments.every((row, index) => row === debt.paymentSchedule.installments[index])) return debt
+  return { ...debt, paymentSchedule: { ...debt.paymentSchedule, installments } }
+}
+
 function saveDebtData({ debts, assignees }, storage) {
+  debts = debts.map(sortDebtInstallments)
   assertDebts(debts)
   validateDebtAssignees(assignees, debts)
   storage.setItem(DEBT_STORAGE_KEY, JSON.stringify({
@@ -313,6 +321,28 @@ export function getDebtPrincipalPaid(debt) {
   return roundMoney((debt.paymentHistory ?? [])
     .filter(payment => !payment.reversedAt)
     .reduce((sum, payment) => sum + payment.principal, 0))
+}
+
+// Display-only history: statement-paid rows must never become balance-changing payments.
+export function getDebtPaymentHistory(debt, bill = null) {
+  const recorded = debt.paymentHistory.map(payment => ({
+    ...payment, source: 'money-honey', dueDate: payment.date || payment.scheduledDueDate
+  }))
+  const paidNumbers = getPaidInstallmentNumbers(debt)
+  const statement = debt.paymentSchedule?.kind === 'payment-plan'
+    ? debt.paymentSchedule.installments.filter(row => row.paid && !paidNumbers.has(row.installmentNumber))
+      .map(row => ({
+        id: `statement:${row.installmentNumber}`, source: 'statement',
+        total: row.amount, dueDate: row.dueDate, scheduledDueDate: row.dueDate
+      }))
+    : []
+  const skips = (bill?.paymentHistory ?? []).filter(entry => typeof entry.skipped === 'boolean')
+    .map((entry, index) => ({
+      ...entry, id: `skip:${bill.id}:${index}`, source: 'skip',
+      scheduledDueDate: entry.dueDate, dueDate: entry.changedAt?.slice(0, 10) || entry.dueDate,
+      total: bill.occurrenceOverrides?.find(row => row.scheduledDate === entry.dueDate)?.amount ?? bill.amount
+    }))
+  return sortPaymentPlanInstallments([...recorded, ...statement, ...skips])
 }
 
 export function calculateOverallDebtSummary(debts) {
@@ -549,9 +579,18 @@ function updateDebtSchedule(bill, debt, managed) {
   const historicalNumbers = new Set(history.filter(item => historicalDates.has(item.scheduledDate))
     .map(item => item.installmentNumber).filter(Number.isInteger))
   const overrides = finite ? [
-    ...history.filter(item => historicalDates.has(item.scheduledDate)).map(item => ({
-      ...item, ...(schedule.dateAdjustments?.find(change => change.scheduledDate === item.scheduledDate) ?? {})
-    })),
+    ...history.filter(item => historicalDates.has(item.scheduledDate)).map(item => {
+      const row = schedule.kind === 'payment-plan'
+        ? schedule.installments.find(row => row.scheduledDate === item.scheduledDate) : null
+      return {
+        ...item,
+        ...(row ? {
+          dueDate: item.planDueDate !== row.dueDate ? row.dueDate : item.dueDate,
+          planDueDate: row.dueDate
+        } : {}),
+        ...(schedule.dateAdjustments?.find(change => change.scheduledDate === item.scheduledDate) ?? {})
+      }
+    }),
     ...generated.filter(item => !historicalDates.has(item.scheduledDate) && !paidNumbers.has(item.installmentNumber) && !historicalNumbers.has(item.installmentNumber)).map(item => {
       const previous = (bill.occurrenceOverrides ?? []).find(override => override.scheduledDate === item.scheduledDate)
       const explicit = schedule.kind === 'payment-plan'
@@ -582,7 +621,7 @@ function updateDebtSchedule(bill, debt, managed) {
     debtId: debt.id,
     debtManaged: managed,
     ...(managed ? { active: true, archived: false } : {}),
-    occurrenceOverrides: overrides
+    occurrenceOverrides: schedule?.kind === 'payment-plan' ? sortPaymentPlanInstallments(overrides) : overrides
   }
 }
 
@@ -594,6 +633,11 @@ export function synchronizeDebtBills(storage = localStorage, choices = {}) {
   let debtsChanged = false
 
   debts = debts.map(debt => {
+    const sorted = sortDebtInstallments(debt)
+    if (sorted !== debt) {
+      debt = sorted
+      debtsChanged = true
+    }
     const linked = bills.find(bill =>
       bill.id === debt.billId && (bill.debtId == null || bill.debtId === debt.id)
     )
