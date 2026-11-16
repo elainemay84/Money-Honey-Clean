@@ -356,6 +356,14 @@ test('account register keeps compact secondary dates over zoom-safe native picke
   assert.deepEqual(rows.map(row => row.querySelector('.account-transaction-date time').textContent), ['11/3/2026', '11/2/2026'])
   assert.equal(rows[0].querySelector('button').getAttribute('aria-pressed'), 'false')
   assert.equal(rows[1].querySelector('button').getAttribute('aria-pressed'), 'true')
+  // Happy DOM uses the fallback; browsers use the theme-aware color-mix declaration.
+  assert.equal(browser.getComputedStyle(rows[0]).backgroundColor, 'rgba(184, 117, 34, 0.08)')
+  assert.equal(browser.getComputedStyle(rows[1]).backgroundColor, 'transparent')
+  assert.equal(browser.getComputedStyle(rows[0]).transition, 'background-color 180ms ease')
+  assert.match(css.textContent, /\.account-transaction-row-uncleared\s*\{[^}]*background-color:\s*color-mix\(in srgb, var\(--theme-accent, #B87522\) 8%, transparent\)/)
+  for (const selector of ['.account-transaction-name', '.account-transaction-date', '.account-transaction-amount', '.account-transaction-running']) {
+    assert.equal(browser.getComputedStyle(rows[0].querySelector(selector)).backgroundColor, '', `${selector} must not cover the row tint`)
+  }
   assert.deepEqual([...container.querySelector('[aria-label="Transaction sorting order"]').options].map(option => option.value), ['desc', 'asc'])
   assert.ok(container.querySelector('.account-summary-card'))
   assert.equal(container.querySelector('.page-header h1').textContent, 'Investments')
