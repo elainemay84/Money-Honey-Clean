@@ -81,6 +81,25 @@ export function createPayInFourSchedule(balance, firstDueDate) {
   }
 }
 
+export function generatePaymentPlan(balance, paymentCount, firstDueDate, frequency = 'biweekly') {
+  const remainingTotal = parseFinancialAmount(balance, 'Remaining balance')
+  const count = parseInstallmentCount(paymentCount, 'Number of payments')
+  if (count < 1 || count > 600) throw new Error('Choose 1 to 600 payments.')
+  if (!isScheduleDate(firstDueDate)) throw new Error('Enter a valid first payment date.')
+  if (!PAYMENT_FREQUENCY_OPTIONS.some(([key]) => key === frequency)) throw new Error('Choose a valid payment frequency.')
+  const cents = Math.round(remainingTotal * 100)
+  if (!Number.isSafeInteger(cents) || cents < count) throw new Error('Remaining balance must allow at least one cent per payment.')
+  const schedule = createRecurringSchedule(frequency, firstDueDate)
+  const regular = Math.floor(cents / count)
+  const extra = cents % count
+  const plan = createPaymentPlan(Array.from({ length: count }, (_, index) => ({
+    dueDate: scheduledDate(schedule, index),
+    amount: (regular + (index < extra ? 1 : 0)) / 100
+  })))
+  validatePaymentSchedule(plan)
+  return plan
+}
+
 export function isScheduleDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? '')) return false
   const date = new Date(`${value}T00:00:00Z`)

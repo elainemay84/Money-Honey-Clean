@@ -38,6 +38,60 @@ test('installment OCR preserves incomplete rows and does not invent a year, amou
   assert.equal(parseDebtStatement(['Credit Card Statement', 'Next payment: $25 on November 16, 2026']).installments, undefined)
 })
 
+test('installment cards and PDF table rows populate exact dates, amounts and paid statuses', () => {
+  for (const provider of ['Afterpay - Payment schedule', 'Klarna', 'PayPal Pay Later', 'Affirm']) {
+    const result = parseDebtStatement([
+      provider, 'Payment schedule', 'Payment 1 of 4', '16 November 2026', '$24.99', 'Completed',
+      'Payment 2', 'November 30, 2026', '25.00', 'Upcoming',
+      '2026-12-14 | 25.01 | Unpaid',
+      'Payment 4: 2026-12-28 | $25.03 | Not paid',
+      'Purchase date: November 1, 2026', 'Remaining balance: $75.04'
+    ])
+    assert.deepEqual(result.installments, [
+      { dueDate: '2026-11-16', amount: '24.99', paid: true },
+      { dueDate: '2026-11-30', amount: '25', paid: false },
+      { dueDate: '2026-12-14', amount: '25.01', paid: false },
+      { dueDate: '2026-12-28', amount: '25.03', paid: false }
+    ])
+  }
+  assert.deepEqual(parseDebtStatement([
+    'Afterpay', '$25.01 November 16, 2026 Paid', '25.02 November 30, 2026 Upcoming'
+  ]).installments, [
+    { dueDate: '2026-11-16', amount: '25.01', paid: true },
+    { dueDate: '2026-11-30', amount: '25.02', paid: false }
+  ])
+})
+
+test('partial installment cards keep missing or invalid values blank without borrowing the next payment', () => {
+  const result = parseDebtStatement([
+    'Klarna', 'Number of installments: 6',
+    'Payment 1', '2026-11-16', 'Paid',
+    'Payment 2 $25.00 Upcoming',
+    '2026-12-14 $25.999 Unpaid',
+    'Payment 4 2026-12-28 -$20.00',
+    'Payment 5 2027-01-11 $20.00 $21.00',
+    'Payment 6', 'Remaining balance', '$100'
+  ])
+  assert.deepEqual(result.installments, [
+    { dueDate: '2026-11-16', amount: '', paid: true },
+    { dueDate: '', amount: '25', paid: false },
+    { dueDate: '2026-12-14', amount: '', paid: false },
+    { dueDate: '2026-12-28', amount: '', paid: false },
+    { dueDate: '2027-01-11', amount: '', paid: false },
+    { dueDate: '', amount: '', paid: false }
+  ])
+})
+
+test('summary dates on separate lines are not mistaken for incomplete installments', () => {
+  const result = parseDebtStatement([
+    'Afterpay', 'Purchase date', 'November 1, 2026',
+    'Next payment date', 'November 16, 2026',
+    'Remaining balance: $100'
+  ])
+  assert.equal(result.installments, undefined)
+  assert.equal(result.values.nextPaymentDue, '2026-11-16')
+})
+
 test('ordinary bills extract only explicit fields and leave conflicting or ambiguous values for review', () => {
   assert.deepEqual(parseBillStatement([
     'Biller: City Electric', 'Amount due: $81.23', 'Due date: November 30, 2026', 'Category: Housing & Utilities'

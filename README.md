@@ -94,13 +94,25 @@ using existing expense categories (including custom categories such as Gifts).
 Choose **Payment Plan** under Payment setup to reveal a compact installment list.
 Enter any number of installments, including monthly plans, with exact dates,
 unequal amounts, and optional **Paid on statement** statuses. Rows can be edited,
-added, or removed before saving. Missing dates and amounts require manual entry;
-no biweekly plan is assumed to be Pay in 4.
+added, or removed before saving. No biweekly plan is assumed to be Pay in 4.
 
 The private scanner also reads clearly labeled provider, merchant, original
 purchase amount, remaining balance, explicit categories, and visible dated
-installments. Review every suggestion; ambiguous or yearless installment dates
-are left blank. Scans may show only part of a plan: add any missing rows.
+installments, including separate date/amount/status lines and dated table rows.
+Recognized rows automatically populate the editable list, including partially
+read rows. Review every suggestion; ambiguous or yearless installment dates and
+unreadable amounts are left blank, never guessed. Correct these fields or add
+missing rows.
+
+If the statement lacks a full schedule, optionally open **Generate Schedule**.
+Choose the number of remaining payments, first payment date, and frequency, then
+**Preview Schedule**. The current remaining balance is divided evenly in cents;
+payments differ by at most one cent and sum to the exact balance. Monthly dates
+keep their original day, using the last day of shorter months.
+**Use Generated Schedule** replaces unpaid rows only after review, keeping
+statement-paid rows. Generated rows remain editable before saving. Generation is
+unavailable once a debt has payment history, to protect existing payment links.
+
 Saving creates one debt and one linked finite bill schedule containing only
 unpaid installments, not an indefinite recurrence. Rows recorded as paid on the
 statement count toward progress but never create historical bank transactions.
