@@ -1,3 +1,5 @@
+import { inferPaymentFrequency } from './debtSchedule.js'
+
 export const STATEMENT_FIELDS = [
   { key: 'name', label: 'Creditor / Debt Name', type: 'text' },
   { key: 'type', label: 'Debt Type', type: 'select' },
@@ -29,7 +31,7 @@ const labels = {
   currentBalance: /^(?:current(?: outstanding| remaining)? balance|remaining to pay|left to pay|balance remaining|remaining(?: balance)?|outstanding(?: principal)? balance|new balance(?: total)?|principal balance)(?=\s|:|$)\s*:?\s*/i,
   interestRate: /^(?:(?:purchase )?apr|annual percentage rate|interest rate)(?:\s*\(apr\))?\s*:?\s*/i,
   minimumPayment: /^(?:total )?minimum payment(?: due)?\s*:?\s*/i,
-  nextPaymentDue: /^(?:(?:next )?payment(?: due)? date|next payment due|next scheduled payment date|due date)\s*:?\s*/i,
+  nextPaymentDue: /^(?:(?:next )?payment(?: due)? date|next payment due|next scheduled payment date|(?:next )?due date)\s*:?\s*/i,
   purchaseAmount: /^(?:(?:original )?purchase (?:amount|total|price)|order total|order amount)(?=\s|:|$)\s*:?\s*/i,
   totalRepayment: /^(?:original )?(?:total repayment(?: amount)?|total financed(?: amount)?|total amount(?! due))\s*:?\s*/i,
   totalInterest: /^total interest\s*:?\s*/i,
@@ -70,6 +72,7 @@ function parseValue(key, value) {
   }
   if (key === 'name') {
     return value.length >= 2 && value.length <= 100 && value.replace(/\D/g, '').length < 5 && !/[*•●]{2}/.test(value)
+      && !/^(?:in progress|activity|payment activity|payment schedule|overview|summary)$/i.test(value)
       && !Object.values(labels).some(label => label.test(value)) ? value : null
   }
   if (key === 'type') return debtTypes.find(type => type.toLowerCase() === value.toLowerCase()) ?? null
@@ -128,7 +131,7 @@ function isoDate(year, month, day) {
   return parseDate(value)
 }
 
-export function parseDebtStatement(lines) {
+export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
   const candidates = Object.fromEntries(STATEMENT_FIELDS.map(field => [field.key, new Set()]))
   const scheduledPayments = new Set()
   const yearlessDue = new Set()
@@ -157,12 +160,15 @@ export function parseDebtStatement(lines) {
       add('totalInstallments', installments[2])
     }
     const paymentLabel = /^next (?:scheduled )?payment(?: amount)?\s*:?\s*/i.exec(line)
+      ?? (paymentPlan ? /^autopay(?: amount| payment)?\s*:?\s*/i.exec(line) : null)
     const upcoming = paymentLabel && /^(.+?)\s+on\s+(.+)$/i.exec(
       line.slice(paymentLabel[0].length).trim() || textLines[index + 1] || ''
     )
     if (upcoming) {
       add('nextPaymentAmount', upcoming[1])
       addDue(upcoming[2])
+    } else if (paymentLabel && /^autopay/i.test(line)) {
+      add('nextPaymentAmount', line.slice(paymentLabel[0].length).trim() || textLines[index + 1] || '')
     }
     // App screenshots often show "$296.74 scheduled for Nov 16" without a payment label.
     const scheduled = /^(\$\s*[\d,]+(?:\.\d{1,2})?)\s+(?:is\s+)?(?:scheduled|due)\s+(?:for|on)\s+(.+)$/i.exec(line)
@@ -196,7 +202,7 @@ export function parseDebtStatement(lines) {
       candidates.name.add(line)
     }
     if (index < 4 && /^[a-z][a-z &'.-]+$/i.test(line)
-      && !/\b(?:statement|purchase|payment|payments|balance|account|apr|plan|summary|activity|notice|details|due|overview|welcome|thank|your|remaining|paid|scheduled|total|interest|amount|back|close|done|cancel|menu|settings)\b/i.test(line)
+      && !/\b(?:statement|purchase|payment|payments|balance|account|apr|plan|summary|activity|notice|details|due|overview|welcome|thank|your|remaining|paid|scheduled|total|interest|amount|back|close|done|cancel|menu|settings|progress|autopay)\b/i.test(line)
       && parseValue('name', line) !== null) {
       headings.add(line)
     }
@@ -238,14 +244,32 @@ export function parseDebtStatement(lines) {
   }
   const warnings = []
   const scheduleWarnings = []
-  const planDetails = parsePaymentPlanStatement(textLines)
+  const planDetails = parsePaymentPlanStatement(textLines, { paymentPlan })
   Object.assign(values, planDetails.values)
+  if (paymentPlan) {
+    const names = new Set(textLines.flatMap(line => {
+      const named = /^(?:plan name|item|purchase name)\s*:\s*(.+)$/i.exec(line)
+        ?? /^(.+?)\s+on\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}\b/i.exec(line)
+      const name = named?.[1]?.trim()
+      return name && parseValue('name', name) && !/\b(?:payment|autopay|due|scheduled)\b/i.test(name) ? [name] : []
+    }))
+    if (names.size === 1) values.name = [...names][0]
+    else if (values.merchant) values.name = values.merchant
+    const next = planDetails.installments.filter(row => row.dueDate && !row.paid)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]
+    if (next) {
+      values.nextPaymentDue = next.dueDate
+      if (next.amount) values.nextPaymentAmount = next.amount
+    }
+    if (values.nextPaymentAmount) values.minimumPayment = values.nextPaymentAmount
+    if (!values.totalInstallments && planDetails.installments.length) values.totalInstallments = String(planDetails.installments.length)
+  }
   if (planDetails.installments.length) {
     if (!values.type) values.type = 'Other'
     if ((!values.name || values.name.toLowerCase() === values.provider?.toLowerCase()) && (values.provider || values.merchant)) {
       values.name = [values.provider, values.merchant].filter(Boolean).join(' - ')
     }
-    scheduleWarnings.push('Only visible installment dates and amounts were read. Complete any missing fields; no dates or amounts were generated.')
+    scheduleWarnings.push('Schedule found from statement. Review before saving.')
     if (values.totalInstallments && Number(values.totalInstallments) !== planDetails.installments.length) {
       scheduleWarnings.push('The visible rows do not match the stated installment count. Add the missing installments before saving.')
     }
@@ -259,7 +283,21 @@ export function parseDebtStatement(lines) {
     warnings.push('Already paid plus remaining balance does not match the total repayment. Review these amounts before saving.')
   }
   warnings.push(...scheduleWarnings)
-  return { values, missing, conflicts, ...(planDetails.installments.length ? { installments: planDetails.installments } : {}), ...(warnings.length ? { warnings } : {}) }
+  const rows = planDetails.installments
+  const planTerms = rows.length ? {
+    count: String(rows.length),
+    firstDate: rows.every(row => row.dueDate) ? rows.map(row => row.dueDate).sort()[0] : '',
+    frequency: inferPaymentFrequency(rows)
+  } : null
+  return {
+    values, missing: missing.filter(key => !Object.hasOwn(values, key)),
+    conflicts: conflicts.filter(key => !Object.hasOwn(values, key)),
+    ...(rows.length ? { installments: rows, planTerms } : {}), ...(warnings.length ? { warnings } : {})
+  }
+}
+
+export function parsePaymentPlanScan(lines) {
+  return parseDebtStatement(lines, { paymentPlan: true })
 }
 
 const ROW_DATE = /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?,?\s+\d{4})\b/i
@@ -277,12 +315,15 @@ function installmentAmount(text) {
   return /^(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?$/.test(cell) ? parseValue('nextPaymentAmount', cell) ?? '' : ''
 }
 
-export function parsePaymentPlanStatement(lines) {
+export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
   const values = {}
   const provider = new Set()
   const merchants = new Set()
   const categories = new Set()
   const installments = []
+  const timelineStart = paymentPlan
+    ? lines.findIndex(line => /^(?:(?:payment|recent) )?(?:activity|schedule|installments)\s*:?\s*$/i.test(line))
+    : -1
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].trim().replace(/\s*\|\s*/g, ' ')
     const brand = /^(?:provider\s*:\s*)?(Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)(?:\s*[-:]\s*.*|\s+(?:payment plan|payment schedule|pay in (?:3|4)))?$/i.exec(line)
@@ -291,10 +332,15 @@ export function parsePaymentPlanStatement(lines) {
     if (merchant && parseValue('merchant', merchant[1])) merchants.add(merchant[1])
     const category = /^(?:purchase )?category\s*:\s*(.+)$/i.exec(line)
     if (category && parseValue('purchaseCategory', category[1])) categories.add(category[1])
+    if (index < timelineStart) continue
     const rowLabel = INSTALLMENT_LABEL.test(line)
     const initialDate = ROW_DATE.exec(line) ?? PARTIAL_ROW_DATE.exec(line)
-    const dateRow = initialDate && /^(?:(?:due|upcoming|scheduled|unpaid|paid|completed|pending|overdue)\s*:?\s*)?(?:(?:\$\s*[\d,.]+|\d[\d,]*\.\d{2})\s+)?$/i.test(line.slice(0, initialDate.index))
-    const summaryDate = /^(?:(?:purchase|order|statement) date|next (?:scheduled )?payment(?: due)?(?: date)?|payment (?:due )?date|due date)\s*:?\s*$/i.test(lines[index - 1]?.trim() ?? '')
+    const datePrefix = initialDate ? line.slice(0, initialDate.index) : ''
+    const dateRow = initialDate && (/^(?:(?:due|upcoming|scheduled|unpaid|paid|completed|pending|overdue)\s*:?\s*)?(?:(?:\$\s*[\d,.]+|\d[\d,]*\.\d{2})\s+)?$/i.test(datePrefix)
+      || (paymentPlan && /^(?:(?:payment\s+)?(?:due|upcoming|scheduled|unpaid|paid|completed|pending|overdue)\s*:?\s*(?:on\s*)?)?$/i.test(
+        datePrefix.replace(/(?:\$\s*[\d,.]+|\d[\d,]*\.\d{2})\s*/, '').trim()
+      )))
+    const summaryDate = /^(?:(?:purchase|order|statement) date|next (?:scheduled )?payment(?: due)?(?: date)?|payment (?:due )?date|(?:next )?due date)\s*:?\s*$/i.test(lines[index - 1]?.trim() ?? '')
     if (!rowLabel && (!dateRow || summaryDate)) continue
     // Read a bounded vertical card (label, date, amount, status), stopping at the next installment.
     let consumed = 0
@@ -317,7 +363,7 @@ export function parsePaymentPlanStatement(lines) {
       installments.push({
         dueDate: dateMatch ? parseDate(dateMatch[0]) ?? '' : '',
         amount,
-        paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not(?: yet)? (?:paid|completed)|partially paid)\b/i.test(rowText)
+        paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not(?: yet)? (?:paid|completed)|partially paid|pending|failed|due|upcoming|scheduled)\b/i.test(rowText)
       })
       index += consumed
     }
@@ -325,7 +371,7 @@ export function parsePaymentPlanStatement(lines) {
   if (provider.size === 1) values.provider = [...provider][0]
   if (merchants.size === 1) values.merchant = [...merchants][0]
   if (categories.size === 1) values.purchaseCategory = [...categories][0]
-  const planContext = provider.size > 0 || lines.some(line => /\b(?:installments?|payments completed|payment plan|pay in \d+|\d+ (?:monthly |biweekly )?payments)\b/i.test(line))
+  const planContext = paymentPlan || provider.size > 0 || lines.some(line => /\b(?:installments?|payments completed|payment plan|pay in \d+|\d+ (?:monthly |biweekly )?payments)\b/i.test(line))
   return { values, installments: planContext ? installments : [] }
 }
 

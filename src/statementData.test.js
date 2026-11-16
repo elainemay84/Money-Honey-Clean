@@ -1,8 +1,81 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getReliableOcrLines, parseBillStatement, parseDebtStatement, validateStatementSuggestions } from './statementData.js'
+import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, validateStatementSuggestions } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
 import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
+
+test('monthly activity timeline uses the item name, exact visible installments and adjusted final cents', () => {
+  const dates = ['Dec 15, 2026', 'Jan 15, 2027', 'Feb 15, 2027', 'Mar 15, 2027',
+    'Apr 15, 2027', 'May 15, 2027', 'Jun 15, 2027', 'Jul 15, 2027',
+    'Aug 15, 2027', 'Sep 15, 2027', 'Oct 15, 2027', 'Nov 15, 2027']
+  const lines = ['In progress', 'Electric Scooter on Nov 15', 'Remaining balance', '$628.98',
+    'Autopay: $52.42', 'Next due date', 'December 15, 2026',
+    '$52.42 due on December 15, 2026', 'Activity',
+    ...dates.flatMap((date, index) => [`${date} due`, index === 11 ? '$52.36' : '$52.42'])]
+  const result = parsePaymentPlanScan(lines)
+  assert.equal(result.values.name, 'Electric Scooter')
+  assert.equal(result.values.currentBalance, '628.98')
+  assert.equal(result.values.nextPaymentAmount, '52.42')
+  assert.equal(result.values.nextPaymentDue, '2026-12-15')
+  assert.equal(result.values.purchaseCategory, undefined)
+  assert.equal(result.values.totalInstallments, '12')
+  assert.deepEqual(result.planTerms, { count: '12', firstDate: '2026-12-15', frequency: 'monthly' })
+  assert.deepEqual(result.installments, dates.map((_, index) => ({
+    dueDate: index === 0 ? '2026-12-15' : `2027-${String(index).padStart(2, '0')}-15`,
+    amount: index === 11 ? '52.36' : '52.42', paid: false
+  })))
+  assert.equal(parseDebtStatement(lines).installments, undefined)
+})
+
+test('every-two-weeks activity timeline prioritizes rows over summary and preserves confident paid status', () => {
+  const result = parsePaymentPlanScan([
+    'In progress', 'Merchant: Example Store', 'Remaining balance: $75.03',
+    'Next payment: $99 on December 1, 2026', 'Activity',
+    'November 16, 2026 $25.00 Completed',
+    'Payment due on November 30, 2026 $25.01',
+    'December 14, 2026', '$25.01', 'Upcoming',
+    '$25.01 due on December 28, 2026 Not paid'
+  ])
+  assert.equal(result.values.name, 'Example Store')
+  assert.equal(result.values.nextPaymentDue, '2026-11-30')
+  assert.equal(result.values.nextPaymentAmount, '25.01')
+  assert.equal(result.values.minimumPayment, '25.01')
+  assert.deepEqual(result.planTerms, { count: '4', firstDate: '2026-11-16', frequency: 'biweekly' })
+  assert.deepEqual(result.installments.map(row => row.paid), [true, false, false, false])
+  assert.equal(result.installments.length, 4)
+})
+
+test('payment plan cadence inference handles calendar periods and leaves irregular or incomplete dates for review', () => {
+  for (const [frequency, dates] of [
+    ['weekly', ['2026-12-15', '2026-12-22', '2026-12-29']],
+    ['twice-monthly', ['2026-12-01', '2026-12-15', '2027-01-01', '2027-01-15']],
+    ['quarterly', ['2026-12-15', '2027-03-15', '2027-06-15']],
+    ['semiannual', ['2026-12-15', '2027-06-15', '2027-12-15']],
+    ['annual', ['2026-12-15', '2027-12-15', '2028-12-15']],
+    ['monthly', ['2027-01-31', '2027-02-28', '2027-03-31']],
+    ['', ['2026-12-15', '2027-01-16', '2027-02-15']],
+    ['', ['2026-12-15', 'Jan 15']]
+  ]) {
+    const result = parsePaymentPlanScan(['Activity', ...dates.map(date => `${date} $25.00 due`)])
+    assert.equal(result.planTerms.frequency, frequency)
+  }
+})
+
+test('partial activity timelines keep only visible rows without inferring missing amounts or category', () => {
+  const result = parsePaymentPlanScan([
+    'In progress', 'Electric Scooter', 'Remaining balance: $628.98', 'Number of installments: 12',
+    'Activity', 'Dec 15, 2026 $52.42 due', 'Jan 15, 2027 $52.42 due', 'Feb 15, 2027 due'
+  ])
+  assert.equal(result.values.name, 'Electric Scooter')
+  assert.equal(result.installments.length, 3)
+  assert.equal(result.installments[2].amount, '')
+  assert.equal(result.values.purchaseCategory, undefined)
+  assert.deepEqual(result.planTerms, { count: '3', firstDate: '2026-12-15', frequency: 'monthly' })
+  assert.equal(parsePaymentPlanScan(['In progress', 'Remaining balance: $25']).values.name, undefined)
+  assert.deepEqual(parsePaymentPlanScan(['Autopay: $25 on Dec 15, 2026']).values, {
+    minimumPayment: '25', nextPaymentAmount: '25', nextPaymentDue: '2026-12-15'
+  })
+})
 
 test('payment plans keep exact unequal amounts, arbitrary counts, and explicit paid statuses', () => {
   for (const [provider, count] of [['Afterpay', 3], ['Klarna', 4], ['Affirm', 6], ['PayPal Pay Later', 7]]) {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getDebtTypes } from './debtData.js'
-import { BILL_STATEMENT_FIELDS, STATEMENT_FIELDS, validateBillStatementSuggestions, validateStatementSuggestions } from './statementData.js'
+import { BILL_STATEMENT_FIELDS, STATEMENT_FIELDS, parsePaymentPlanScan, validateBillStatementSuggestions, validateStatementSuggestions } from './statementData.js'
 import { extractBillStatement, extractDebtStatement } from './statementExtraction.js'
 
 export default function StatementAutofill({
@@ -9,7 +9,9 @@ export default function StatementAutofill({
 }) {
   const fields = mode === 'bill' ? BILL_STATEMENT_FIELDS
     : STATEMENT_FIELDS.filter(field => !['totalInstallments', 'completedInstallments'].includes(field.key))
-  const extractor = extract ?? (mode === 'bill' ? extractBillStatement : extractDebtStatement)
+  const extractor = extract ?? (mode === 'bill' ? extractBillStatement : mode === 'payment plan'
+    ? (file, options) => extractDebtStatement(file, { ...options, parse: parsePaymentPlanScan })
+    : extractDebtStatement)
   const [open, setOpen] = useState(initialOpen)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
