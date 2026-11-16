@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, afterEach, beforeEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
-import { getReliableOcrLines, parseBillStatement, parseDebtStatement } from './statementData.js'
+import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { getBillOccurrencesInRange } from './billData.js'
@@ -203,6 +203,40 @@ async function openPaymentPlan(container, scan = false) {
   await click(button(container, scan ? 'Scan / Upload Payment Plan' : 'Enter Manually'))
 }
 
+test('activity timeline scan fills the payment plan form and saves exact scanned rows without regeneration', async () => {
+  const dates = ['2026-12-15', ...Array.from({ length: 11 }, (_, index) => `2027-${String(index + 1).padStart(2, '0')}-15`)]
+  const container = await render(() => React.createElement(Debt, {
+    statementExtractor: async () => parsePaymentPlanScan([
+      'In progress', 'Electric Scooter on Nov 15', 'Remaining balance: $628.98', 'Autopay: $52.42', 'Activity',
+      ...dates.map((date, index) => `${date} due $${index === 11 ? '52.36' : '52.42'}`)
+    ])
+  }))
+  await openPaymentPlan(container, true)
+  assert.match(container.textContent, /fill in your payment plan details/)
+  await chooseStatementFile(container, 'Statement image')
+  const form = container.querySelector('form')
+  assert.equal(form.querySelector('[aria-label="Debt name"]').value, 'Electric Scooter')
+  assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '628.98')
+  assert.equal(form.querySelector('[aria-label="Number of payments"]').value, '12')
+  assert.equal(form.querySelector('[aria-label="First payment date"]').value, dates[0])
+  assert.equal(form.querySelector('[aria-label="Generated schedule frequency"]').value, 'monthly')
+  assert.equal(form.querySelector('[aria-label="Purchase Category"]').value, '')
+  assert.match(form.textContent, /Schedule found from statement\. Review before saving\./)
+  assert.doesNotMatch(form.textContent, /visible rows do not match|no dates or amounts were generated|parser|diagnostic/i)
+  assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][type="date"]')].map(input => input.value), dates)
+  assert.equal(form.querySelector('[aria-label="Installment 12 amount"]').value, '52.36')
+  await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'weekly')
+  assert.equal(form.querySelector('[aria-label="Installment 2 date"]').value, dates[1])
+  await changeValue(form.querySelector('[aria-label="Purchase Category"]'), 'Shopping')
+  await submit(form)
+  const saved = loadDebts()[0]
+  assert.equal(saved.name, 'Electric Scooter')
+  assert.equal(saved.minimumPayment, 52.42)
+  assert.equal(saved.nextPaymentDue, dates[0])
+  assert.deepEqual(saved.paymentSchedule.installments.map(row => row.dueDate), dates)
+  assert.equal(saved.paymentSchedule.installments.at(-1).amount, 52.36)
+})
+
 test('scanned payment plan rows are editable before save and Bills records one linked payment with the chosen date', async () => {
   const date = localDate()
   const previous = shiftDate(date, -14)
@@ -307,7 +341,8 @@ test('manual payment plans generate immediately and save using only the required
     ['2026-11-20', '2026-12-04', '2026-12-18', '2027-01-01'])
   assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][inputmode="decimal"]')].map(input => input.value),
     ['47.07', '47.07', '47.07', '47.07'])
-  assert.deepEqual([...form.querySelector('[aria-label="Generated schedule frequency"]').options].map(option => option.value), ['', 'biweekly', 'monthly'])
+  assert.deepEqual([...form.querySelector('[aria-label="Generated schedule frequency"]').options].map(option => option.value),
+    ['', 'weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'semiannual', 'annual'])
   await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'monthly')
   assert.equal(form.querySelector('[aria-label="Installment 2 date"]').value, '2026-12-20')
   await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'biweekly')
@@ -333,8 +368,8 @@ test('partial scanned schedules are preserved when plan inputs change', async ()
   const form = container.querySelector('form')
   assert.equal(form.querySelector('[aria-label="Installment 1 amount"]').value, '30')
   assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '')
-  assert.equal(form.querySelector('[aria-label="Installment 3 date"]').value, '')
-  assert.equal(form.querySelector('[aria-label="Installment 4 amount"]').value, '')
+  assert.equal(form.querySelector('[aria-label="Installment 3 date"]'), null)
+  assert.equal(form.querySelector('[aria-label="Number of payments"]').value, '2')
   await submit(form)
   assert.ok(form.querySelector('[role="alert"]'))
   assert.equal(loadDebts().length, 0)

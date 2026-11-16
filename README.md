@@ -94,7 +94,8 @@ scan a statement. Enter a merchant or plan name, purchase category, remaining
 balance, number of remaining payments, first upcoming date, and frequency. The
 editable installment list is calculated automatically: amounts differ by at
 most one cent and sum to the balance, and monthly dates keep their original day
-where possible.
+where possible. Frequencies include weekly, every two weeks, twice monthly,
+monthly, quarterly, every six months, and yearly.
 
 The private scanner also reads clearly labeled provider, merchant, original
 purchase amount, remaining balance, explicit categories, and visible dated
@@ -104,9 +105,21 @@ read rows. Review every suggestion; ambiguous or yearless installment dates and
 unreadable amounts are left blank, never guessed. Correct these fields or add
 missing rows.
 
+**Scan Payment Plan** also reads activity timelines without provider or installment
+labels. It prefers the item or merchant name over generic headings such as
+"In progress" and fills the next payment from the earliest visible unpaid row.
+Consistent visible dates prefill the number of payments, first payment date, and
+frequency. Exact amounts are retained, including a final payment with adjusted
+cents; only clearly paid/completed rows are marked paid. Uncertain purchase
+categories remain blank. The form shows "Schedule found from statement. Review
+before saving." rather than parser details.
+
 Scanned installments take precedence over generated schedules. Complete or correct
 missing dates and amounts in the list before saving; changing the plan inputs
-does not silently replace scanned rows.
+does not silently replace scanned rows. A partial timeline contains only its
+visible rows, even if the statement mentions a larger total; missing future
+payments are not invented. Activity-timeline inference is specific to Add Payment
+Plan and does not add installment controls to ordinary Add Debt or Add Bill.
 
 Saving creates one debt and one linked finite bill schedule containing only
 unpaid installments, not an indefinite recurrence. Rows recorded as paid on the

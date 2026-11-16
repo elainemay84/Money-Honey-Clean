@@ -106,6 +106,21 @@ export function isScheduleDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
+export function inferPaymentFrequency(installments) {
+  if (installments.length < 2 || installments.some(row => !isScheduleDate(row.dueDate))) return ''
+  const dates = installments.map(row => row.dueDate).sort()
+  for (const [frequency] of PAYMENT_FREQUENCY_OPTIONS) {
+    const schedule = createRecurringSchedule(frequency, dates[0])
+    if (frequency === 'twice-monthly') {
+      const days = [...new Set(dates.map(date => Number(date.slice(-2))))].sort((a, b) => a - b)
+      if (dates.length < 3 || days.length !== 2) continue
+      schedule.daysOfMonth = days
+    }
+    if (dates.every((date, index) => date === scheduledDate(schedule, index))) return frequency
+  }
+  return ''
+}
+
 export function validatePaymentSchedule(schedule) {
   if (schedule == null) return
   if (schedule.dateAdjustments != null) {
@@ -211,7 +226,7 @@ function scheduledDate(schedule, index) {
   const date = new Date(`${schedule.startDate}T00:00:00Z`)
   if (MONTH_STEPS[schedule.frequency]) {
     // Calendar periods: later months use the usual due day, clamped to shorter months.
-    const day = index === 0 ? date.getUTCDate() : schedule.dueDay ?? date.getUTCDate()
+    const day = index === 0 || schedule.dueDay === '' ? date.getUTCDate() : schedule.dueDay ?? date.getUTCDate()
     date.setTime(clampedDate(date.getUTCFullYear(), date.getUTCMonth() + MONTH_STEPS[schedule.frequency] * index, day).getTime())
   } else if (schedule.frequency === 'twice-monthly') {
     date.setTime(twiceMonthlyDate(schedule, index).getTime())

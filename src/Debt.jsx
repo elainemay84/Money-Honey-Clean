@@ -5,7 +5,7 @@ import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
 import PaymentPlanFields from './PaymentPlanFields'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
-import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
@@ -111,21 +111,6 @@ function blankDebt() {
     paymentSchedule: defaultSchedule(),
     paymentHistory: []
   }
-}
-
-function statementPlanRows(values, installments = []) {
-  const rows = installments.map((row, index) => ({ ...row, installmentNumber: index + 1 }))
-  const total = Number(values.totalInstallments)
-  const completed = Number(values.completedInstallments || 0)
-  const paidRows = rows.filter(row => row.paid === true).length
-  if (Number.isInteger(total) && total > 0 && total <= 600
-    && Number.isInteger(completed) && completed >= 0 && completed <= total) {
-    const expectedRows = total - Math.max(0, completed - paidRows)
-    while (rows.length < expectedRows) {
-      rows.push({ dueDate: '', amount: '', paid: false, installmentNumber: rows.length + 1 })
-    }
-  }
-  return rows
 }
 
 export default function Debt({ statementExtractor } = {}) {
@@ -409,9 +394,8 @@ export default function Debt({ statementExtractor } = {}) {
     }
     if (result.installments?.length || addMode === 'plan-scan') {
       if (!current.paymentHistory.length && !(current.id != null && bills.some(bill => bill.debtId === current.id && bill.paymentHistory?.length))) {
-        updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: addMode === 'plan-scan' || isNewPaymentPlan
-          ? statementPlanRows(values, result.installments ?? [])
-          : result.installments.map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
+        updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit',
+          installments: (result.installments ?? []).map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
       }
     } else if (values.provider && !editingDebt && current.paymentSchedule?.kind !== 'payment-plan' && !current.paymentHistory.length) {
       updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: [] }
@@ -890,6 +874,7 @@ export default function Debt({ statementExtractor } = {}) {
             </h2>
             <StatementAutofill
               initialOpen currentValues={{}} fieldStyle={inputStyle} buttonStyle={control} extract={statementExtractor}
+              mode={addMode === 'plan-scan' ? 'payment plan' : 'debt'}
               onManual={addMode === 'plan-scan' ? openNewPaymentPlan : openNewDebt} onClose={() => { setAddMode(null); addMenuRef.current?.querySelector('button')?.focus() }}
               onExtract={result => {
                 const draft = applyStatement(result.values, { ...blankDebt(), type: '' }, result)
@@ -898,7 +883,7 @@ export default function Debt({ statementExtractor } = {}) {
                 setPreservePlanRows(Boolean(result.installments?.length))
                 const total = Number(result.values.totalInstallments)
                 const completed = Number(result.values.completedInstallments || 0)
-                setPlanTerms({ count: total > completed ? String(total - completed) : '', firstDate: result.values.nextPaymentDue || '', frequency: '' })
+                setPlanTerms(result.planTerms ?? { count: total > completed ? String(total - completed) : '', firstDate: result.values.nextPaymentDue || '', frequency: '' })
                 if (paymentPlan) {
                   draft.type ||= 'Other'
                   draft.name ||= draft.merchant || ''
@@ -965,9 +950,11 @@ export default function Debt({ statementExtractor } = {}) {
             <h2 style={{ margin: '0 0 12px', color: '#79502A' }}>{editingDebtId === null ? isNewPaymentPlan ? 'Add Payment Plan' : 'Add Debt' : 'Edit Debt'}</h2>
             <form onSubmit={saveDebt} style={{ display: 'grid', gap: 10 }}>
               {statementReview && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>
-                Statement scanned. Review your information before saving.
+                {isNewPaymentPlan && statementReview.installments?.length
+                  ? 'Schedule found from statement. Review before saving.'
+                  : 'Statement scanned. Review your information before saving.'}
               </p>}
-              {(statementReview?.warnings ?? []).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
+              {(!isNewPaymentPlan ? statementReview?.warnings ?? [] : []).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
               {isNewPaymentPlan && <>
                 <label style={formLabel}>Plan Name
                   <input aria-label="Debt name" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
@@ -1135,8 +1122,7 @@ export default function Debt({ statementExtractor } = {}) {
                   <select aria-label="Generated schedule frequency" value={planTerms.frequency} style={inputStyle}
                     onChange={event => setPlanTerms({ ...planTerms, frequency: event.target.value })}>
                     <option value="">Choose frequency</option>
-                    <option value="biweekly">Every 2 Weeks</option>
-                    <option value="monthly">Monthly</option>
+                    {PAYMENT_FREQUENCY_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </label>
                 {preservePlanRows && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>Individual rows kept; adjust them below.</p>}

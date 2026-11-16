@@ -59,6 +59,13 @@ test('generated explicit plans divide cents evenly and preserve calendar anchors
   ])
   const monthly = generatePaymentPlan('99.99', 4, '2028-01-31', 'monthly')
   assert.deepEqual(monthly.installments.map(row => row.dueDate), ['2028-01-31', '2028-02-29', '2028-03-31', '2028-04-30'])
+  for (const [frequency, dates] of [
+    ['quarterly', ['2026-11-30', '2027-02-28', '2027-05-30']],
+    ['semiannual', ['2026-11-30', '2027-05-30', '2027-11-30']],
+    ['annual', ['2026-11-30', '2027-11-30', '2028-11-30']]
+  ]) {
+    assert.deepEqual(generatePaymentPlan('75', 3, dates[0], frequency).installments.map(row => row.dueDate), dates)
+  }
   for (const [balance, count] of [['0.05', 4], ['99.99', 4], ['1,000,000.01', 13], ['6.01', 600]]) {
     const plan = generatePaymentPlan(balance, count, '2026-11-16', 'weekly')
     const cents = plan.installments.map(row => Math.round(row.amount * 100))
