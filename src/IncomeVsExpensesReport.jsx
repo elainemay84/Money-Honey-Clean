@@ -4,6 +4,7 @@ import {
   getIncomeExpenseColors,
   getIncomeVsExpenses
 } from './reportData.js'
+import ReportBreakdown, { BreakdownButton, BreakdownChevron } from './ReportBreakdown.jsx'
 
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
@@ -21,24 +22,26 @@ function netSummary(net) {
   return 'Income and expenses were equal.'
 }
 
-function BarRow({ label, amount, share, color }) {
+function BarRow({ label, amount, share, color, entries, expanded, onToggle, onEditTransaction, unmatchedRefundTotal }) {
   return (
     <div data-report-bar={label} style={{ marginBottom: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, marginBottom: 3 }}>
-        <span style={{ textAlign: 'left' }}>{label}</span>
+      <BreakdownButton aria-expanded={expanded} onClick={onToggle} style={{ fontSize: 13, padding: '3px 0' }}>
+        <span style={{ flex: 1 }}>{label}</span>
         <strong>{money(amount)}</strong>
-      </div>
+        <BreakdownChevron expanded={expanded} />
+      </BreakdownButton>
       <div style={{ height: 12, borderRadius: 6, background: 'var(--theme-border, #EADBC8)', overflow: 'hidden' }}>
         <div
           data-report-bar-fill={label}
           style={{ width: `${(share * 100).toFixed(2)}%`, height: '100%', borderRadius: 6, background: color }}
         />
       </div>
+      {expanded && <ReportBreakdown entries={entries} subtotal={amount} unmatchedRefundTotal={unmatchedRefundTotal} onEditTransaction={onEditTransaction} />}
     </div>
   )
 }
 
-export default function IncomeVsExpensesReport({ transactions, categories, accounts, month, cardColor }) {
+export default function IncomeVsExpensesReport({ transactions, categories, accounts, month, cardColor, breakdowns, expanded, onToggleBreakdown, onEditTransaction }) {
   const report = getIncomeVsExpenses({ transactions, month, categories, accounts })
   const label = formatMonthLabel(month)
   const colors = getIncomeExpenseColors(cardColor)
@@ -54,11 +57,19 @@ export default function IncomeVsExpensesReport({ transactions, categories, accou
         </p>
       ) : (
         <>
-          <div role="img" aria-label={`Income ${money(report.income)} compared with expenses ${money(report.expenses)} for ${label}`}>
-            <BarRow label="Income" amount={report.income} share={shares.income} color={colors.income} />
-            <BarRow label="Expenses" amount={report.expenses} share={shares.expenses} color={colors.expenses} />
+          <div role="group" aria-label={`Income ${money(report.income)} compared with expenses ${money(report.expenses)} for ${label}`}>
+            <BarRow label="Income" amount={report.income} share={shares.income} color={colors.income} entries={breakdowns.income} expanded={expanded === 'income'} onToggle={() => onToggleBreakdown('income')} onEditTransaction={onEditTransaction} />
+            <BarRow label="Expenses" amount={report.expenses} share={shares.expenses} color={colors.expenses} entries={breakdowns.spending} expanded={expanded === 'expenses'} onToggle={() => onToggleBreakdown('expenses')} onEditTransaction={onEditTransaction} unmatchedRefundTotal={report.unmatchedRefundTotal} />
           </div>
 
+          <div style={{ fontSize: 13, borderTop: '1px solid var(--theme-border, #EADBC8)' }}>
+            <BreakdownButton aria-expanded={expanded === 'debt'} onClick={() => onToggleBreakdown('debt')}>
+              <span style={{ flex: 1 }}>Debt Payments</span>
+              <strong>{money(report.debtPayments)}</strong>
+              <BreakdownChevron expanded={expanded === 'debt'} />
+            </BreakdownButton>
+            {expanded === 'debt' && <ReportBreakdown entries={breakdowns.debtPayments} subtotal={report.debtPayments} onEditTransaction={onEditTransaction} />}
+          </div>
           <div
             data-report-net
             style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', padding: '6px 0 0', borderTop: '1px solid var(--theme-border, #EADBC8)' }}

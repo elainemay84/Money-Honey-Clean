@@ -18,7 +18,9 @@ export default function ClassificationReviewReport({
   categories,
   accounts,
   month,
-  onEditTransaction
+  onEditTransaction,
+  expanded,
+  onToggleBreakdown
 }) {
   const flags = getReportFlags({ transactions, month, categories, accounts })
   if (flags.length === 0) return null
@@ -33,8 +35,8 @@ export default function ClassificationReviewReport({
   return (
     <section aria-labelledby="needs-classification-title" style={card}>
       <h2 id="needs-classification-title" style={{ margin: '0 0 6px', fontSize: 16 }}>Needs classification</h2>
-      <details>
-        <summary style={{ cursor: 'pointer', fontSize: 13 }}>
+      <details open={expanded === 'classification'}>
+        <summary onClick={event => { event.preventDefault(); onToggleBreakdown('classification') }} style={{ cursor: 'pointer', fontSize: 13 }}>
           {grouped.length} {grouped.length === 1 ? 'transaction' : 'transactions'} may need a category or type
         </summary>
         <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, fontSize: 12 }}>
