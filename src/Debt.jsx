@@ -5,7 +5,7 @@ import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
 import PaymentPlanFields from './PaymentPlanFields'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
-import { defaultSchedule, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
@@ -113,6 +113,21 @@ function blankDebt() {
   }
 }
 
+function statementPlanRows(values, installments = []) {
+  const rows = installments.map((row, index) => ({ ...row, installmentNumber: index + 1 }))
+  const total = Number(values.totalInstallments)
+  const completed = Number(values.completedInstallments || 0)
+  const paidRows = rows.filter(row => row.paid === true).length
+  if (Number.isInteger(total) && total > 0 && total <= 600
+    && Number.isInteger(completed) && completed >= 0 && completed <= total) {
+    const expectedRows = total - Math.max(0, completed - paidRows)
+    while (rows.length < expectedRows) {
+      rows.push({ dueDate: '', amount: '', paid: false, installmentNumber: rows.length + 1 })
+    }
+  }
+  return rows
+}
+
 export default function Debt({ statementExtractor } = {}) {
   const [initialDebtData] = useState(() => loadDebtData())
   const [debts, setDebts] = useState(initialDebtData.debts)
@@ -123,6 +138,9 @@ export default function Debt({ statementExtractor } = {}) {
   const [selectedDebtId, setSelectedDebtId] = useState(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [addMode, setAddMode] = useState(null)
+  const [isNewPaymentPlan, setIsNewPaymentPlan] = useState(false)
+  const [planTerms, setPlanTerms] = useState({ count: '4', firstDate: '', frequency: 'biweekly' })
+  const [preservePlanRows, setPreservePlanRows] = useState(false)
   const addMenuRef = useRef(null)
   const statementDialogRef = useRef(null)
   const [statementReview, setStatementReview] = useState(null)
@@ -161,7 +179,13 @@ export default function Debt({ statementExtractor } = {}) {
     scheduleStatusFor(debt)
   ]))
   const selectedScheduleStatus = selectedDebt ? scheduleStatusFor(selectedDebt) : null
-  const formSchedule = formValues.paymentSchedule
+  let formSchedule = formValues.paymentSchedule
+  if (isNewPaymentPlan && !preservePlanRows) {
+    try {
+      formSchedule = generatePaymentPlan(formValues.currentBalance, planTerms.count, planTerms.firstDate, planTerms.frequency)
+    } catch { /* Keep incomplete scanned rows visible until generation inputs are supplied. */ }
+  }
+  const isPlanForm = isNewPaymentPlan || formSchedule?.kind === 'payment-plan'
   let formScheduleStatus
   let schedulePreviewError = ''
   try {
@@ -184,7 +208,7 @@ export default function Debt({ statementExtractor } = {}) {
   }
 
   useEffect(() => {
-    if (addMode !== 'menu') return
+    if (!['menu', 'plan-choice'].includes(addMode)) return
     const closeOutside = event => {
       if (!addMenuRef.current?.contains(event.target)) setAddMode(null)
     }
@@ -203,7 +227,7 @@ export default function Debt({ statementExtractor } = {}) {
   }, [addMode])
 
   useEffect(() => {
-    if (addMode !== 'scan') return
+    if (!['scan', 'plan-scan'].includes(addMode)) return
     const scanner = statementDialogRef.current
     scanner.querySelector('button')?.focus()
     const handleKey = event => {
@@ -256,13 +280,23 @@ export default function Debt({ statementExtractor } = {}) {
     setStatementReview(null)
     setSelectedDebtId(null)
     setEditingDebtId(null)
+    setIsNewPaymentPlan(false)
     setFormValues(blankDebt())
     setPaymentMethodWasSelected(false)
     setFormError('')
     setIsFormOpen(true)
   }
 
+  function openNewPaymentPlan() {
+    openNewDebt()
+    setIsNewPaymentPlan(true)
+    setPlanTerms({ count: '4', firstDate: '', frequency: 'biweekly' })
+    setPreservePlanRows(false)
+    setFormValues({ ...blankDebt(), type: 'Other', paymentSchedule: { kind: 'payment-plan', frequency: 'explicit', installments: [] } })
+  }
+
   function openEditDebt(debt) {
+    setIsNewPaymentPlan(false)
     setStatementReview(null)
     setSelectedDebtId(null)
     setEditingDebtId(debt.id)
@@ -324,10 +358,16 @@ export default function Debt({ statementExtractor } = {}) {
     try {
       const values = { ...formValues }
       delete values.customAssignee
+      if (isNewPaymentPlan && !formValues.purchaseCategory?.trim()) throw new Error('Choose a purchase category.')
+      if (isNewPaymentPlan && !preservePlanRows) {
+        generatePaymentPlan(formValues.currentBalance, planTerms.count, planTerms.firstDate, planTerms.frequency)
+      }
       const debt = validateDebt({
         ...values,
         id: editingDebtId ?? createDebtId(debts),
-        startingBalance: formValues.type === 'Credit Card' || formSchedule?.kind === 'pay-in-4'
+        startingBalance: isNewPaymentPlan
+          ? parseFinancialAmount(formValues.startingBalance === '' ? formValues.currentBalance : formValues.startingBalance, 'Starting balance')
+          : formValues.type === 'Credit Card' || formSchedule?.kind === 'pay-in-4'
           ? editingDebt?.startingBalance ?? parseFinancialAmount(formValues.currentBalance, 'Current balance')
           : parseFinancialAmount(formValues.startingBalance, 'Starting balance'),
         creditLimit: numeric(formValues.creditLimit, 'Credit limit'),
@@ -367,14 +407,21 @@ export default function Debt({ statementExtractor } = {}) {
       updated.paymentCalculationMethod = Number(values.interestRate) > 0
         ? DEBT_PAYMENT_CALCULATION_METHODS.MANUAL_PRINCIPAL : DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
     }
-    if (result.installments?.length) {
+    if (result.installments?.length || addMode === 'plan-scan') {
       if (!current.paymentHistory.length && !(current.id != null && bills.some(bill => bill.debtId === current.id && bill.paymentHistory?.length))) {
-        updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: result.installments.map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
+        updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: addMode === 'plan-scan' || isNewPaymentPlan
+          ? statementPlanRows(values, result.installments ?? [])
+          : result.installments.map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
       }
     } else if (values.provider && !editingDebt && current.paymentSchedule?.kind !== 'payment-plan' && !current.paymentHistory.length) {
       updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: [] }
     }
     return updated
+  }
+
+  function changeNewPlanRows(installments) {
+    setPreservePlanRows(true)
+    setFormValues(current => ({ ...current, paymentSchedule: { ...current.paymentSchedule, installments } }))
   }
 
   function openAssigneeManager() {
@@ -479,7 +526,7 @@ export default function Debt({ statementExtractor } = {}) {
   }
 
   return (
-    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: addMode === 'menu' ? 128 : 8 }}>
+    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: ['menu', 'plan-choice'].includes(addMode) ? 196 : 8 }}>
       <ResponsiveText style={{
         margin: '0 0 14px',
         color: '#B87522',
@@ -626,19 +673,30 @@ export default function Debt({ statementExtractor } = {}) {
         <button
           type="button"
           className="debt-fab-toggle"
-          aria-label={addMode === 'menu' ? 'Close add debt menu' : 'Add debt'}
-          aria-expanded={addMode === 'menu'}
-          aria-controls={addMode === 'menu' ? 'debt-add-actions' : undefined}
+          aria-label={['menu', 'plan-choice'].includes(addMode) ? 'Close add debt menu' : 'Add debt'}
+          aria-expanded={['menu', 'plan-choice'].includes(addMode)}
+          aria-controls={['menu', 'plan-choice'].includes(addMode) ? 'debt-add-actions' : undefined}
           onClick={() => {
             setSelectedDebtId(null)
-            setAddMode(mode => mode === 'menu' ? null : 'menu')
+            setAddMode(mode => ['menu', 'plan-choice'].includes(mode) ? null : 'menu')
           }}
         >
           <svg aria-hidden="true" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-        {addMode === 'menu' && <div id="debt-add-actions" role="group" aria-label="Add debt actions" className="debt-fab-actions">
+        {['menu', 'plan-choice'].includes(addMode) && <div id="debt-add-actions" role="group" aria-label={addMode === 'plan-choice' ? 'Add payment plan actions' : 'Add debt actions'} className="debt-fab-actions">
+          {addMode === 'plan-choice' ? <>
+            <button type="button" className="debt-fab-action" onClick={openNewPaymentPlan}>
+              <span className="debt-fab-label">Enter Manually</span>
+            </button>
+            <button type="button" className="debt-fab-action" onClick={() => {
+              setEditingDebtId(null)
+              setPaymentMethodWasSelected(false)
+              setAddMode('plan-scan')
+            }}><span className="debt-fab-label">Scan / Upload Payment Plan</span></button>
+            <button type="button" className="debt-fab-action" onClick={() => setAddMode('menu')}><span className="debt-fab-label">Back</span></button>
+          </> : <>
           <button type="button" className="debt-fab-action" onClick={openNewDebt}>
             <span className="debt-fab-label">Add Manually</span>
             <span className="debt-fab-circle">
@@ -660,6 +718,11 @@ export default function Debt({ statementExtractor } = {}) {
               </svg>
             </span>
           </button>
+          <button type="button" aria-label="Add Payment Plan" className="debt-fab-action" onClick={() => setAddMode('plan-choice')}>
+            <span className="debt-fab-label">Add Payment Plan</span>
+            <span className="debt-fab-circle" aria-hidden="true">≡</span>
+          </button>
+          </>}
         </div>}
       </div>
 
@@ -818,18 +881,33 @@ export default function Debt({ statementExtractor } = {}) {
         </div>
       )}
 
-      {addMode === 'scan' && (
+      {['scan', 'plan-scan'].includes(addMode) && (
         <div className="statement-scan-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setAddMode(null) }}>
           <section ref={statementDialogRef} role="dialog" aria-modal="true" aria-labelledby="statement-scan-title" aria-describedby="statement-scan-description" className="statement-scan-dialog">
             <h2 id="statement-scan-title" className="statement-scan-title">
               <svg aria-hidden="true" focusable="false" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5M7 12h10M12 7v10" /></svg>
-              Scan Statement
+              {addMode === 'plan-scan' ? 'Scan Payment Plan' : 'Scan Statement'}
             </h2>
             <StatementAutofill
               initialOpen currentValues={{}} fieldStyle={inputStyle} buttonStyle={control} extract={statementExtractor}
-              onManual={openNewDebt} onClose={() => { setAddMode(null); addMenuRef.current?.querySelector('button')?.focus() }}
+              onManual={addMode === 'plan-scan' ? openNewPaymentPlan : openNewDebt} onClose={() => { setAddMode(null); addMenuRef.current?.querySelector('button')?.focus() }}
               onExtract={result => {
                 const draft = applyStatement(result.values, { ...blankDebt(), type: '' }, result)
+                const paymentPlan = addMode === 'plan-scan' || draft.paymentSchedule?.kind === 'payment-plan'
+                setIsNewPaymentPlan(paymentPlan)
+                setPreservePlanRows(Boolean(result.installments?.length))
+                const total = Number(result.values.totalInstallments)
+                const completed = Number(result.values.completedInstallments || 0)
+                setPlanTerms({ count: total > completed ? String(total - completed) : '', firstDate: result.values.nextPaymentDue || '', frequency: '' })
+                if (paymentPlan) {
+                  draft.type ||= 'Other'
+                  draft.name ||= draft.merchant || ''
+                  draft.paymentCalculationMethod = DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
+                  if (draft.statementDetails?.purchaseAmount != null && !String(draft.startingBalance ?? '').trim()) {
+                    draft.startingBalance = String(draft.statementDetails.purchaseAmount)
+                  }
+                  draft.paymentSchedule = draft.paymentSchedule?.kind === 'payment-plan' ? draft.paymentSchedule : { kind: 'payment-plan', frequency: 'explicit', installments: [] }
+                }
                 setFormValues(draft)
                 setStatementReview(result)
                 setSelectedDebtId(null)
@@ -883,25 +961,44 @@ export default function Debt({ statementExtractor } = {}) {
         <div style={overlay} onMouseDown={event => {
           if (event.target === event.currentTarget) setIsFormOpen(false)
         }}>
-          <section role="dialog" aria-modal="true" aria-label={editingDebtId === null ? 'Add debt form' : 'Edit debt form'} style={dialog}>
-            <h2 style={{ margin: '0 0 12px', color: '#79502A' }}>{editingDebtId === null ? 'Add Debt' : 'Edit Debt'}</h2>
+          <section role="dialog" aria-modal="true" aria-label={editingDebtId === null ? isNewPaymentPlan ? 'Add payment plan form' : 'Add debt form' : 'Edit debt form'} style={dialog}>
+            <h2 style={{ margin: '0 0 12px', color: '#79502A' }}>{editingDebtId === null ? isNewPaymentPlan ? 'Add Payment Plan' : 'Add Debt' : 'Edit Debt'}</h2>
             <form onSubmit={saveDebt} style={{ display: 'grid', gap: 10 }}>
               {statementReview && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>
                 Statement scanned. Review your information before saving.
               </p>}
               {(statementReview?.warnings ?? []).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
+              {isNewPaymentPlan && <>
+                <label style={formLabel}>Plan Name
+                  <input aria-label="Debt name" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
+                </label>
+                <label style={formLabel}>Purchase Category
+                  <select aria-label="Purchase Category" value={formValues.purchaseCategory ?? ''} style={inputStyle} required
+                    onChange={event => setFormValues({ ...formValues, purchaseCategory: event.target.value })}>
+                    <option value="">Choose category</option>
+                    {expenseCategories.map(category => <option key={category}>{category}</option>)}
+                    {formValues.purchaseCategory && !expenseCategories.includes(formValues.purchaseCategory) && <option>{formValues.purchaseCategory}</option>}
+                  </select>
+                </label>
+                <label style={formLabel}>Remaining Balance
+                  <FinancialInput aria-label="Current balance · amount still owed" value={formValues.currentBalance} style={inputStyle} required
+                    onChange={event => setFormValues({ ...formValues, currentBalance: event.target.value })} />
+                </label>
+              </>}
+              {!isNewPaymentPlan && <>
               {(editingDebt || formSchedule?.kind === 'payment-plan') && <StatementAutofill
                 currentValues={formValues}
                 fieldStyle={inputStyle}
                 buttonStyle={control}
                 extract={statementExtractor}
                 onApply={(values, result) => {
+                  if (isNewPaymentPlan && result.installments?.length) setPreservePlanRows(true)
                   setFormError(result.installments?.length && (formValues.paymentHistory.length || editingDebtBill?.paymentHistory?.length)
                     ? 'Scanned details applied. The installment rows were not replaced because this debt has payment history.' : '')
                   setFormValues(current => applyStatement(values, current, result))
                 }}
               />}
-              <label style={formLabel}>Debt Name
+              <label style={formLabel}>{isNewPaymentPlan ? 'Plan Name' : 'Debt Name'}
                 <input aria-label="Debt name" placeholder="e.g. Auto loan" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
               </label>
               <label style={formLabel}>Purchase Category (optional)
@@ -913,7 +1010,7 @@ export default function Debt({ statementExtractor } = {}) {
                 </select>
               </label>
               <p style={{ margin: 0, fontSize: 11 }}>Category describes the purchase only. Record the original purchase once in Accounts for spending reports. Debt repayments are excluded from spending; scanning never creates a purchase transaction.</p>
-              {formSchedule?.kind === 'payment-plan' && <details style={{ fontSize: 12 }}>
+              {isPlanForm && <details open={isNewPaymentPlan} style={{ fontSize: 12 }}>
                 <summary>Purchase details (optional)</summary>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 6 }}>
                   {[['provider', 'Provider'], ['merchant', 'Merchant']].map(([key, label]) => <label key={key} style={formLabel}>{label}
@@ -922,12 +1019,12 @@ export default function Debt({ statementExtractor } = {}) {
                   </label>)}
                 </div>
               </details>}
-              <label style={formLabel}>Debt Type
+              {!isNewPaymentPlan && <label style={formLabel}>Debt Type
                 <select aria-label="Debt type" value={formValues.type} onChange={event => setFormValues({ ...formValues, type: event.target.value })} style={inputStyle} required>
                   {!formValues.type && <option value="">Choose debt type</option>}
                   {getDebtTypes().map(type => <option key={type}>{type}</option>)}
                 </select>
-              </label>
+              </label>}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                 <label style={formLabel}>Account Last 4 Digits
                   <input aria-label="Account Last 4 Digits" type="text" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off" placeholder="Optional" value={formValues.accountLast4} onChange={event => setFormValues({ ...formValues, accountLast4: event.target.value })} style={inputStyle} />
@@ -1012,7 +1109,8 @@ export default function Debt({ statementExtractor } = {}) {
                   </label>
                 ))}
               </div>
-              <label style={formLabel}>Payment setup
+              </>}
+              {editingDebt && <label style={formLabel}>Payment setup
                 <select aria-label="Payment setup" value={formSchedule?.kind === 'payment-plan' ? 'plan' : 'regular'} style={inputStyle}
                   disabled={Boolean(editingDebt?.paymentHistory.length || editingDebtBill?.paymentHistory?.length)}
                   onChange={event => setFormValues({ ...formValues, paymentSchedule: event.target.value === 'plan'
@@ -1021,8 +1119,56 @@ export default function Debt({ statementExtractor } = {}) {
                   <option value="regular">Regular debt</option>
                   <option value="plan">Payment Plan</option>
                 </select>
-              </label>
-              {formSchedule?.kind === 'payment-plan' ? <PaymentPlanFields rows={formSchedule.installments}
+              </label>}
+              {isNewPaymentPlan && <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                  <label style={formLabel}>Number of payments
+                    <input aria-label="Number of payments" type="number" min="1" max="600" value={planTerms.count} style={inputStyle}
+                      onChange={event => setPlanTerms({ ...planTerms, count: event.target.value })} />
+                  </label>
+                  <label style={formLabel}>First payment date
+                    <input aria-label="First payment date" type="date" value={planTerms.firstDate} style={inputStyle}
+                      onChange={event => setPlanTerms({ ...planTerms, firstDate: event.target.value })} />
+                  </label>
+                </div>
+                <label style={formLabel}>Frequency
+                  <select aria-label="Generated schedule frequency" value={planTerms.frequency} style={inputStyle}
+                    onChange={event => setPlanTerms({ ...planTerms, frequency: event.target.value })}>
+                    <option value="">Choose frequency</option>
+                    <option value="biweekly">Every 2 Weeks</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </label>
+                {preservePlanRows && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>Individual rows kept; adjust them below.</p>}
+                <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'grid', gap: 8 }}>
+                  <legend>Installments</legend>
+                  {!formSchedule?.installments?.length && <p style={{ margin: 0, fontSize: 11 }}>No installment rows found. Complete the schedule settings or add installments manually.</p>}
+                  {(formSchedule?.installments ?? []).map((row, index, rows) => <details key={index}>
+                    <summary>{row.dueDate || 'Missing date'} · {String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'}{row.paid ? ' · Paid' : ''}</summary>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
+                      <label style={formLabel}>Due date {index + 1}
+                        <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate ?? ''} style={inputStyle}
+                          onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, dueDate: event.target.value } : item))} />
+                      </label>
+                      <label style={formLabel}>Amount {index + 1}
+                        <FinancialInput aria-label={`Installment ${index + 1} amount`} value={row.amount ?? ''} style={inputStyle}
+                          onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, amount: event.target.value } : item))} />
+                      </label>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 12 }}>
+                      <label><input type="checkbox" checked={row.paid === true}
+                        onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, paid: event.target.checked } : item))} />Paid on statement</label>
+                      <button type="button" onClick={() => changeNewPlanRows(rows.filter((_, i) => i !== index))}>Remove installment {index + 1}</button>
+                    </div>
+                  </details>)}
+                  <button type="button" style={control} onClick={() => {
+                    const rows = formSchedule?.installments ?? []
+                    changeNewPlanRows([...rows, { dueDate: '', amount: '', paid: false, installmentNumber: Math.max(0, ...rows.map((row, index) => row.installmentNumber ?? index + 1)) + 1 }])
+                  }}>Add installment</button>
+                  {statementReview && <p style={{ margin: 0, fontSize: 11 }}>Review paid statuses: an unchecked box may mean an unrecognized status.</p>}
+                </fieldset>
+              </>}
+              {!isNewPaymentPlan && (formSchedule?.kind === 'payment-plan' ? <PaymentPlanFields rows={formSchedule.installments}
                 paymentHistory={formValues.paymentHistory} fieldStyle={inputStyle} labelStyle={formLabel}
                 balance={formValues.currentBalance} hasBillHistory={Boolean(editingDebtBill?.paymentHistory?.length)}
                 onChange={installments => setFormValues({ ...formValues, paymentSchedule: { ...formSchedule, installments } })} />
@@ -1037,7 +1183,7 @@ export default function Debt({ statementExtractor } = {}) {
                   setFormError('')
                   setFormValues({ ...formValues, paymentSchedule })
                 }}
-                fieldStyle={inputStyle} labelStyle={formLabel} />}
+                fieldStyle={inputStyle} labelStyle={formLabel} />)}
               {formSchedule?.kind !== 'payment-plan' && <label style={formLabel}>Next Payment Due
                 <input
                   aria-label="Next Payment Due"
@@ -1062,7 +1208,7 @@ export default function Debt({ statementExtractor } = {}) {
                   style={inputStyle}
                 />
               </label>}
-              <label style={formLabel}>Payment Balance Method
+              {!isNewPaymentPlan && <label style={formLabel}>Payment Balance Method
                 <select
                   aria-label="Payment balance method"
                   value={formValues.paymentCalculationMethod}
@@ -1082,12 +1228,12 @@ export default function Debt({ statementExtractor } = {}) {
                     Manual principal · review balance
                   </option>
                 </select>
-              </label>
+              </label>}
               {formError && <p role="alert" style={{ margin: 0, color: '#9B463E', fontSize: 12 }}>{formError}</p>}
               <div style={{ position: 'sticky', bottom: -20, display: 'flex', justifyContent: 'flex-end', gap: 8, margin: '4px -20px -20px', padding: '12px 20px max(12px, env(safe-area-inset-bottom))', background: '#FFF8ED', borderTop: '1px solid #E9D6B7' }}>
                   <button type="button" className="theme-secondary-action" onClick={() => setIsFormOpen(false)} style={control}>Cancel</button>
                   <button type="submit" className="theme-primary-action" style={{ ...control, minHeight: 42, border: 'none', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
-                    {editingDebtId === null ? 'Add Debt' : 'Save Debt'}
+                    {editingDebtId === null ? isNewPaymentPlan ? 'Add Payment Plan' : 'Add Debt' : 'Save Debt'}
                   </button>
               </div>
             </form>

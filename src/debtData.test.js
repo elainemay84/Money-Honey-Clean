@@ -49,6 +49,10 @@ function installmentDebt(changes = {}) {
 }
 
 test('generated explicit plans divide cents evenly and preserve calendar anchors', () => {
+  const example = generatePaymentPlan('188.28', 4, '2026-11-20', 'biweekly')
+  assert.deepEqual(example.installments.map(row => [row.dueDate, row.amount]), [
+    ['2026-11-20', 47.07], ['2026-12-04', 47.07], ['2026-12-18', 47.07], ['2027-01-01', 47.07]
+  ])
   const biweekly = generatePaymentPlan('100.03', '4', '2026-12-25', 'biweekly')
   assert.deepEqual(biweekly.installments.map(row => [row.dueDate, row.amount]), [
     ['2026-12-25', 25.01], ['2027-01-08', 25.01], ['2027-01-22', 25.01], ['2027-02-05', 25]

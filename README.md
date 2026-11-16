@@ -89,12 +89,12 @@ are rejected before restore.
 
 ### Payment plans and purchase categories
 
-Add/Edit Debt has an optional **Purchase Category**, separate from Debt Type,
-using existing expense categories (including custom categories such as Gifts).
-Choose **Payment Plan** under Payment setup to reveal a compact installment list.
-Enter any number of installments, including monthly plans, with exact dates,
-unequal amounts, and optional **Paid on statement** statuses. Rows can be edited,
-added, or removed before saving. No biweekly plan is assumed to be Pay in 4.
+Choose **Add Payment Plan** from the Debt **+** menu, then enter it manually or
+scan a statement. Enter a merchant or plan name, purchase category, remaining
+balance, number of remaining payments, first upcoming date, and frequency. The
+editable installment list is calculated automatically: amounts differ by at
+most one cent and sum to the balance, and monthly dates keep their original day
+where possible.
 
 The private scanner also reads clearly labeled provider, merchant, original
 purchase amount, remaining balance, explicit categories, and visible dated
@@ -104,14 +104,9 @@ read rows. Review every suggestion; ambiguous or yearless installment dates and
 unreadable amounts are left blank, never guessed. Correct these fields or add
 missing rows.
 
-If the statement lacks a full schedule, optionally open **Generate Schedule**.
-Choose the number of remaining payments, first payment date, and frequency, then
-**Preview Schedule**. The current remaining balance is divided evenly in cents;
-payments differ by at most one cent and sum to the exact balance. Monthly dates
-keep their original day, using the last day of shorter months.
-**Use Generated Schedule** replaces unpaid rows only after review, keeping
-statement-paid rows. Generated rows remain editable before saving. Generation is
-unavailable once a debt has payment history, to protect existing payment links.
+Scanned installments take precedence over generated schedules. Complete or correct
+missing dates and amounts in the list before saving; changing the plan inputs
+does not silently replace scanned rows.
 
 Saving creates one debt and one linked finite bill schedule containing only
 unpaid installments, not an indefinite recurrence. Rows recorded as paid on the
@@ -134,8 +129,8 @@ for bill name, amount due, due date, and an explicitly identifiable category.
 Scanning only changes the draft and leaves the existing schedule/account controls
 unchanged.
 
-The Debt **+** button expands two small, labeled floating actions: **Add Manually**
-(pencil) and **Scan / Upload** (camera). Tap the main **X** again, tap outside, or
+The Debt **+** button expands labeled floating actions for adding a debt manually,
+scanning a debt statement, or adding a payment plan. Tap the main **X** again, tap outside, or
 press Escape to dismiss; choosing an action or leaving Debt also closes the menu.
 The gold button stays above the bottom navigation and iPhone safe area.
 Manual entry opens the compact form without a scanner. The compact **Scan Statement**
