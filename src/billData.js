@@ -12,6 +12,7 @@ export const INCOME_FREQUENCIES = [
   'twice-monthly',
   'monthly',
   'quarterly',
+  'semiannual',
   'yearly'
 ]
 

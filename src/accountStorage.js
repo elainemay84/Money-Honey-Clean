@@ -52,6 +52,29 @@ export function loadSavedAccountData(storage = localStorage) {
   return { accounts: data.accounts, transactions: data.transactions }
 }
 
+export function getMainAccountId(accounts = []) {
+  return accounts.find(account => account.isMain === true && !account.archived)?.id ?? null
+}
+
+// Keeps at most one Main Account; pass null to clear the designation.
+export function setMainAccount(accounts, accountId) {
+  return accounts.map(account => {
+    const isMain = account.id === accountId
+    if (isMain === (account.isMain === true)) return account
+    if (isMain) return { ...account, isMain: true }
+    const rest = { ...account }
+    delete rest.isMain
+    return rest
+  })
+}
+
+// A bill's own linked account comes first, then the Main Account; only active accounts are chosen.
+export function getDefaultPaymentAccountId(accounts = [], linkedAccountId = null) {
+  const active = accounts.filter(account => !account.archived)
+  if (active.some(account => account.id === linkedAccountId)) return linkedAccountId
+  return getMainAccountId(active)
+}
+
 function getOccurrenceLinkFields(flow, occurrenceId) {
   return flow === 'out'
     ? { linkedOccurrenceType: 'bill', linkedOccurrenceId: occurrenceId, linkedBillOccurrenceId: occurrenceId }

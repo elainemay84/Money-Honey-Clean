@@ -217,6 +217,25 @@ test('new payment frequencies and twice-monthly days round-trip through backups 
   assert.equal(getDebtScheduleStatus(debts[1], bills, [], '2026-09-01').nextDueDate, '2026-08-31')
 })
 
+test('Main Account and every-six-months bills and income round-trip through backups; a malformed Main flag is rejected', () => {
+  const { storage } = sampleStorage()
+  saveAccountData([{ id: 1, name: 'Checking', isMain: true }, { id: 2, name: 'Savings' }], [], storage)
+  saveBillData({
+    bills: [{ id: 3, name: 'Insurance', amount: 480, dueDate: '2026-08-31', frequency: 'semiannual', paymentHistory: [{ dueDate: '2026-08-31', paid: true }] }],
+    incomes: [{ id: 4, name: 'Bonus', amount: 600, dueDate: '2026-12-31', frequency: 'semiannual', paymentHistory: [] }]
+  }, storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+  assert.equal(loadSavedAccountData(target).accounts[0].isMain, true)
+
+  snapshot.data[ACCOUNT_STORAGE_KEY] = JSON.stringify({ version: 1, accounts: [{ id: 1, name: 'Checking', isMain: 'yes' }], transactions: [] })
+  const before = createBackupSnapshot(target).data
+  assert.throws(() => importBackup(JSON.stringify(snapshot), target), /invalid "isMain"/)
+  assert.deepEqual(createBackupSnapshot(target).data, before)
+})
+
 test('installment schedules and statement reference totals round-trip without rewriting legacy debts or payment histories', () => {
   const { storage } = sampleStorage()
   const debts = [

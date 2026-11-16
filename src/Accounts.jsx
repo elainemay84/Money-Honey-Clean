@@ -7,7 +7,7 @@ import {
   normalizeTransactionAmount
 } from './accountBalances.js'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
-import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { getMainAccountId, loadAccountData, loadSavedAccountData, saveAccountData, setMainAccount } from './accountStorage.js'
 import PageHeader from './PageHeader'
 import ResponsiveText from './ResponsiveText'
 import { BILL_STORAGE_KEY, loadBillData, saveBillData } from './billData.js'
@@ -62,6 +62,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const [newAccountOpeningBalance, setNewAccountOpeningBalance] = useState('')
   const [newAccountColor, setNewAccountColor] = useState('#B87522')
   const [newAccountDefaultCleared, setNewAccountDefaultCleared] = useState(false)
+  const [newAccountIsMain, setNewAccountIsMain] = useState(false)
   const [transactionSort, setTransactionSort] = useState(() =>
     localStorage.getItem('money-honey-transaction-sort') === 'asc' ? 'asc' : 'desc'
   )
@@ -132,6 +133,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const available = registerBalances?.available ?? 0
   const unclearedBalance = registerBalances?.unclearedBalance ?? 0
   const activeAccounts = accounts.filter(item => !item.archived)
+  const mainAccountId = getMainAccountId(accounts)
 
   function updateAccounts(updater) {
     const nextAccounts = updater(accounts)
@@ -179,16 +181,21 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     } catch (error) { setInputError(error.message); return }
     setInputError('')
 
-    updateAccounts(current => [...current, {
-      id: nextAccountId.current++,
-      name: newAccountName.trim(),
-      type: newAccountType,
-      openingBalance,
-      openingDate: todayDate,
-      color: newAccountColor,
-      defaultCleared: newAccountDefaultCleared,
-      archived: false
-    }])
+    const id = nextAccountId.current++
+    updateAccounts(current => {
+      const next = [...current, {
+        id,
+        name: newAccountName.trim(),
+        type: newAccountType,
+        openingBalance,
+        openingDate: todayDate,
+        color: newAccountColor,
+        defaultCleared: newAccountDefaultCleared,
+        archived: false
+      }]
+      return newAccountIsMain ? setMainAccount(next, id) : next
+    })
+    setNewAccountIsMain(false)
     setNewAccountName('')
     setNewAccountOpeningBalance('')
     setShowAddAccount(false)
@@ -501,6 +508,14 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 />
                 New transactions are cleared by default
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={newAccountIsMain}
+                  onChange={event => setNewAccountIsMain(event.target.checked)}
+                />
+                Set as Main Account
+              </label>
               <button type="submit" style={{
                 background: '#B87522',
                 color: '#FFFFFF',
@@ -539,7 +554,10 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             >
               <span className="account-overview-identity">
                 <strong className="account-overview-name" title={item.name}>{item.name}</strong>
-                <span className="account-overview-type">{item.type}</span>
+                <span className="account-overview-type">
+                  {item.type}
+                  {item.id === mainAccountId && <span className="account-overview-main"> · Main</span>}
+                </span>
               </span>
               <span className="account-overview-totals">
                 <strong className="account-overview-balance">{money(totals.balance)}</strong>
@@ -697,6 +715,17 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 />
                 Cleared by default
               </label>
+              {!item.archived && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Set ${item.name} as Main Account`}
+                    checked={item.id === mainAccountId}
+                    onChange={event => updateAccounts(current => setMainAccount(current, event.target.checked ? item.id : null))}
+                  />
+                  Set as Main Account
+                </label>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
@@ -705,7 +734,12 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   Restore
                 </button>
               ) : (
-                <button type="button" onClick={() => updateAccount(item.id, { archived: true })} style={field}>
+                <button type="button" onClick={() => updateAccounts(current => current.map(account => {
+                  if (account.id !== item.id) return account
+                  const archived = { ...account, archived: true }
+                  delete archived.isMain
+                  return archived
+                }))} style={field}>
                   Archive
                 </button>
               )}

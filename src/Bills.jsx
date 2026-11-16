@@ -21,6 +21,7 @@ import {
 } from './billData.js'
 import {
   createOccurrenceTransaction,
+  getDefaultPaymentAccountId,
   linkExistingOccurrenceTransaction,
   loadSavedAccountData,
   removeOccurrenceTransaction,
@@ -37,7 +38,8 @@ import {
   saveDebts
 } from './debtData.js'
 
-const frequencies = ['one-time', 'weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'yearly']
+const frequencies = ['one-time', 'weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'semiannual', 'yearly']
+const FREQUENCY_LABELS = { 'one-time': 'One-time', semiannual: 'Every 6 Months' }
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
 function monthStart(date) {
@@ -231,9 +233,6 @@ export default function Bills() {
   const selectedOccurrenceDebt = selectedOccurrence?.debtId == null
     ? null
     : debts.find(debt => debt.id === selectedOccurrence.debtId) ?? null
-  const paymentAccountIsAvailable = accountOptions.some(account =>
-    account.id === selectedOccurrence?.accountId
-  )
   const monthDays = new Date(Date.UTC(
     selectedMonth.getUTCFullYear(),
     selectedMonth.getUTCMonth() + 1,
@@ -425,7 +424,10 @@ export default function Bills() {
   function openPaymentConfirmation(occurrence) {
     setSelectedOccurrence(occurrence)
     setActualDate(today)
-    setPaymentAccountId(occurrence.accountId == null ? '' : String(occurrence.accountId))
+    const defaultAccountId = flow === 'out'
+      ? getDefaultPaymentAccountId(accountOptions, occurrence.accountId)
+      : occurrence.accountId
+    setPaymentAccountId(defaultAccountId == null ? '' : String(defaultAccountId))
     setOccurrenceError('')
   }
 
@@ -439,8 +441,8 @@ export default function Bills() {
 
   function confirmOccurrencePayment() {
     if (!selectedOccurrence) return
-    const occurrence = flow === 'out' && !paymentAccountIsAvailable
-      ? { ...selectedOccurrence, accountId: Number(paymentAccountId) }
+    const occurrence = flow === 'out'
+      ? { ...selectedOccurrence, accountId: paymentAccountId === '' ? null : Number(paymentAccountId) }
       : selectedOccurrence
 
     try {
@@ -1147,7 +1149,7 @@ export default function Bills() {
             <p style={{ margin: '0 0 14px', color: '#79502A', fontSize: 13 }}>
               {selectedOccurrence.name} · {money(selectedOccurrence.amount)}
             </p>
-            {flow === 'out' && !paymentAccountIsAvailable && (
+            {flow === 'out' && (
               <label style={{ display: 'grid', gap: 6, marginBottom: 12, color: '#79502A', fontSize: 12 }}>
                 Account for this payment
                 <select
@@ -1283,7 +1285,7 @@ export default function Bills() {
                   {[
                     ['occurrence', 'This occurrence'],
                     ['schedule', 'Recurring schedule']
-                  ].filter(([scope]) => scope === 'occurrence' || !['debt-installments', 'interval', 'semiannual'].includes(editingSchedule?.frequency)).map(([scope, label]) => (
+                  ].filter(([scope]) => scope === 'occurrence' || !['debt-installments', 'interval'].includes(editingSchedule?.frequency)).map(([scope, label]) => (
                     <label key={scope} style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1303,7 +1305,7 @@ export default function Bills() {
                   ))}
                 </fieldset>
               )}
-              {['debt-installments', 'interval', 'semiannual'].includes(editingSchedule?.frequency) && <p style={{ fontSize: 11, margin: 0 }}>Edit the overall payment schedule in Debt. This form can adjust this occurrence; undo a skip before rescheduling it.</p>}
+              {['debt-installments', 'interval'].includes(editingSchedule?.frequency) && <p style={{ fontSize: 11, margin: 0 }}>Edit the overall payment schedule in Debt. This form can adjust this occurrence; undo a skip before rescheduling it.</p>}
               <input aria-label={flow === 'out' ? 'Bill name' : 'Income name'} placeholder={flow === 'out' ? 'Bill name' : 'Income name'} value={name} onChange={event => setName(event.target.value)} style={field} required />
               <FinancialInput aria-label="Amount" min="0.01" placeholder="Amount" value={amount} onChange={event => setAmount(event.target.value)} style={field} required />
               <input aria-label={flow === 'out' ? 'Due date' : 'First expected date'} type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} style={field} required />
@@ -1312,7 +1314,7 @@ export default function Bills() {
                   {editingBillId === null ? 'Schedule' : 'Recurring schedule'}
                   <select aria-label="Frequency" value={frequency} onChange={event => setFrequency(event.target.value)} style={field}>
                     {frequencies.map(value => (
-                      <option key={value} value={value}>{value === 'one-time' ? 'One-time' : value[0].toUpperCase() + value.slice(1)}</option>
+                      <option key={value} value={value}>{FREQUENCY_LABELS[value] ?? value[0].toUpperCase() + value.slice(1)}</option>
                     ))}
                   </select>
                 </label>

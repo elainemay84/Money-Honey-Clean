@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   createOccurrenceTransaction,
+  getDefaultPaymentAccountId,
+  getMainAccountId,
   linkExistingOccurrenceTransaction,
   loadSavedAccountData,
   removeOccurrenceTransaction,
   saveAccountData,
+  setMainAccount,
   setOccurrenceTransactionCleared,
   unlinkOccurrenceTransaction,
   updateOccurrenceTransaction
@@ -440,4 +443,21 @@ test('a linked transaction edited to a mismatched account or amount requires rev
   assert.equal(incomeOccurrenceData.status, 'received')
   assert.equal(incomeOccurrenceData.amount, 1200)
   assert.equal(getIncomeSummary([incomeOccurrenceData]).received, 0)
+})
+
+test('only one account is Main, and the payment default never points at a missing or archived account', () => {
+  const accounts = [{ id: 1, name: 'Checking' }, { id: 2, name: 'Savings', isMain: true }, { id: 3, name: 'Card' }]
+  const moved = setMainAccount(accounts, 3)
+  assert.deepEqual(moved.map(account => account.isMain ?? false), [false, false, true])
+  assert.equal(Object.hasOwn(moved[1], 'isMain'), false)
+  assert.equal(getMainAccountId(moved), 3)
+  assert.equal(getMainAccountId(setMainAccount(moved, null)), null)
+  assert.deepEqual(accounts[1], { id: 2, name: 'Savings', isMain: true })
+
+  assert.equal(getDefaultPaymentAccountId(moved, 1), 1)
+  assert.equal(getDefaultPaymentAccountId(moved, null), 3)
+  assert.equal(getDefaultPaymentAccountId(moved, 99), 3)
+  assert.equal(getDefaultPaymentAccountId(moved.filter(account => account.id !== 3), null), null)
+  assert.equal(getDefaultPaymentAccountId(moved.map(account => account.id === 3 ? { ...account, archived: true } : account), null), null)
+  assert.equal(getDefaultPaymentAccountId([{ id: 1, archived: true }, { id: 2, isMain: true }], 1), 2)
 })

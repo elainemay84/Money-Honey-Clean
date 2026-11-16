@@ -191,7 +191,8 @@ export const SANITIZERS = {
       openingDate: is.str,
       color: is.str,
       defaultCleared: is.bool,
-      archived: is.bool
+      archived: is.bool,
+      isMain: is.bool
     })
     const transactions = cleanRecords(data.transactions, 'Transactions', {
       id: is.int,

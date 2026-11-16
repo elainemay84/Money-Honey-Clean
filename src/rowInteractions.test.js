@@ -2625,3 +2625,108 @@ test('Debt page displays overall summary with remaining, paid off, progress perc
   assert.ok(container.querySelector('[aria-label="Debt row: Auto loan"]'))
   assert.ok(container.querySelector('[aria-label="Debt row: Credit card"]'))
 })
+
+test('Set as Main Account keeps one Main account, shows a Main label, and can be moved or removed', async () => {
+  const container = await render(Accounts)
+  const addAccount = async (name, main) => {
+    await click(button(container, 'Add account'))
+    const form = container.querySelector('form')
+    await changeValue(form.querySelector('[aria-label="Account name"]'), name)
+    const checkbox = [...form.querySelectorAll('label')].find(label => label.textContent.includes('Set as Main Account')).querySelector('input')
+    if (main) await click(checkbox)
+    await submit(form)
+  }
+  const mainFlags = () => readAccountData().accounts.map(account => [account.name, account.isMain === true])
+  const label = id => container.querySelector(`[data-account-id="${id}"] .account-overview-main`)?.textContent ?? null
+
+  await addAccount('Savings', true)
+  assert.deepEqual(mainFlags(), [['Checking', false], ['Savings', true]])
+  assert.equal(label(2), ' · Main')
+  assert.equal(label(1), null)
+
+  await addAccount('Card', true)
+  assert.deepEqual(mainFlags(), [['Checking', false], ['Savings', false], ['Card', true]])
+  assert.equal(label(2), null)
+  assert.equal(label(3), ' · Main')
+
+  await click(button(container, 'Manage accounts'))
+  await click(container.querySelector('[aria-label="Set Card as Main Account"]'))
+  assert.deepEqual(mainFlags(), [['Checking', false], ['Savings', false], ['Card', false]])
+  await click(container.querySelector('[aria-label="Set Checking as Main Account"]'))
+  assert.deepEqual(mainFlags(), [['Checking', true], ['Savings', false], ['Card', false]])
+  assert.equal(container.querySelector('[aria-label="Set Checking as Main Account"]').checked, true)
+})
+
+test('payment dialog defaults to the bill account, then the Main Account, never a missing account, and records only on Confirm', async () => {
+  const setAccounts = accounts => {
+    const data = readAccountData()
+    browser.localStorage.setItem('money-honey-account-data', JSON.stringify({ ...data, accounts }))
+  }
+  const setBillAccount = accountId => {
+    const data = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+    data.bills[0].accountId = accountId
+    browser.localStorage.setItem('money-honey-bills', JSON.stringify(data))
+  }
+  const checking = readAccountData().accounts[0]
+  const savings = { ...checking, id: 2, name: 'Savings', isMain: true }
+  setAccounts([checking, savings])
+  let container = await render(Bills)
+  const openPayment = async () => {
+    await click(button(container, 'Pay Electric'))
+    return container.querySelector('[role="dialog"]')
+  }
+
+  let dialog = await openPayment()
+  assert.equal(dialog.querySelector('[aria-label="Payment account"]').value, '1')
+  await click(button(dialog, 'Cancel'))
+
+  setBillAccount(null)
+  container = await reload(Bills, container)
+  dialog = await openPayment()
+  assert.equal(dialog.querySelector('[aria-label="Payment account"]').value, '2')
+  await click(button(dialog, 'Cancel'))
+  assert.equal(readAccountData().transactions.length, 0)
+
+  setAccounts([checking, { ...savings, archived: true }])
+  container = await reload(Bills, container)
+  dialog = await openPayment()
+  assert.equal(dialog.querySelector('[aria-label="Payment account"]').value, '')
+  await click(button(dialog, 'Cancel'))
+
+  setAccounts([checking, savings])
+  setBillAccount(99)
+  container = await reload(Bills, container)
+  dialog = await openPayment()
+  assert.equal(dialog.querySelector('[aria-label="Payment account"]').value, '2')
+  await changeValue(dialog.querySelector('[aria-label="Payment account"]'), '1')
+  assert.equal(readAccountData().transactions.length, 0)
+  await click(button(dialog, 'Confirm'))
+  const [transaction] = readAccountData().transactions
+  assert.equal(transaction.accountId, 1)
+  assert.equal(transaction.amount, -80)
+  assert.equal(transaction.cleared, false)
+})
+
+test('an Every 6 Months bill appears every six calendar months in List and Calendar and keeps its schedule when edited', async () => {
+  const container = await render(Bills)
+  await click(button(container, 'Add bill'))
+  const form = container.querySelector('[role="dialog"] form')
+  const frequency = form.querySelector('[aria-label="Frequency"]')
+  assert.equal([...frequency.options].find(option => option.value === 'semiannual').textContent, 'Every 6 Months')
+  await changeValue(form.querySelector('[aria-label="Bill name"]'), 'Car insurance')
+  await changeValue(form.querySelector('[aria-label="Amount"]'), '480')
+  await changeValue(form.querySelector('[aria-label="Due date"]'), localDate())
+  await changeValue(frequency, 'semiannual')
+  await submit(form)
+
+  const saved = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.find(bill => bill.name === 'Car insurance')
+  assert.equal(saved.frequency, 'semiannual')
+  assert.equal(container.querySelectorAll('[aria-label="Bill row: Car insurance"]').length, 2)
+  await click(button(container, 'Calendar'))
+  assert.equal(container.querySelectorAll('[aria-label="Bill row: Car insurance"]').length, 1)
+
+  await click(container.querySelector('[aria-label="Bill row: Car insurance"]'))
+  const dialog = container.querySelector('[role="dialog"]')
+  await click(dialog.querySelector('input[name="edit-scope"][value="schedule"]'))
+  assert.equal(dialog.querySelector('select[aria-label="Frequency"]').value, 'semiannual')
+})

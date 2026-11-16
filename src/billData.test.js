@@ -713,3 +713,23 @@ test('bill and income schedule lists support the same twice-monthly recurrence d
     ['2026-01-15', '2026-01-31']
   )
 })
+
+test('every-six-months bills and income follow calendar months and clamp to shorter months', () => {
+  const schedules = [
+    bill({ id: 1, dueDate: '2026-08-31', frequency: 'semiannual' }),
+    bill({ id: 2, dueDate: '2026-05-15', frequency: 'semiannual', paymentHistory: [{ dueDate: '2026-11-15', paid: true }] })
+  ]
+  assert.deepEqual(
+    getBillOccurrencesInRange(schedules, '2026-01-01', '2028-12-31').map(item => [item.id, item.dueDate, item.paid]),
+    [
+      [2, '2026-05-15', false], [1, '2026-08-31', false], [2, '2026-11-15', true], [1, '2027-02-28', false],
+      [2, '2027-05-15', false], [1, '2027-08-31', false], [2, '2027-11-15', false], [1, '2028-02-29', false],
+      [2, '2028-05-15', false], [1, '2028-08-31', false], [2, '2028-11-15', false]
+    ]
+  )
+  assert.deepEqual(getBillOccurrences(schedules, month(2027, 1)).map(item => item.dueDate), ['2027-02-28'])
+  assert.deepEqual(getBillOccurrences(schedules, month(2027, 2)), [])
+  const income = { id: 5, name: 'Bonus', amount: 600, dueDate: '2026-12-31', frequency: 'semiannual', accountId: 1, paymentHistory: [] }
+  assert.deepEqual(getIncomeOccurrences([income], month(2027, 5)).map(item => item.dueDate), ['2027-06-30'])
+  assert.deepEqual(getIncomeOccurrences([income], month(2027, 6)), [])
+})
