@@ -315,6 +315,31 @@ function installmentAmount(text) {
   return /^(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?$/.test(cell) ? parseValue('nextPaymentAmount', cell) ?? '' : ''
 }
 
+// Timeline circles and connectors beside each row are read as "O", "0", "©", "|" or an unreadable "[?]" word.
+// Only tokens before "$" or a month are stripped, so a minus sign or a split amount digit is never discarded.
+const TIMELINE_MARKER = new RegExp(`^(?:(?:\\[\\?\\]|[oO0Q@©®•●○◯◦|│¦!lI1()\\[\\]—~=*]{1,3})\\s+)+(?=\\$|${PARTIAL_ROW_DATE.source.slice(2)})`, 'i')
+
+function cleanRowLine(text, timeline) {
+  const line = (text ?? '').replace(/\s*\|\s*/g, ' ').trim()
+  return timeline ? line.replace(TIMELINE_MARKER, '') : line
+}
+
+// "Dec 15" in a chronological timeline takes its year from the nearest explicitly dated rows.
+function resolveYearlessRows(rows) {
+  const dated = rows.filter(row => row.dueDate)
+  if (dated.length < 2 || dated.some((row, index) => index && row.dueDate <= dated[index - 1].dueDate)) return
+  rows.forEach((row, index) => {
+    if (row.dueDate || !row.partial) return
+    const previous = rows.slice(0, index).findLast(item => item.dueDate)?.dueDate
+    const next = rows.slice(index + 1).find(item => item.dueDate)?.dueDate
+    const { month, day } = row.partial
+    const before = next && [0, 1].map(back => isoDate(Number(next.slice(0, 4)) - back, month, day)).find(date => date && date < next)
+    const after = previous && [0, 1].map(ahead => isoDate(Number(previous.slice(0, 4)) + ahead, month, day)).find(date => date && date > previous)
+    const date = next && previous ? (before === after ? before : null) : before || after
+    if (date) row.dueDate = date
+  })
+}
+
 export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
   const values = {}
   const provider = new Set()
@@ -325,7 +350,8 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
     ? lines.findIndex(line => /^(?:(?:payment|recent) )?(?:activity|schedule|installments)\s*:?\s*$/i.test(line))
     : -1
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].trim().replace(/\s*\|\s*/g, ' ')
+    const timeline = paymentPlan && index > timelineStart
+    const line = cleanRowLine(lines[index], timeline)
     const brand = /^(?:provider\s*:\s*)?(Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)(?:\s*[-:]\s*.*|\s+(?:payment plan|payment schedule|pay in (?:3|4)))?$/i.exec(line)
     if (brand) provider.add(brand[1])
     const merchant = /^(?:merchant|purchased? (?:at|from)|store)\s*:\s*(.+)$/i.exec(line)
@@ -341,12 +367,14 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
         datePrefix.replace(/(?:\$\s*[\d,.]+|\d[\d,]*\.\d{2})\s*/, '').trim()
       )))
     const summaryDate = /^(?:(?:purchase|order|statement) date|next (?:scheduled )?payment(?: due)?(?: date)?|payment (?:due )?date|(?:next )?due date)\s*:?\s*$/i.test(lines[index - 1]?.trim() ?? '')
+      // The autopay summary repeats the next installment; it is never a timeline row of its own.
+      || /^autopay\b[^$\d]*$/i.test(lines[index - 1]?.trim() ?? '')
     if (!rowLabel && (!dateRow || summaryDate)) continue
     // Read a bounded vertical card (label, date, amount, status), stopping at the next installment.
     let consumed = 0
     let rowText = line
     while (consumed < 3) {
-      const next = lines[index + consumed + 1]?.trim().replace(/\s*\|\s*/g, ' ') ?? ''
+      const next = cleanRowLine(lines[index + consumed + 1], timeline)
       if (!next || INSTALLMENT_LABEL.test(next)) break
       const nextDate = ROW_DATE.exec(next) ?? PARTIAL_ROW_DATE.exec(next)
       const hasDate = ROW_DATE.test(rowText) || PARTIAL_ROW_DATE.test(rowText)
@@ -360,19 +388,27 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
     const dateMatch = ROW_DATE.exec(rowText)
     const amount = installmentAmount(rowText)
     if (rowLabel || initialDate) {
+      const partial = !dateMatch && PARTIAL_ROW_DATE.exec(rowText)
+      const yearless = partial && parseDatePrefix(partial[0])
       installments.push({
         dueDate: dateMatch ? parseDate(dateMatch[0]) ?? '' : '',
         amount,
-        paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not(?: yet)? (?:paid|completed)|partially paid|pending|failed|due|upcoming|scheduled)\b/i.test(rowText)
+        paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not(?: yet)? (?:paid|completed)|partially paid|pending|failed|due|upcoming|scheduled)\b/i.test(rowText),
+        ...(yearless?.month ? { partial: yearless } : {}),
+        ...(rowLabel ? { labeled: true } : {})
       })
       index += consumed
     }
   }
+  resolveYearlessRows(installments)
+  // An unlabeled match with neither a usable date nor an amount is OCR noise, not an installment.
+  const rows = installments.filter(row => row.labeled || row.dueDate || row.amount)
+    .map(({ dueDate, amount, paid }) => ({ dueDate, amount, paid }))
   if (provider.size === 1) values.provider = [...provider][0]
   if (merchants.size === 1) values.merchant = [...merchants][0]
   if (categories.size === 1) values.purchaseCategory = [...categories][0]
   const planContext = paymentPlan || provider.size > 0 || lines.some(line => /\b(?:installments?|payments completed|payment plan|pay in \d+|\d+ (?:monthly |biweekly )?payments)\b/i.test(line))
-  return { values, installments: planContext ? installments : [] }
+  return { values, installments: planContext ? rows : [] }
 }
 
 export const BILL_STATEMENT_FIELDS = [

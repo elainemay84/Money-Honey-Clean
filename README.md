@@ -90,8 +90,8 @@ are rejected before restore.
 ### Payment plans and purchase categories
 
 Choose **Add Payment Plan** from the Debt **+** menu, then enter it manually or
-scan a statement. Enter a merchant or plan name, purchase category, remaining
-balance, number of remaining payments, first upcoming date, and frequency. The
+scan a statement. Enter a merchant or plan name, an optional purchase category,
+remaining balance, number of remaining payments, first upcoming date, and frequency. The
 editable installment list is calculated automatically: amounts differ by at
 most one cent and sum to the balance, and monthly dates keep their original day
 where possible. Frequencies include weekly, every two weeks, twice monthly,
@@ -101,9 +101,16 @@ The private scanner also reads clearly labeled provider, merchant, original
 purchase amount, remaining balance, explicit categories, and visible dated
 installments, including separate date/amount/status lines and dated table rows.
 Recognized rows automatically populate the editable list, including partially
-read rows. Review every suggestion; ambiguous or yearless installment dates and
-unreadable amounts are left blank, never guessed. Correct these fields or add
-missing rows.
+read rows. Review every suggestion; ambiguous installment dates and unreadable
+amounts are left blank, never guessed. A yearless date such as "Dec 15" in a
+chronological timeline takes its year only from the explicitly dated rows beside
+it (for example, the next row "Jan 15, 2027"); otherwise it stays blank. Matches
+with neither a usable date nor an amount are not added as rows. Correct these
+fields or add missing rows.
+
+Dark-mode screenshots are inverted and small screenshots are enlarged on your
+device before reading, so light-on-dark timeline text is read reliably.
+Timeline circles and connector lines beside rows are ignored.
 
 **Scan Payment Plan** also reads activity timelines without provider or installment
 labels. It prefers the item or merchant name over generic headings such as

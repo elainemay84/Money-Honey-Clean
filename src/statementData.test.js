@@ -1,8 +1,41 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, validateStatementSuggestions } from './statementData.js'
-import { homeDepotOcrData } from './statementOcrFixture.js'
-import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES } from './statementExtraction.js'
+import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData } from './statementOcrFixture.js'
+import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
+
+const scooterSchedule = Array.from({ length: 12 }, (_, index) => ({
+  dueDate: index === 0 ? '2026-12-15' : `2027-${String(index).padStart(2, '0')}-15`,
+  amount: index === 11 ? '52.36' : '52.42', paid: false
+}))
+
+test('dark-mode Electric Scooter timeline OCR yields all 12 dated installments, resolving the yearless first row', () => {
+  for (const data of [electricScooterOcrData, electricScooterMarkerOcrData]) {
+    const result = parsePaymentPlanScan(getReliableOcrLines(data))
+    assert.deepEqual(result.installments, scooterSchedule)
+    assert.deepEqual(result.planTerms, { count: '12', firstDate: '2026-12-15', frequency: 'monthly' })
+    assert.equal(result.values.name, 'Electric Scooter')
+    assert.equal(result.values.currentBalance, '628.98')
+    assert.equal(result.values.totalInstallments, '12')
+    assert.equal(result.values.nextPaymentDue, '2026-12-15')
+    assert.equal(result.values.purchaseCategory, undefined)
+  }
+})
+
+test('timeline rows without a usable date or amount are dropped and the autopay summary is not a row', () => {
+  assert.deepEqual(parsePaymentPlanScan(['Activity', 'Dec 15', 'Jan 15 $52.42 due']).installments, [
+    { dueDate: '', amount: '52.42', paid: false }
+  ])
+  assert.deepEqual(parsePaymentPlanScan([
+    'Electric Scooter on Nov 15', '$628.98', 'Remaining balance', 'Autopay', '$52.42 due on Dec 15',
+    'Jan 15, 2027', '$52.42 due', 'Feb 15, 2027', '[?] due'
+  ]).installments, [
+    { dueDate: '2027-01-15', amount: '52.42', paid: false },
+    { dueDate: '2027-02-15', amount: '', paid: false }
+  ])
+  // A yearless row stays undated when its neighbours are not in chronological order.
+  assert.equal(parsePaymentPlanScan(['Activity', 'Dec 15 $5.00', 'Mar 1, 2027 $5.00', 'Jan 1, 2027 $5.00']).installments[0].dueDate, '')
+})
 
 test('monthly activity timeline uses the item name, exact visible installments and adjusted final cents', () => {
   const dates = ['Dec 15, 2026', 'Jan 15, 2027', 'Feb 15, 2027', 'Mar 15, 2027',
@@ -518,9 +551,17 @@ test('photographed statements with shaded backgrounds are flattened so text is s
   for (const x of [1, 65, 129, 241]) assert.ok(gray(pixels, width, x, 63) <= 190, `text at x=${x} stays dark`)
 })
 
-test('dark-mode screenshots are left unchanged by background flattening', () => {
-  const pixels = shadedPhoto(64, 64, (x, y) => y > 30 && y < 36 && x % 8 < 3 ? 235 : 28)
-  const before = pixels.slice()
+test('dark-mode screenshots are inverted to dark text on a white background before reading', () => {
+  const isText = (x, y) => y > 30 && y < 36 && x % 8 < 3
+  const pixels = shadedPhoto(64, 64, (x, y) => isText(x, y) ? 235 : 28)
   flattenStatementBackground(pixels, 64, 64)
-  assert.deepEqual(pixels, before)
+  assert.ok(gray(pixels, 64, 4, 10) >= 240, 'dark background becomes white')
+  assert.ok(gray(pixels, 64, 1, 33) <= 40, 'light text becomes dark')
+})
+
+test('small screenshots are enlarged for reading within the pixel budget, large ones are not', () => {
+  assert.equal(statementCanvasScale(512, 768), 2)
+  assert.ok(Math.abs(statementCanvasScale(1024, 1536) * Math.sqrt(1024 * 1536) - 2000) < 1)
+  assert.equal(statementCanvasScale(1290, 2796), 1)
+  assert.ok(statementCanvasScale(4000, 3000) < 1)
 })
