@@ -343,7 +343,6 @@ export default function Debt({ statementExtractor } = {}) {
     try {
       const values = { ...formValues }
       delete values.customAssignee
-      if (isNewPaymentPlan && !formValues.purchaseCategory?.trim()) throw new Error('Choose a purchase category.')
       if (isNewPaymentPlan && !preservePlanRows) {
         generatePaymentPlan(formValues.currentBalance, planTerms.count, planTerms.firstDate, planTerms.frequency)
       }
@@ -959,10 +958,10 @@ export default function Debt({ statementExtractor } = {}) {
                 <label style={formLabel}>Plan Name
                   <input aria-label="Debt name" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
                 </label>
-                <label style={formLabel}>Purchase Category
-                  <select aria-label="Purchase Category" value={formValues.purchaseCategory ?? ''} style={inputStyle} required
+                <label style={formLabel}>Purchase Category (optional)
+                  <select aria-label="Purchase Category" value={formValues.purchaseCategory ?? ''} style={inputStyle}
                     onChange={event => setFormValues({ ...formValues, purchaseCategory: event.target.value })}>
-                    <option value="">Choose category</option>
+                    <option value="">No category</option>
                     {expenseCategories.map(category => <option key={category}>{category}</option>)}
                     {formValues.purchaseCategory && !expenseCategories.includes(formValues.purchaseCategory) && <option>{formValues.purchaseCategory}</option>}
                   </select>

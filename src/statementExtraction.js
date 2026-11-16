@@ -6,6 +6,7 @@ export { StatementScanError } from './statementReader.js'
 export const MAX_STATEMENT_BYTES = 15 * 1024 * 1024
 export const MAX_STATEMENT_PAGES = 5
 const MAX_PIXELS = 4_000_000
+const MIN_TEXT_SIDE = 1280
 const MAX_SCAN_MS = 120_000
 
 export function getStatementFileKind(file) {
@@ -72,13 +73,20 @@ export function getPdfTextLines(items) {
   })
 }
 
+// Tesseract drops small app text (for example a 1024px-wide or photo-picker copy of a screenshot) below its
+// confidence threshold, so smaller images are enlarged up to 2x within the same pixel budget.
+export function statementCanvasScale(width, height) {
+  return Math.min(Math.min(width, height) < MIN_TEXT_SIDE ? 2 : 1, Math.sqrt(MAX_PIXELS / (width * height)))
+}
+
 function boundedCanvas(width, height) {
-  const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (width * height)))
+  const scale = statementCanvasScale(width, height)
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(width * scale))
   canvas.height = Math.max(1, Math.round(height * scale))
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Canvas unavailable')
+  context.imageSmoothingQuality = 'high'
   context.fillStyle = '#ffffff'
   context.fillRect(0, 0, canvas.width, canvas.height)
   return { canvas, context }
@@ -134,8 +142,10 @@ export function flattenStatementBackground(pixels, width, height, tile = 32) {
     luminance[j] = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]
     total += luminance[j]
   }
-  // Light text on a dark background (dark mode) is left untouched.
-  if (total / luminance.length < 128) return pixels
+  // Light text on a dark background (dark mode) reads with low confidence, so it is inverted to dark-on-light first.
+  if (total / luminance.length < 128) {
+    for (let j = 0; j < luminance.length; j++) luminance[j] = 255 - luminance[j]
+  }
   const columns = Math.ceil(width / tile)
   const rows = Math.ceil(height / tile)
   const background = new Float32Array(columns * rows)

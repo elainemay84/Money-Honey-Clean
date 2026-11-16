@@ -3,7 +3,7 @@ import { after, afterEach, beforeEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
-import { homeDepotOcrData } from './statementOcrFixture.js'
+import { electricScooterMarkerOcrData, homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { getBillOccurrencesInRange } from './billData.js'
 import { getSpendingByCategory } from './reportData.js'
@@ -203,13 +203,10 @@ async function openPaymentPlan(container, scan = false) {
   await click(button(container, scan ? 'Scan / Upload Payment Plan' : 'Enter Manually'))
 }
 
-test('activity timeline scan fills the payment plan form and saves exact scanned rows without regeneration', async () => {
+test('activity timeline OCR scan fills the payment plan form and saves exact scanned rows only on confirmation', async () => {
   const dates = ['2026-12-15', ...Array.from({ length: 11 }, (_, index) => `2027-${String(index + 1).padStart(2, '0')}-15`)]
   const container = await render(() => React.createElement(Debt, {
-    statementExtractor: async () => parsePaymentPlanScan([
-      'In progress', 'Electric Scooter on Nov 15', 'Remaining balance: $628.98', 'Autopay: $52.42', 'Activity',
-      ...dates.map((date, index) => `${date} due $${index === 11 ? '52.36' : '52.42'}`)
-    ])
+    statementExtractor: async () => parsePaymentPlanScan(getReliableOcrLines(electricScooterMarkerOcrData))
   }))
   await openPaymentPlan(container, true)
   assert.match(container.textContent, /fill in your payment plan details/)
@@ -224,12 +221,14 @@ test('activity timeline scan fills the payment plan form and saves exact scanned
   assert.match(form.textContent, /Schedule found from statement\. Review before saving\./)
   assert.doesNotMatch(form.textContent, /visible rows do not match|no dates or amounts were generated|parser|diagnostic/i)
   assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][type="date"]')].map(input => input.value), dates)
-  assert.equal(form.querySelector('[aria-label="Installment 12 amount"]').value, '52.36')
+  assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][aria-label$="amount"]')].map(input => input.value),
+    dates.map((_, index) => index === 11 ? '52.36' : '52.42'))
   await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'weekly')
   assert.equal(form.querySelector('[aria-label="Installment 2 date"]').value, dates[1])
-  await changeValue(form.querySelector('[aria-label="Purchase Category"]'), 'Shopping')
+  assert.equal(loadDebts().length, 0)
   await submit(form)
   const saved = loadDebts()[0]
+  assert.equal(saved.purchaseCategory, '')
   assert.equal(saved.name, 'Electric Scooter')
   assert.equal(saved.minimumPayment, 52.42)
   assert.equal(saved.nextPaymentDue, dates[0])
