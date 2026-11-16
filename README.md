@@ -87,6 +87,41 @@ are rejected before restore.
 
 ## Private statement autofill for debts
 
+### Payment plans and purchase categories
+
+Add/Edit Debt has an optional **Purchase Category**, separate from Debt Type,
+using existing expense categories (including custom categories such as Gifts).
+Choose **Payment Plan** under Payment setup to reveal a compact installment list.
+Enter any number of installments, including monthly plans, with exact dates,
+unequal amounts, and optional **Paid on statement** statuses. Rows can be edited,
+added, or removed before saving. Missing dates and amounts require manual entry;
+no biweekly plan is assumed to be Pay in 4.
+
+The private scanner also reads clearly labeled provider, merchant, original
+purchase amount, remaining balance, explicit categories, and visible dated
+installments. Review every suggestion; ambiguous or yearless installment dates
+are left blank. Scans may show only part of a plan: add any missing rows.
+Saving creates one debt and one linked finite bill schedule containing only
+unpaid installments, not an indefinite recurrence. Rows recorded as paid on the
+statement count toward progress but never create historical bank transactions.
+Recorded payments retain their links and cannot be removed through the row editor;
+correct or undo those payments in Accounts/Bills.
+
+**Accounting rule (unchanged):** spending, budgets, and reports count recorded
+purchase transactions, not debt records or scheduled bills. Purchase Category is
+descriptive metadata; selecting it or scanning a plan does not create an expense.
+Record the original purchase once in Accounts under its expense category if it
+is not already recorded. Linked installment repayments are debt payments,
+excluded from purchase spending and shown separately in debt-payment reporting,
+regardless of their transaction category. This avoids counting both the original
+purchase and its repayments. No past transactions or reporting calculations are
+rewritten.
+
+Add/Edit ordinary Bill offers the same private Scan / Upload Statement mechanism
+for bill name, amount due, due date, and an explicitly identifiable category.
+Scanning only changes the draft and leaves the existing schedule/account controls
+unchanged.
+
 The Debt **+** button expands two small, labeled floating actions: **Add Manually**
 (pencil) and **Scan / Upload** (camera). Tap the main **X** again, tap outside, or
 press Escape to dismiss; choosing an action or leaving Debt also closes the menu.

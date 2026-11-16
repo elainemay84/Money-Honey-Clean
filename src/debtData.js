@@ -51,9 +51,15 @@ function assertDebts(debts) {
 
 export function validateDebtMetadata(debt) {
   validatePaymentSchedule(debt.paymentSchedule)
+  for (const key of ['purchaseCategory', 'provider', 'merchant']) {
+    if (debt[key] != null && typeof debt[key] !== 'string') throw new Error(`Enter a valid ${key}.`)
+  }
   if ((debt.paymentHistory ?? []).some(payment => payment.installmentNumber != null && (
     !Number.isInteger(payment.installmentNumber) || payment.installmentNumber < 1 || payment.installmentNumber > 600
-    || (!payment.reversedAt && debt.paymentSchedule?.totalInstallments != null && payment.installmentNumber > debt.paymentSchedule.totalInstallments)
+    || (!payment.reversedAt && debt.paymentSchedule?.totalInstallments != null
+      && (debt.paymentSchedule.kind === 'payment-plan'
+        ? !debt.paymentSchedule.installments.some(row => row.installmentNumber === payment.installmentNumber)
+        : payment.installmentNumber > debt.paymentSchedule.totalInstallments))
   ))) throw new Error('The installment total must include recorded installment numbers, and installment numbers must be valid.')
   if (debt.statementDetails != null) {
     if (typeof debt.statementDetails !== 'object' || Array.isArray(debt.statementDetails)
@@ -183,6 +189,12 @@ export function saveDebts(debts, storage = localStorage) {
   assertDebts(debts)
   const { assignees } = loadDebtData(storage)
   return saveDebtData({ debts, assignees: includeDebtAssignees(assignees, debts) }, storage)
+}
+
+export function renameDebtPurchaseCategory(oldName, newName, storage = localStorage) {
+  const debts = loadDebts(storage)
+  if (!debts.some(debt => debt.purchaseCategory === oldName)) return
+  saveDebts(debts.map(debt => debt.purchaseCategory === oldName ? { ...debt, purchaseCategory: newName } : debt), storage)
 }
 
 function checkAssigneeName(name, assignees, previousName) {
@@ -542,10 +554,15 @@ function updateDebtSchedule(bill, debt, managed) {
     })),
     ...generated.filter(item => !historicalDates.has(item.scheduledDate) && !paidNumbers.has(item.installmentNumber) && !historicalNumbers.has(item.installmentNumber)).map(item => {
       const previous = (bill.occurrenceOverrides ?? []).find(override => override.scheduledDate === item.scheduledDate)
+      const explicit = schedule.kind === 'payment-plan'
       return {
         ...previous, ...item,
-        dueDate: previous?.dueDate ?? item.dueDate,
-        ...(previous?.debtAmountOverride ? { amount: previous.amount, debtAmountOverride: true } : {}),
+        dueDate: explicit && previous?.planDueDate !== item.dueDate ? item.dueDate : previous?.dueDate ?? item.dueDate,
+        ...(previous?.debtAmountOverride
+          ? (!explicit || previous.planAmount === item.amount
+            ? { amount: previous.amount, debtAmountOverride: true } : { debtAmountOverride: false })
+          : {}),
+        ...(explicit ? { planDueDate: item.dueDate, planAmount: item.amount } : {}),
         // Explicit debt-form date edits take precedence over a prior bill date edit.
         ...(schedule.dateAdjustments?.find(change => change.scheduledDate === item.scheduledDate) ?? {})
       }

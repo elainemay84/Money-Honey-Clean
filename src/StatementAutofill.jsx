@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { getDebtTypes } from './debtData.js'
-import { DEBT_STATEMENT_FIELDS, validateStatementSuggestions } from './statementData.js'
-import { extractDebtStatement } from './statementExtraction.js'
+import { BILL_STATEMENT_FIELDS, STATEMENT_FIELDS, validateBillStatementSuggestions, validateStatementSuggestions } from './statementData.js'
+import { extractBillStatement, extractDebtStatement } from './statementExtraction.js'
 
 export default function StatementAutofill({
-  currentValues, onApply, fieldStyle, buttonStyle, extract = extractDebtStatement,
-  initialOpen = false, onExtract, onManual, onClose
+  currentValues, onApply, fieldStyle, buttonStyle, extract,
+  initialOpen = false, onExtract, onManual, onClose, mode = 'debt'
 }) {
+  const fields = mode === 'bill' ? BILL_STATEMENT_FIELDS
+    : STATEMENT_FIELDS.filter(field => !['totalInstallments', 'completedInstallments'].includes(field.key))
+  const extractor = extract ?? (mode === 'bill' ? extractBillStatement : extractDebtStatement)
   const [open, setOpen] = useState(initialOpen)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
@@ -14,6 +17,8 @@ export default function StatementAutofill({
   const [selected, setSelected] = useState({})
   const [error, setError] = useState('')
   const [applied, setApplied] = useState(0)
+  const [installments, setInstallments] = useState(null)
+  const [warnings, setWarnings] = useState([])
   const camera = useRef(null)
   const photos = useRef(null)
   const pdf = useRef(null)
@@ -29,11 +34,13 @@ export default function StatementAutofill({
     operation.current = controller
     setBusy(true)
     setSuggestions(null)
+    setInstallments(null)
+    setWarnings([])
     setApplied(0)
     setError('')
     setProgress('Preparing the on-device reader...')
     try {
-      const result = await extract(file, {
+      const result = await extractor(file, {
         signal: controller.signal,
         onProgress: text => { if (!controller.signal.aborted) setProgress(text) }
       })
@@ -44,7 +51,9 @@ export default function StatementAutofill({
         return
       }
       setSuggestions(result.values)
-      setSelected(Object.fromEntries(DEBT_STATEMENT_FIELDS.filter(field => Object.hasOwn(result.values, field.key))
+      setInstallments(result.installments ?? null)
+      setWarnings(result.warnings ?? [])
+      setSelected(Object.fromEntries(fields.filter(field => Object.hasOwn(result.values, field.key))
         .map(field => [field.key, true])))
     } catch (failure) {
       if (!controller.signal.aborted) {
@@ -77,19 +86,20 @@ export default function StatementAutofill({
 
   function apply() {
     try {
-      const values = validateStatementSuggestions(Object.fromEntries(
+      const values = (mode === 'bill' ? validateBillStatementSuggestions : validateStatementSuggestions)(Object.fromEntries(
         Object.entries(suggestions).filter(([key]) => selected[key])
       ))
-      const overwritten = DEBT_STATEMENT_FIELDS.filter(({ key, type }) => {
+      const overwritten = fields.filter(({ key, type }) => {
         if (!Object.hasOwn(values, key)) return false
         const current = currentValues[key]
         if (current == null || String(current).trim() === '') return false
         return type === 'number' ? Number(current) !== Number(values[key]) : String(current) !== values[key]
       })
-      if (overwritten.length && !window.confirm(
-        `Replace existing form values for ${overwritten.map(field => field.label).join(', ')}? Nothing is saved until you save the debt.`
+      const replacesPlan = installments?.length && currentValues.paymentSchedule?.installments?.length
+      if ((overwritten.length || replacesPlan) && !window.confirm(
+        `Replace existing form values for ${[...overwritten.map(field => field.label), ...(replacesPlan ? ['installment schedule'] : [])].join(', ')}? Nothing is saved until you save the ${mode}.`
       )) return
-      onApply(values)
+      onApply(values, { installments, warnings })
       setSuggestions(null)
       setSelected({})
       setError('')
@@ -99,7 +109,7 @@ export default function StatementAutofill({
     }
   }
 
-  const suggestedFields = DEBT_STATEMENT_FIELDS.filter(field => suggestions && Object.hasOwn(suggestions, field.key))
+  const suggestedFields = fields.filter(field => suggestions && Object.hasOwn(suggestions, field.key))
 
   return (
     <section aria-label="Statement autofill" className="statement-autofill" style={{ minWidth: 0 }}>
@@ -109,7 +119,7 @@ export default function StatementAutofill({
       {open && (
         <div className="statement-autofill-panel">
           <p id={onExtract ? 'statement-scan-description' : undefined} className="statement-scan-description">
-            Add a photo or PDF to fill in your debt details.
+            Add a photo or PDF to fill in your {mode} details.
           </p>
           <div className="statement-scan-choices">
             {[
@@ -138,6 +148,8 @@ export default function StatementAutofill({
           {suggestedFields.length > 0 && (
             <div aria-label="Review statement suggestions" style={{ display: 'grid', gap: 8, marginTop: 10 }}>
               <strong>Review extracted values</strong>
+              {warnings.map(warning => <p key={warning} role="status">{warning}</p>)}
+              {installments && <p>{installments.length} installment rows found. Apply to review and edit their dates, amounts, and paid statuses in the form.</p>}
               {suggestedFields.map(({ key, label, type }) => (
                 <div key={key} style={{ display: 'grid', gap: 3 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -163,7 +175,7 @@ export default function StatementAutofill({
                   )}
                 </div>
               ))}
-              <p style={{ margin: 0 }}>Uncheck suggestions you do not want. Historical starting balances and payment history are never scanned or replaced.</p>
+              <p style={{ margin: 0 }}>Uncheck suggestions you do not want. Existing payment history is never replaced.</p>
               <button type="button" onClick={apply} style={{ ...buttonStyle, fontWeight: 'bold' }}>Apply Suggestions to Form</button>
             </div>
           )}

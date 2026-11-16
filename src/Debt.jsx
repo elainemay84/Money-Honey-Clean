@@ -3,6 +3,8 @@ import ResponsiveText from './ResponsiveText'
 import StatementAutofill from './StatementAutofill'
 import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
+import PaymentPlanFields from './PaymentPlanFields'
+import { getCategories, loadCategoryConfig } from './categoryData.js'
 import { defaultSchedule, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
@@ -95,6 +97,7 @@ const detailGrid = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px 
 function blankDebt() {
   return {
     name: '',
+    purchaseCategory: '',
     type: 'Credit Card',
     startingBalance: '',
     creditLimit: '',
@@ -127,6 +130,8 @@ export default function Debt({ statementExtractor } = {}) {
   const [formValues, setFormValues] = useState(blankDebt)
   const [paymentMethodWasSelected, setPaymentMethodWasSelected] = useState(false)
   const [formError, setFormError] = useState('')
+  const [categoryConfig, setCategoryConfig] = useState(() => loadCategoryConfig())
+  const expenseCategories = getCategories(categoryConfig.customCategories, 'expense', categoryConfig.builtInNames, categoryConfig.disabledBuiltIns)
   const [isAssigneeManagerOpen, setIsAssigneeManagerOpen] = useState(false)
   const [editingAssignee, setEditingAssignee] = useState(null)
   const [assigneeName, setAssigneeName] = useState('')
@@ -228,11 +233,13 @@ export default function Debt({ statementExtractor } = {}) {
     }
     const refreshAccounts = () => setAccountData(loadSavedAccountData())
     const refreshBills = () => setBills(loadBillData([]).bills)
+    const refreshCategories = () => setCategoryConfig(loadCategoryConfig())
     window.addEventListener('money-honey-debts-updated', refresh)
     window.addEventListener('money-honey-bills-updated', refreshBills)
     window.addEventListener('money-honey-accounts-updated', refreshAccounts)
     window.addEventListener('storage', refresh)
     window.addEventListener('storage', refreshBills)
+    window.addEventListener('money-honey-categories-updated', refreshCategories)
     synchronizeDebtBills()
     return () => {
       window.removeEventListener('money-honey-debts-updated', refresh)
@@ -240,6 +247,7 @@ export default function Debt({ statementExtractor } = {}) {
       window.removeEventListener('money-honey-accounts-updated', refreshAccounts)
       window.removeEventListener('storage', refresh)
       window.removeEventListener('storage', refreshBills)
+      window.removeEventListener('money-honey-categories-updated', refreshCategories)
     }
   }, [])
 
@@ -336,18 +344,20 @@ export default function Debt({ statementExtractor } = {}) {
     }
   }
 
-  function applyStatement(values, current) {
+  function applyStatement(values, current, result = {}) {
     const updated = { ...current }
     const detailKeys = ['purchaseAmount', 'totalRepayment', 'totalInterest', 'amountAlreadyPaid', 'nextPaymentAmount']
     for (const [key, value] of Object.entries(values)) {
       if (detailKeys.includes(key)) updated.statementDetails = { ...updated.statementDetails, [key]: parseFinancialAmount(value, key) }
-      else if (!['totalInstallments', 'completedInstallments'].includes(key)) updated[key] = value
+      else if (key === 'purchaseCategory') {
+        updated.purchaseCategory = expenseCategories.find(category => category.toLowerCase() === value.toLowerCase()) ?? current.purchaseCategory ?? ''
+      } else if (!['totalInstallments', 'completedInstallments'].includes(key)) updated[key] = value
     }
     // An installment plan's purchase amount is its original balance; never overwrite one already entered.
     if (values.purchaseAmount && updated.type && updated.type !== 'Credit Card' && !String(current.startingBalance ?? '').trim()) {
       updated.startingBalance = values.purchaseAmount
     }
-    if (values.nextPaymentDue && updated.paymentSchedule) {
+    if (values.nextPaymentDue && updated.paymentSchedule && updated.paymentSchedule.kind !== 'payment-plan') {
       const next = editingDebt ? scheduleStatusFor(editingDebt).nextScheduledDate : null
       updated.paymentSchedule = next && current.paymentHistory.length
         ? { ...updated.paymentSchedule, dateAdjustments: [...(updated.paymentSchedule.dateAdjustments ?? []).filter(item => item.scheduledDate !== next), { scheduledDate: next, dueDate: values.nextPaymentDue }] }
@@ -356,6 +366,11 @@ export default function Debt({ statementExtractor } = {}) {
     if (Object.hasOwn(values, 'interestRate') && !paymentMethodWasSelected) {
       updated.paymentCalculationMethod = Number(values.interestRate) > 0
         ? DEBT_PAYMENT_CALCULATION_METHODS.MANUAL_PRINCIPAL : DEBT_PAYMENT_CALCULATION_METHODS.PRINCIPAL_ONLY
+    }
+    if (result.installments?.length) {
+      if (!current.paymentHistory.length && !(current.id != null && bills.some(bill => bill.debtId === current.id && bill.paymentHistory?.length))) {
+        updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: result.installments.map((row, index) => ({ ...row, installmentNumber: index + 1 })) }
+      }
     }
     return updated
   }
@@ -697,6 +712,7 @@ export default function Debt({ statementExtractor } = {}) {
               )}
               {selectedDebt.accountLast4 && detailValue('Account Last 4 Digits', `••${selectedDebt.accountLast4}`)}
               {getDebtInstallmentProgress(selectedDebt) && detailValue('Installments', `${getDebtInstallmentProgress(selectedDebt).completed} of ${getDebtInstallmentProgress(selectedDebt).total} paid`)}
+              {selectedDebt.purchaseCategory && detailValue('Purchase Category', selectedDebt.purchaseCategory)}
               {getDebtAssignee(selectedDebt) && detailValue('Assigned To', getDebtAssignee(selectedDebt))}
             </div>
             {selectedScheduleStatus.isPastDue && (
@@ -811,9 +827,9 @@ export default function Debt({ statementExtractor } = {}) {
               initialOpen currentValues={{}} fieldStyle={inputStyle} buttonStyle={control} extract={statementExtractor}
               onManual={openNewDebt} onClose={() => { setAddMode(null); addMenuRef.current?.querySelector('button')?.focus() }}
               onExtract={result => {
-                const draft = applyStatement(result.values, { ...blankDebt(), type: '' })
+                const draft = applyStatement(result.values, { ...blankDebt(), type: '' }, result)
                 setFormValues(draft)
-                setStatementReview(true)
+                setStatementReview(result)
                 setSelectedDebtId(null)
                 setEditingDebtId(null)
                 setFormError('')
@@ -871,16 +887,39 @@ export default function Debt({ statementExtractor } = {}) {
               {statementReview && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>
                 Statement scanned. Review your information before saving.
               </p>}
-              {editingDebt && <StatementAutofill
+              {(statementReview?.warnings ?? []).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
+              {(editingDebt || formSchedule?.kind === 'payment-plan') && <StatementAutofill
                 currentValues={formValues}
                 fieldStyle={inputStyle}
                 buttonStyle={control}
                 extract={statementExtractor}
-                onApply={values => setFormValues(current => applyStatement(values, current))}
+                onApply={(values, result) => {
+                  setFormError(result.installments?.length && (formValues.paymentHistory.length || editingDebtBill?.paymentHistory?.length)
+                    ? 'Scanned details applied. The installment rows were not replaced because this debt has payment history.' : '')
+                  setFormValues(current => applyStatement(values, current, result))
+                }}
               />}
               <label style={formLabel}>Debt Name
                 <input aria-label="Debt name" placeholder="e.g. Auto loan" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
               </label>
+              <label style={formLabel}>Purchase Category (optional)
+                <select aria-label="Purchase Category" value={formValues.purchaseCategory ?? ''} style={inputStyle}
+                  onChange={event => setFormValues({ ...formValues, purchaseCategory: event.target.value })}>
+                  <option value="">Choose category</option>
+                  {expenseCategories.map(category => <option key={category}>{category}</option>)}
+                  {formValues.purchaseCategory && !expenseCategories.includes(formValues.purchaseCategory) && <option>{formValues.purchaseCategory}</option>}
+                </select>
+              </label>
+              <p style={{ margin: 0, fontSize: 11 }}>Category describes the purchase only. Record the original purchase once in Accounts for spending reports. Debt repayments are excluded from spending; scanning never creates a purchase transaction.</p>
+              {formSchedule?.kind === 'payment-plan' && <details style={{ fontSize: 12 }}>
+                <summary>Purchase details (optional)</summary>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 6 }}>
+                  {[['provider', 'Provider'], ['merchant', 'Merchant']].map(([key, label]) => <label key={key} style={formLabel}>{label}
+                    <input aria-label={label} value={formValues[key] ?? ''} style={inputStyle}
+                      onChange={event => setFormValues({ ...formValues, [key]: event.target.value })} />
+                  </label>)}
+                </div>
+              </details>}
               <label style={formLabel}>Debt Type
                 <select aria-label="Debt type" value={formValues.type} onChange={event => setFormValues({ ...formValues, type: event.target.value })} style={inputStyle} required>
                   {!formValues.type && <option value="">Choose debt type</option>}
@@ -971,7 +1010,20 @@ export default function Debt({ statementExtractor } = {}) {
                   </label>
                 ))}
               </div>
-              <DebtScheduleFields value={formSchedule} nextDate={formValues.nextPaymentDue}
+              <label style={formLabel}>Payment setup
+                <select aria-label="Payment setup" value={formSchedule?.kind === 'payment-plan' ? 'plan' : 'regular'} style={inputStyle}
+                  disabled={Boolean(editingDebt?.paymentHistory.length || editingDebtBill?.paymentHistory?.length)}
+                  onChange={event => setFormValues({ ...formValues, paymentSchedule: event.target.value === 'plan'
+                    ? { kind: 'payment-plan', frequency: 'explicit', installments: [{ dueDate: '', amount: '', paid: false, installmentNumber: 1 }] }
+                    : defaultSchedule(formValues.nextPaymentDue) })}>
+                  <option value="regular">Regular debt</option>
+                  <option value="plan">Payment Plan</option>
+                </select>
+              </label>
+              {formSchedule?.kind === 'payment-plan' ? <PaymentPlanFields rows={formSchedule.installments}
+                paymentHistory={formValues.paymentHistory} fieldStyle={inputStyle} labelStyle={formLabel}
+                onChange={installments => setFormValues({ ...formValues, paymentSchedule: { ...formSchedule, installments } })} />
+                : <DebtScheduleFields value={formSchedule} nextDate={formValues.nextPaymentDue}
                 nextPayment={formScheduleStatus} error={schedulePreviewError}
                 onChange={paymentSchedule => {
                   if (editingDebt?.paymentSchedule?.totalInstallments != null
@@ -982,8 +1034,8 @@ export default function Debt({ statementExtractor } = {}) {
                   setFormError('')
                   setFormValues({ ...formValues, paymentSchedule })
                 }}
-                fieldStyle={inputStyle} labelStyle={formLabel} />
-              <label style={formLabel}>Next Payment Due
+                fieldStyle={inputStyle} labelStyle={formLabel} />}
+              {formSchedule?.kind !== 'payment-plan' && <label style={formLabel}>Next Payment Due
                 <input
                   aria-label="Next Payment Due"
                   type="date"
@@ -1006,7 +1058,7 @@ export default function Debt({ statementExtractor } = {}) {
                   }}
                   style={inputStyle}
                 />
-              </label>
+              </label>}
               <label style={formLabel}>Payment Balance Method
                 <select
                   aria-label="Payment balance method"

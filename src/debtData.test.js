@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { createOccurrenceTransaction, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { getBillOccurrencesInRange, loadBillData, saveBillData, updateBillOccurrenceSkip, updateScheduleOccurrence } from './billData.js'
-import { createPayInFourSchedule, createRecurringSchedule, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { createPaymentPlan, createPayInFourSchedule, createRecurringSchedule, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { SANITIZERS } from './backupSanitize.js'
+import { getIncomeVsExpenses, getSpendingByCategory } from './reportData.js'
 import {
   DEBT_STORAGE_KEY,
   addDebtAssignee,
@@ -27,6 +29,7 @@ import {
   removeDebtPaymentForTransaction,
   reverseDebtPayment,
   renameDebtAssignee,
+  renameDebtPurchaseCategory,
   saveDebts,
   synchronizeDebtBills,
   getNextDebtPaymentDue,
@@ -44,6 +47,97 @@ function installmentDebt(changes = {}) {
     ...changes
   }
 }
+
+test('explicit plans preserve unequal dates, completed rows, linked payments, reporting, and backup metadata', () => {
+  const storage = createStorage()
+  const accounts = [{ id: 1, name: 'Main Checking', type: 'Checking', isMain: true, openingBalance: 2000 }]
+  const purchase = { id: 1, accountId: 1, name: 'Original purchase', amount: -100, category: 'Shopping', date: '2026-11-01', cleared: true }
+  saveAccountData(accounts, [purchase], storage)
+  const schedule = createPaymentPlan([
+    { dueDate: '2026-11-01', amount: '20', paid: true },
+    { dueDate: '2026-11-16', amount: '29.99', paid: false },
+    { dueDate: '2026-12-19', amount: '50.01', paid: false }
+  ])
+  validatePaymentSchedule(schedule)
+  saveDebts([installmentDebt({
+    name: 'Klarna - Store', provider: 'Klarna', merchant: 'Store', purchaseCategory: 'Shopping',
+    startingBalance: 100, currentBalance: 80, interestRate: 0, paymentSchedule: schedule
+  })], storage)
+  let { bills, debts } = synchronizeDebtBills(storage)
+  let transactions = loadSavedAccountData(storage).transactions
+  let occurrences = getBillOccurrencesInRange(bills, '2026-01-01', '2028-12-31', transactions)
+  assert.deepEqual(occurrences.map(row => [row.dueDate, row.amount]), [['2026-11-16', 29.99], ['2026-12-19', 50.01]])
+  assert.equal(transactions.length, 1)
+  assert.equal(debts[0].paymentHistory.length, 0)
+  assert.deepEqual(getDebtInstallmentProgress(debts[0]), { completed: 1, total: 3, remaining: 2 })
+  for (const occurrence of occurrences) {
+    const paymentDate = occurrence.dueDate === '2026-11-16' ? '2026-11-15' : '2026-11-30'
+    const first = createOccurrenceTransaction('out', occurrence, paymentDate, storage)
+    const repeated = createOccurrenceTransaction('out', occurrence, paymentDate, storage)
+    assert.equal(first.transaction.id, repeated.transaction.id)
+    const details = { billOccurrenceId: occurrence.occurrenceId, scheduledDueDate: occurrence.scheduledDate }
+    const payment = recordDebtPaymentFromTransaction(7, first.transaction.id, details, storage)
+    assert.deepEqual(recordDebtPaymentFromTransaction(7, first.transaction.id, details, storage), payment)
+    assert.equal(payment.date, paymentDate)
+  }
+  ;({ bills, debts } = synchronizeDebtBills(storage))
+  transactions = loadSavedAccountData(storage).transactions
+  assert.equal(transactions.length, 3)
+  assert.equal(debts[0].paymentHistory.length, 2)
+  assert.equal(debts[0].currentBalance, 0)
+  assert.deepEqual(getDebtInstallmentProgress(debts[0]), { completed: 3, total: 3, remaining: 0 })
+  assert.equal(getBillOccurrencesInRange(bills, '2026-01-01', '2028-12-31', transactions).filter(row => !row.paid).length, 0)
+  assert.equal(transactions[0].cleared, true)
+  assert.equal(transactions[1].cleared, false)
+  assert.deepEqual(loadSavedAccountData(storage).accounts, accounts)
+  const args = { transactions, month: '2026-11', categories: ['Shopping', 'Debt Payments'], accounts }
+  assert.equal(getSpendingByCategory(args).total, 100)
+  assert.equal(getIncomeVsExpenses(args).debtPayments, 80)
+  assert.equal(getSpendingByCategory({ ...args, transactions: transactions.slice(1) }).total, 0)
+  const restored = JSON.parse(SANITIZERS[DEBT_STORAGE_KEY](storage.getItem(DEBT_STORAGE_KEY)))
+  assert.deepEqual(restored.debts, debts)
+  renameDebtPurchaseCategory('Shopping', 'Gifts', storage)
+  assert.equal(loadDebts(storage)[0].purchaseCategory, 'Gifts')
+  assert.deepEqual(loadDebts(storage)[0].paymentHistory, debts[0].paymentHistory)
+  assert.deepEqual(loadSavedAccountData(storage).transactions, transactions)
+  removeDebtPaymentForTransaction(transactions[1].id, storage)
+  assert.equal(loadDebts(storage)[0].currentBalance, 29.99)
+  assert.equal(getDebtInstallmentProgress(loadDebts(storage)[0]).completed, 2)
+})
+
+test('explicit plans reject missing or duplicate dates and invalid amounts instead of generating payments', () => {
+  for (const rows of [
+    [], [{ dueDate: '', amount: 10 }], [{ dueDate: '2026-02-30', amount: 10 }],
+    [{ dueDate: '2026-11-16', amount: 0 }],
+    [{ dueDate: '2026-11-16', amount: 10 }, { dueDate: '2026-11-16', amount: 20 }]
+  ]) assert.throws(() => validatePaymentSchedule(createPaymentPlan(rows)))
+  assert.throws(() => createPaymentPlan([{ dueDate: '2026-11-16', amount: '' }]))
+  const paymentSchedule = createPaymentPlan([{ dueDate: '2026-11-16', amount: 10, paid: true }])
+  const debt = installmentDebt({ paymentSchedule, currentBalance: 0 })
+  assert.deepEqual(getDebtScheduledPayments(debt), [])
+  assert.equal(getNextDebtPaymentDue(debt), '')
+  assert.deepEqual(getDebtInstallmentProgress(debt), { completed: 1, total: 1, remaining: 0 })
+})
+
+test('explicit plan edits preserve occurrence links and respect bill-only date and amount changes', () => {
+  const storage = createStorage()
+  const schedule = createPaymentPlan([
+    { dueDate: '2026-11-16', amount: 10 }, { dueDate: '2026-12-16', amount: 20 }
+  ])
+  saveDebts([installmentDebt({ paymentSchedule: schedule })], storage)
+  let { bills, debts } = synchronizeDebtBills(storage)
+  const bill = updateScheduleOccurrence(bills[0], '2026-11-16', { dueDate: '2026-11-18', amount: 12, debtAmountOverride: true })
+  saveBillData({ bills: [bill] }, storage)
+  ;({ bills, debts } = synchronizeDebtBills(storage))
+  assert.equal(bills[0].occurrenceOverrides[0].dueDate, '2026-11-18')
+  assert.equal(bills[0].occurrenceOverrides[0].amount, 12)
+  debts[0].paymentSchedule = createPaymentPlan(schedule.installments.map((row, index) => index ? row : { ...row, dueDate: '2026-11-20', amount: 15 }))
+  saveDebts(debts, storage)
+  ;({ bills } = synchronizeDebtBills(storage))
+  assert.equal(bills[0].occurrenceOverrides[0].scheduledDate, '2026-11-16')
+  assert.equal(bills[0].occurrenceOverrides[0].dueDate, '2026-11-20')
+  assert.equal(bills[0].occurrenceOverrides[0].amount, 15)
+})
 
 test('four automatic biweekly payments total the exact balance and progress once per payment through completion', () => {
   const storage = createStorage()

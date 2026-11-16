@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, afterEach, beforeEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
-import { getReliableOcrLines, parseDebtStatement } from './statementData.js'
+import { getReliableOcrLines, parseBillStatement, parseDebtStatement } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { getBillOccurrencesInRange } from './billData.js'
@@ -196,6 +196,94 @@ async function openManualDebt(container) {
   await click(button(container, 'Add debt'))
   await click(button(container, 'Add Manually'))
 }
+
+test('scanned payment plan rows are editable before save and Bills records one linked payment with the chosen date', async () => {
+  const date = localDate()
+  const previous = shiftDate(date, -14)
+  const following = shiftDate(date, 17)
+  const Component = () => React.createElement(Debt, {
+    statementExtractor: async () => parseDebtStatement([
+      'Afterpay', 'Merchant: Example Store', 'Purchase amount: $100', 'Remaining balance: $80', 'Category: Shopping',
+      `Installment 1 ${previous} $20 Paid`, `Installment 2 ${date} $29.99 Unpaid`,
+      `Installment 3 ${following} $50.01 Unpaid`
+    ])
+  })
+  const before = readAccountData()
+  let container = await render(Component)
+  await click(button(container, 'Add debt'))
+  await click(button(container, 'Scan / Upload'))
+  await chooseStatementFile(container, 'Statement image')
+  let form = container.querySelector('form')
+  assert.equal(form.querySelector('[aria-label="Payment setup"]').value, 'plan')
+  assert.equal(form.querySelector('[aria-label="Purchase Category"]').value, 'Shopping')
+  assert.equal(form.querySelectorAll('input[type="checkbox"]:checked').length, 1)
+  await changeValue(form.querySelector('[aria-label="Installment 2 amount"]'), '30')
+  await changeValue(form.querySelector('[aria-label="Installment 3 amount"]'), '50')
+  await changeValue(form.querySelector('[aria-label="Installment 3 date"]'), shiftDate(following, 1))
+  await click(button(form, 'Add installment'))
+  assert.ok(form.querySelector('[aria-label="Installment 4 date"]'))
+  await click(button(form, 'Remove installment 4'))
+  assert.equal(form.querySelector('[aria-label="Installment 4 date"]'), null)
+  assert.deepEqual(readAccountData(), before)
+  await submit(form)
+  assert.equal(container.querySelector('form'), null)
+  assert.equal(loadDebts()[0].currentBalance, 80)
+  assert.equal(loadDebts()[0].paymentSchedule.installments[0].paid, true)
+  assert.equal(loadDebts()[0].paymentSchedule.installments[2].dueDate, shiftDate(following, 1))
+  assert.deepEqual(readAccountData(), before)
+  container = await reload(Bills, container)
+  await click(button(container, 'Pay Afterpay - Example Store'))
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('[aria-label="Payment account"]'), '1')
+  const actual = shiftDate(date, -1)
+  await changeValue(dialog.querySelector('input[type="date"]'), actual)
+  await click(button(dialog, 'Confirm'))
+  const transactions = readAccountData().transactions
+  assert.equal(transactions.length, before.transactions.length + 1)
+  assert.equal(transactions.at(-1).amount, -30)
+  assert.equal(transactions.at(-1).date, actual)
+  assert.equal(transactions.at(-1).cleared, false)
+  assert.equal(loadDebts()[0].currentBalance, 50)
+  assert.equal(loadDebts()[0].paymentHistory.length, 1)
+  container = await reload(Debt, container)
+  await click(container.querySelector('[aria-label="Debt row: Afterpay - Example Store"]'))
+  assert.match(container.textContent, /2 of 3 paid/)
+  await click(button(container, 'Edit Debt'))
+  form = container.querySelector('form')
+  assert.equal(form.querySelector('[aria-label="Installment 2 date"]').disabled, true)
+  assert.equal(button(form, 'Remove installment 2').disabled, true)
+})
+
+test('Payment Plan is opt-in and regular Bill scanning fills a reviewed draft without saving transactions', async () => {
+  let container = await render(Debt)
+  await openManualDebt(container)
+  let form = container.querySelector('form')
+  assert.equal(form.querySelector('[aria-label="Installment 1 date"]'), null)
+  await changeValue(form.querySelector('[aria-label="Payment setup"]'), 'plan')
+  assert.equal(form.querySelectorAll('[aria-label="Installment 1 date"]').length, 1)
+  assert.ok(button(form, 'Scan / Upload Statement'))
+  const Component = () => React.createElement(Bills, {
+    statementExtractor: async () => parseBillStatement([
+      'Biller: City Electric', 'Amount due: $81.23', `Due date: ${localDate()}`, 'Category: Housing & Utilities'
+    ])
+  })
+  container = await reload(Component, container)
+  await click(button(container, 'Add bill'))
+  form = container.querySelector('form')
+  const before = readAccountData()
+  await click(button(form, 'Scan / Upload Statement'))
+  await chooseStatementFile(form, 'Statement image')
+  await click(button(form, 'Apply Suggestions to Form'))
+  assert.equal(form.querySelector('[aria-label="Bill name"]').value, 'City Electric')
+  assert.equal(form.querySelector('[aria-label="Amount"]').value, '81.23')
+  assert.equal(form.querySelector('[aria-label="Category"]').value, 'Housing & Utilities')
+  assert.equal(form.querySelector('[aria-label="Due date"]').value, localDate())
+  assert.deepEqual(readAccountData(), before)
+  await submit(form)
+  assert.equal(container.querySelector('form'), null)
+  assert.ok(button(container, 'Pay City Electric'))
+  assert.deepEqual(readAccountData(), before)
+})
 
 test('Debt floating menu toggles, dismisses outside or with Escape, and never opens a choice dialog or saves data', async () => {
   const container = await render(Debt)

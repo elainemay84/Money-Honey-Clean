@@ -9,6 +9,7 @@ import {
 } from './categoryData.js'
 import { loadPayees, savePayees } from './payeeData.js'
 import { renameScheduleCategory } from './billData.js'
+import { renameDebtPurchaseCategory } from './debtData.js'
 import { isDebtPaymentTransaction } from './transactionRules.js'
 import PageHeader from './PageHeader'
 
@@ -106,6 +107,7 @@ export default function Settings({ onBack, transactions = [], onTransactionsChan
           : transaction
       ))
       renameScheduleCategory(oldName, name, editingCategory.type)
+      if (editingCategory.type === 'expense') renameDebtPurchaseCategory(oldName, name)
       setEditingCategory(null)
     } catch (error) {
       setManagementError(error.message)

@@ -1,4 +1,4 @@
-import { parseDebtStatement } from './statementData.js'
+import { parseBillStatement, parseDebtStatement } from './statementData.js'
 import { createLocalStatementReader, StatementScanError } from './statementReader.js'
 import { decodeHeicFile, sniffStatementFile } from './statementImageFormat.js'
 export { StatementScanError } from './statementReader.js'
@@ -197,7 +197,11 @@ async function imageCanvas(file, signal, signature, onProgress) {
   throw new StatementScanError('This photo cannot be decoded. Try a clear JPEG or PNG, or take a screenshot.')
 }
 
-export async function extractDebtStatement(file, { signal: externalSignal, onProgress = () => {} } = {}) {
+export function extractBillStatement(file, options = {}) {
+  return extractDebtStatement(file, { ...options, parse: parseBillStatement })
+}
+
+export async function extractDebtStatement(file, { signal: externalSignal, onProgress = () => {}, parse = parseDebtStatement } = {}) {
   const signature = file?.size > 0 && file.size <= MAX_STATEMENT_BYTES ? await sniffStatementFile(file) : null
   const kind = await resolveStatementFileKind(file, signature)
   const controller = new AbortController()
@@ -277,7 +281,7 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
         try {
           const text = await abortable(page.getTextContent(), signal)
           let pageLines = getPdfTextLines(text.items)
-          if (!Object.keys(parseDebtStatement(pageLines).values).some(key => key !== 'name' && key !== 'type')) {
+          if (!Object.keys(parse(pageLines).values).some(key => key !== 'name' && key !== 'type')) {
             const viewport = page.getViewport({ scale: 2 })
             const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (viewport.width * viewport.height)))
             const bounded = page.getViewport({ scale: 2 * scale })
@@ -302,7 +306,7 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
       }
     }
     onProgress('Matching statement fields on your device...')
-    const result = parseDebtStatement(lines)
+    const result = parse(lines)
     const hasText = lines.some(line => line.trim())
     lines = []
     if (!Object.keys(result.values).length) {

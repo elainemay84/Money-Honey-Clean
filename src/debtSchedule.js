@@ -1,7 +1,7 @@
 import { parseFinancialAmount, parseInstallmentCount } from './financialAmounts.js'
 
 export const DEBT_SCHEDULE_OPTIONS = [
-  ['monthly', 'Monthly'], ['biweekly', 'Every 2 Weeks'], ['recurring', 'Recurring'], ['pay-in-4', 'Pay in 4'], ['custom', 'Custom']
+  ['monthly', 'Monthly'], ['biweekly', 'Every 2 Weeks'], ['recurring', 'Recurring'], ['pay-in-4', 'Pay in 4'], ['custom', 'Custom'], ['payment-plan', 'Payment Plan']
 ]
 
 export const PAYMENT_FREQUENCY_OPTIONS = [
@@ -32,6 +32,7 @@ export function createRecurringSchedule(frequency, startDate = '') {
 }
 
 export function scheduleFromForm(schedule, nextDate) {
+  if (schedule.kind === 'payment-plan') return createPaymentPlan(schedule.installments)
   const finite = schedule.totalInstallments !== '' && schedule.totalInstallments != null
   return {
     ...schedule,
@@ -45,6 +46,24 @@ export function scheduleFromForm(schedule, nextDate) {
     completedInstallments: finite ? parseInstallmentCount(schedule.completedInstallments, 'Completed installments') : 0,
     remainingTotal: finite ? parseFinancialAmount(schedule.remainingTotal, 'Remaining scheduled repayment total') : null,
     installmentAmount: finite ? parseFinancialAmount(schedule.installmentAmount, 'Installment amount', { optional: true }) : null
+  }
+}
+
+export function createPaymentPlan(installments = []) {
+  const rows = installments.map((row, index) => ({
+    scheduledDate: row.scheduledDate || row.dueDate,
+    dueDate: row.dueDate,
+    amount: parseFinancialAmount(row.amount, `Installment ${index + 1} amount`),
+    paid: row.paid === true,
+    installmentNumber: row.installmentNumber ?? index + 1
+  }))
+  return {
+    kind: 'payment-plan', frequency: 'explicit',
+    startDate: rows.map(row => row.scheduledDate).sort()[0] ?? '',
+    totalInstallments: rows.length,
+    completedInstallments: rows.filter(row => row.paid).length,
+    remainingTotal: rows.filter(row => !row.paid).reduce((sum, row) => sum + Math.round(row.amount * 100), 0) / 100,
+    installments: rows
   }
 }
 
@@ -70,6 +89,32 @@ export function isScheduleDate(value) {
 
 export function validatePaymentSchedule(schedule) {
   if (schedule == null) return
+  if (schedule.dateAdjustments != null) {
+    if (!Array.isArray(schedule.dateAdjustments) || schedule.dateAdjustments.some(item =>
+      !item || !isScheduleDate(item.scheduledDate) || !isScheduleDate(item.dueDate)
+    ) || new Set(schedule.dateAdjustments.map(item => item.scheduledDate)).size !== schedule.dateAdjustments.length) {
+      throw new Error('Upcoming date adjustments must contain valid, unique scheduled dates.')
+    }
+  }
+  if (schedule.kind === 'payment-plan') {
+    const rows = schedule.installments
+    if (schedule.frequency !== 'explicit' || !Array.isArray(rows) || rows.length < 1 || rows.length > 600
+      || rows.some(row => !row || !isScheduleDate(row.scheduledDate) || !isScheduleDate(row.dueDate)
+        || !Number.isFinite(row.amount) || row.amount <= 0 || !Number.isSafeInteger(Math.round(row.amount * 100))
+        || Math.abs(Math.round(row.amount * 100) / 100 - row.amount) > 0.000001
+        || typeof row.paid !== 'boolean' || !Number.isInteger(row.installmentNumber)
+        || row.installmentNumber < 1 || row.installmentNumber > 600)
+      || new Set(rows.map(row => row.scheduledDate)).size !== rows.length
+      || new Set(rows.map(row => row.installmentNumber)).size !== rows.length) {
+      throw new Error('Enter 1 to 600 installments with unique dates, valid amounts, and paid statuses. Missing dates or amounts must be completed manually.')
+    }
+    const expected = createPaymentPlan(rows)
+    if (!Number.isSafeInteger(rows.reduce((sum, row) => sum + Math.round(row.amount * 100), 0))
+      || ['startDate', 'totalInstallments', 'completedInstallments', 'remainingTotal'].some(key => schedule[key] !== expected[key])) {
+      throw new Error('Payment plan totals must match its installment rows.')
+    }
+    return
+  }
   if (typeof schedule !== 'object' || Array.isArray(schedule)
     || !DEBT_SCHEDULE_OPTIONS.some(([key]) => key === schedule.kind)
     || ![...PAYMENT_FREQUENCY_OPTIONS.map(([key]) => key), 'days'].includes(schedule.frequency)) {
@@ -125,13 +170,6 @@ export function validatePaymentSchedule(schedule) {
   } else if (schedule.kind === 'pay-in-4' || schedule.completedInstallments !== 0) {
     throw new Error('Enter the total number of installments for this plan.')
   }
-  if (schedule.dateAdjustments != null) {
-    if (!Array.isArray(schedule.dateAdjustments) || schedule.dateAdjustments.some(item =>
-      !item || !isScheduleDate(item.scheduledDate) || !isScheduleDate(item.dueDate)
-    ) || new Set(schedule.dateAdjustments.map(item => item.scheduledDate)).size !== schedule.dateAdjustments.length) {
-      throw new Error('Upcoming date adjustments must contain valid, unique scheduled dates.')
-    }
-  }
 }
 
 function twiceMonthlyDate(schedule, index) {
@@ -166,6 +204,8 @@ function scheduledDate(schedule, index) {
 
 export function getDebtScheduledPayments(debt, limit = 12) {
   const schedule = debt.paymentSchedule
+  if (schedule?.kind === 'payment-plan') return schedule.installments.filter(row => !row.paid)
+    .map(row => ({ ...row, dueDate: schedule.dateAdjustments?.find(item => item.scheduledDate === row.scheduledDate)?.dueDate ?? row.dueDate }))
   if (!schedule || !isScheduleDate(schedule.startDate)) return []
   const finite = schedule.totalInstallments != null
   const count = finite ? schedule.totalInstallments - schedule.completedInstallments : limit
@@ -187,6 +227,11 @@ export function getDebtScheduledPayments(debt, limit = 12) {
 export function getDebtInstallmentProgress(debt) {
   const schedule = debt.paymentSchedule
   if (schedule?.totalInstallments == null) return null
+  if (schedule.kind === 'payment-plan') {
+    const paid = getPaidInstallmentNumbers(debt)
+    const completed = schedule.installments.filter(row => row.paid || paid.has(row.installmentNumber)).length
+    return { completed, total: schedule.installments.length, remaining: schedule.installments.length - completed }
+  }
   const recorded = [...getPaidInstallmentNumbers(debt)]
     .filter(number => number > Number(schedule.completedInstallments) && number <= Number(schedule.totalInstallments)).length
   const completed = Number(schedule.completedInstallments) + recorded
