@@ -100,6 +100,11 @@ monthly, quarterly, every six months, and yearly.
 The private scanner also reads clearly labeled provider, merchant, original
 purchase amount, remaining balance, explicit categories, and visible dated
 installments, including separate date/amount/status lines and dated table rows.
+For payment-plan screenshots with separate date and amount columns, OCR coordinates
+pair confident amounts on the same horizontal row, even when OCR reads each column
+separately. Original purchase and remaining scheduled balance stay distinct;
+ambiguous or unreadable installment amounts stay blank rather than being divided
+from either total.
 Recognized rows automatically populate the editable list, including partially
 read rows. Review every suggestion; ambiguous installment dates and unreadable
 amounts are left blank, never guessed. A yearless date such as "Dec 15" in a

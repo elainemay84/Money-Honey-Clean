@@ -1,4 +1,4 @@
-import { parseBillStatement, parseDebtStatement } from './statementData.js'
+import { parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
 import { createLocalStatementReader, StatementScanError } from './statementReader.js'
 import { decodeHeicFile, sniffStatementFile } from './statementImageFormat.js'
 export { StatementScanError } from './statementReader.js'
@@ -239,7 +239,7 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
       'image/png'
     )), signal)
     const image = await abortable(blob.arrayBuffer(), signal)
-    ocrReader ??= createLocalStatementReader({ assets, signal, onProgress })
+    ocrReader ??= createLocalStatementReader({ assets, signal, onProgress, paymentPlan: parse === parsePaymentPlanScan })
     onProgress('Starting the on-device reader (up to 35 seconds)...')
     return ocrReader.recognize(image)
   }

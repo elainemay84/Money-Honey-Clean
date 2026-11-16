@@ -6,7 +6,7 @@ export class StatementScanError extends Error {
 }
 
 export function createLocalStatementReader({
-  assets, signal, onProgress,
+  assets, signal, onProgress, paymentPlan = false,
   workerFactory = () => new Worker(new URL('./statementOcr.worker.js', import.meta.url), { type: 'module' }),
   initializationTimeoutMs = 35_000
 }) {
@@ -63,7 +63,7 @@ export function createLocalStatementReader({
           if (!initialized) timer = setTimeout(() => fail(new StatementScanError(
             'The on-device reader did not initialize within 35 seconds. Its engine or language files may be blocked or slow to load. Retry, choose a text-based PDF, or enter manually.'
           )), initializationTimeoutMs)
-          worker.postMessage({ image, assets }, [image])
+          worker.postMessage({ image, assets, paymentPlan }, [image])
         } catch {
           fail(new StatementScanError('This browser could not start the local reader. Try an updated Safari, a text-based PDF, or manual entry.'))
         }

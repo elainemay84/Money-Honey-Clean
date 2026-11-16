@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { after, afterEach, beforeEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
+import { readFile } from 'node:fs/promises'
+import { createWorker, PSM } from 'tesseract.js'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
 import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
@@ -188,10 +190,13 @@ function readAccountData() {
   return JSON.parse(browser.localStorage.getItem('money-honey-account-data'))
 }
 
-async function chooseStatementFile(container, label, name = 'statement.png', type = 'image/png') {
+async function chooseStatementFile(container, label, name = 'statement.png', type = 'image/png', contents = 'synthetic test document', completion) {
   const input = container.querySelector(`[aria-label="${label}"]`)
-  Object.defineProperty(input, 'files', { configurable: true, value: [new browser.File(['synthetic test document'], name, { type })] })
-  await act(async () => input.dispatchEvent(new browser.Event('change', { bubbles: true })))
+  Object.defineProperty(input, 'files', { configurable: true, value: [new browser.File([contents], name, { type })] })
+  await act(async () => {
+    input.dispatchEvent(new browser.Event('change', { bubbles: true }))
+    await completion
+  })
 }
 
 async function openManualDebt(container) {
@@ -204,6 +209,77 @@ async function openPaymentPlan(container, scan = false) {
   await click(button(container, 'Add Payment Plan'))
   await click(button(container, scan ? 'Scan / Upload Payment Plan' : 'Enter Manually'))
 }
+
+test('real Wayfair image OCR populates all Add Payment Plan amounts, survives rerenders and saves exact cents', { timeout: 30000 }, async () => {
+  saveDebts([{
+    id: 7, name: 'Existing debt', type: 'Other', startingBalance: 100, currentBalance: 100,
+    interestRate: 0, minimumPayment: 10, accountId: 1, paymentHistory: []
+  }])
+  createDebtPayment(7, 'existing-payment', { total: 10, principal: 10, date: localDate(), accountId: 1 })
+  const existing = loadDebts()[0]
+  const accounts = readAccountData()
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills
+  const categories = browser.localStorage.getItem('money-honey-categories')
+  const image = await readFile(new URL('./fixtures/wayfair-payment-plan.png', import.meta.url))
+  let finishScan
+  const completion = new Promise(resolve => { finishScan = resolve })
+  const container = await render(() => React.createElement(Debt, {
+    statementExtractor: async file => {
+      let worker
+      try {
+        worker = await createWorker('eng', 1, {
+          langPath: new URL('../node_modules/@tesseract.js-data/eng/4.0.0', import.meta.url).pathname,
+          cacheMethod: 'none'
+        })
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO })
+        const { data } = await worker.recognize(Buffer.from(await file.arrayBuffer()), {}, { text: false, blocks: true })
+        return parsePaymentPlanScan(getReliableOcrLines(data, { paymentPlan: true }))
+      } finally {
+        await worker?.terminate()
+        finishScan()
+      }
+    }
+  }))
+  const dates = ['2026-11-24', '2026-12-24', '2027-01-24', '2027-02-24']
+  const amounts = ['51.53', '51.53', '51.53', '51.57']
+  await openPaymentPlan(container, true)
+  await chooseStatementFile(container, 'Statement image', 'wayfair.png', 'image/png', image, completion)
+  const form = container.querySelector('[aria-label="Add payment plan form"] form')
+  assert.ok(form)
+  const assertRows = () => {
+    assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][type="date"]')].map(input => input.value), dates)
+    const values = [...form.querySelectorAll('input[aria-label^="Installment"][aria-label$="amount"]')].map(input => input.value)
+    assert.deepEqual(values, amounts)
+    assert.equal(values.reduce((sum, value) => sum + Math.round(Number(value) * 100), 0), 20616)
+    assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '206.16')
+  }
+  assert.equal(form.querySelector('[aria-label="Debt name"]').value, 'Wayfair')
+  assertRows()
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Wayfair reviewed')
+  await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'weekly')
+  await act(async () => {
+    form.querySelector('[aria-label="Installment 4 amount"]').dispatchEvent(new browser.FocusEvent('blur', { bubbles: true }))
+    window.dispatchEvent(new browser.Event('pageshow'))
+    document.dispatchEvent(new browser.Event('visibilitychange'))
+  })
+  assertRows()
+  assert.deepEqual(loadDebts(), [existing])
+  assert.deepEqual(readAccountData(), accounts)
+  await submit(form)
+  const saved = loadDebts().find(debt => debt.name === 'Wayfair reviewed')
+  assert.ok(saved)
+  assert.equal(saved.currentBalance, 206.16)
+  assert.equal(saved.statementDetails.purchaseAmount, 363)
+  assert.deepEqual(saved.paymentSchedule.installments.map(row => [row.dueDate, row.amount]), dates.map((date, index) => [date, Number(amounts[index])]))
+  assert.deepEqual(loadDebts().find(debt => debt.id === existing.id), existing)
+  assert.deepEqual(readAccountData(), accounts)
+  assert.equal(browser.localStorage.getItem('money-honey-categories'), categories)
+  const savedBills = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills
+  assert.deepEqual(savedBills.filter(bill => bill.debtId !== saved.id), bills)
+  await click(container.querySelector('[aria-label="Debt row: Wayfair reviewed"]'))
+  await click(button(container, 'Edit Debt'))
+  assert.deepEqual([...container.querySelectorAll('input[aria-label^="Installment"][aria-label$="amount"]')].map(input => Number(input.value)), amounts.map(Number))
+})
 
 test('activity timeline OCR scan fills the payment plan form and saves exact scanned rows only on confirmation', async () => {
   const dates = ['2026-12-15', ...Array.from({ length: 11 }, (_, index) => `2027-${String(index + 1).padStart(2, '0')}-15`)]

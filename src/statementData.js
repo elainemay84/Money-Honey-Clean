@@ -147,7 +147,9 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
     if (typeof date === 'string') candidates.nextPaymentDue.add(date)
     else if (date) yearlessDue.add(`${date.month}-${date.day}`)
   }
-  const textLines = lines.map(line => line.trim())
+  const textLines = lines.map(line => paymentPlan
+    ? line.trim().replace(/^remaining scheduled balance\b/i, 'Remaining balance')
+    : line.trim())
   for (let index = 0; index < textLines.length; index += 1) {
     const line = textLines[index]
     const installments = /^payments completed\s*:?\s*(\d+)\s*(?:of|\/)\s*(\d+)$/i.exec(line)
@@ -304,6 +306,7 @@ const ROW_DATE = /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}|(?:Jan(?:uary)?
 const PARTIAL_ROW_DATE = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}\b/i
 const INSTALLMENT_LABEL = /^(?:installment|payment)\s*#?\s*\d+\b(?:\s*(?:of|\/)\s*\d+)?\s*[:.)-]?\s*/i
 const INSTALLMENT_STATUS = /^(?:paid|completed|unpaid|not paid|not completed|upcoming|scheduled|due|pending|overdue|autopay)$/i
+const INSTALLMENT_AMOUNT_CELL = /^(?:(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue)\s+)?(?:\$\s*[\d,.]+|(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?)(?:\s+(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue))?$/i
 
 function installmentAmount(text) {
   if (/\bCR\b/i.test(text)) return ''
@@ -378,9 +381,14 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
       if (!next || INSTALLMENT_LABEL.test(next)) break
       const nextDate = ROW_DATE.exec(next) ?? PARTIAL_ROW_DATE.exec(next)
       const hasDate = ROW_DATE.test(rowText) || PARTIAL_ROW_DATE.test(rowText)
-      const amountCell = /^(?:(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue)\s+)?(?:\$\s*[\d,.]+|(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?)(?:\s+(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue))?$/i.test(next)
+      const amountCell = INSTALLMENT_AMOUNT_CELL.test(next)
       if (nextDate && !hasDate && rowLabel && !rowText.includes('$') && !installmentAmount(rowText) && nextDate.index === 0) rowText += ` ${next}`
-      else if (!nextDate && amountCell && !rowText.includes('$') && !installmentAmount(rowText)) rowText += ` ${next}`
+      else if (!nextDate && amountCell && !rowText.includes('$') && !installmentAmount(rowText)) {
+        // A date column followed by an amount column has no reliable sequential pairing.
+        if (paymentPlan && initialDate && installments.at(-1)?.amount === ''
+          && INSTALLMENT_AMOUNT_CELL.test(cleanRowLine(lines[index + consumed + 2], timeline))) break
+        rowText += ` ${next}`
+      }
       else if (INSTALLMENT_STATUS.test(next) && !/\b(?:paid|completed|unpaid|pending|overdue)\b/i.test(rowText)) rowText += ` ${next}`
       else break
       consumed += 1
@@ -519,10 +527,55 @@ function withoutNoise(line) {
   return { text: kept.map(word => word.text).join(' '), words: kept }
 }
 
-export function getReliableOcrLines(data) {
-  const lines = (data.blocks ?? []).flatMap(block => block.paragraphs ?? [])
+function lineBounds(line) {
+  const boxes = line?.words?.map(word => word.bbox) ?? []
+  if (!boxes.length || boxes.some(box => !box || !['x0', 'x1', 'y0', 'y1'].every(key => Number.isFinite(box[key]))
+    || box.x1 <= box.x0 || box.y1 <= box.y0)) return null
+  return {
+    x0: Math.min(...boxes.map(box => box.x0)), x1: Math.max(...boxes.map(box => box.x1)),
+    y0: Math.min(...boxes.map(box => box.y0)), y1: Math.max(...boxes.map(box => box.y1))
+  }
+}
+
+// AUTO segmentation can read the entire date column before the amount column.
+// Join only unambiguous horizontal neighbours; retain vertical cards when there is no right-hand column.
+function pairInstallmentColumns(lines) {
+  const entries = lines.map((line, index) => ({ line, index, box: lineBounds(line) })).filter(entry => entry.box)
+  const dates = entries.filter(({ line }) => (ROW_DATE.test(line.text) || PARTIAL_ROW_DATE.test(line.text))
+    && !installmentAmount(line.text) && !line.text.includes('$'))
+  const amounts = entries.filter(({ line }) => installmentAmount(line.text)
+    && INSTALLMENT_AMOUNT_CELL.test(line.text))
+  if (!dates.length || !amounts.length) return lines
+  const sameRow = (a, b) => Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0)
+    >= Math.min(a.y1 - a.y0, b.y1 - b.y0) * 0.5
+  const matches = dates.map(date => ({
+    ...date,
+    amounts: amounts.filter(amount => amount.box.x0 > date.box.x1 && sameRow(date.box, amount.box))
+  }))
+  const result = [...lines]
+  const top = Math.min(...dates.map(date => date.box.y0))
+  const bottom = Math.max(...dates.map(date => date.box.y1))
+  // Block sequential parsing from claiming an ambiguous right-column amount for a different date.
+  for (const amount of amounts) {
+    if (dates.some(date => amount.box.x0 > date.box.x1)
+      && amount.box.y1 >= top && amount.box.y0 <= bottom) result[amount.index] = null
+  }
+  for (const date of matches) {
+    if (date.amounts.length !== 1) continue
+    const [amount] = date.amounts
+    if (matches.filter(other => other.amounts.includes(amount)).length !== 1) continue
+    result[date.index] = { ...date.line, text: `${date.line.text} ${amount.line.text}` }
+    result[amount.index] = undefined
+  }
+  return result
+}
+
+export function getReliableOcrLines(data, { paymentPlan = false } = {}) {
+  const source = (data.blocks ?? []).flatMap(block => block.paragraphs ?? [])
     .flatMap(paragraph => paragraph.lines ?? []).map(withoutNoise)
+  const lines = paymentPlan ? pairInstallmentColumns(source) : source
   return lines.flatMap((line, index) => {
+    if (line === undefined) return []
     if (!line) return ['']
     const previous = lines[index - 1]
     return [line.text, ...(previous ? positionalPairs(previous, line) : [])]

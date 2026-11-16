@@ -1,9 +1,78 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, validateStatementSuggestions } from './statementData.js'
-import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
+import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData, loveseatActivityLines, wayfairColumnOcrData } from './statementOcrFixture.js'
 import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
 import { getInstallmentStatus } from './debtSchedule.js'
+
+test('Wayfair separate OCR columns pair by row, retaining the final cents and remaining balance', () => {
+  const result = parsePaymentPlanScan(getReliableOcrLines(wayfairColumnOcrData, { paymentPlan: true }))
+  assert.deepEqual(result.installments, [
+    { dueDate: '2026-11-24', amount: '51.53', paid: false },
+    { dueDate: '2026-12-24', amount: '51.53', paid: false },
+    { dueDate: '2027-01-24', amount: '51.53', paid: false },
+    { dueDate: '2027-02-24', amount: '51.57', paid: false }
+  ])
+  assert.equal(result.values.currentBalance, '206.16')
+  assert.equal(result.values.purchaseAmount, '363')
+  assert.equal(result.installments.reduce((sum, row) => sum + Math.round(Number(row.amount) * 100), 0), 20616)
+})
+
+test('column pairing leaves uncertain, ambiguous or off-row amounts blank without shifting other payments', () => {
+  for (const kind of ['uncertain', 'ambiguous', 'off-row']) {
+    const data = structuredClone(wayfairColumnOcrData)
+    const lines = data.blocks[0].paragraphs[0].lines
+    if (kind === 'ambiguous') lines.push(structuredClone(lines[11]))
+    else if (kind === 'uncertain') lines[11].words[0].confidence = 45
+    else {
+      lines[11].words[0].bbox.y0 += 65
+      lines[11].words[0].bbox.y1 += 65
+    }
+    const result = parsePaymentPlanScan(getReliableOcrLines(data, { paymentPlan: true }))
+    assert.deepEqual(result.installments.map(row => row.amount), ['51.53', '', '51.53', '51.57'])
+    assert.deepEqual(result.installments.map(row => row.dueDate), ['2026-11-24', '2026-12-24', '2027-01-24', '2027-02-24'])
+  }
+})
+
+test('OCR columns support split currency tokens and preserve existing vertical timeline scans', () => {
+  const data = structuredClone(wayfairColumnOcrData)
+  const line = data.blocks[0].paragraphs[0].lines.at(-1)
+  const word = line.words[0]
+  line.words = [
+    { ...word, text: '$', bbox: { ...word.bbox, x1: 965 } },
+    { ...word, text: '51.57', bbox: { ...word.bbox, x0: 970 } }
+  ]
+  assert.equal(parsePaymentPlanScan(getReliableOcrLines(data, { paymentPlan: true })).installments.at(-1).amount, '51.57')
+  assert.deepEqual(parsePaymentPlanScan(getReliableOcrLines(electricScooterMarkerOcrData, { paymentPlan: true })),
+    parsePaymentPlanScan(getReliableOcrLines(electricScooterMarkerOcrData)))
+  const unpositioned = structuredClone(wayfairColumnOcrData)
+  for (const line of unpositioned.blocks[0].paragraphs[0].lines) {
+    for (const word of line.words) delete word.bbox
+  }
+  assert.deepEqual(parsePaymentPlanScan(getReliableOcrLines(unpositioned, { paymentPlan: true })).installments.map(row => row.amount),
+    ['', '', '', ''])
+})
+
+test('positioned row matching preserves separate paid and pending status lines and vertical cards', () => {
+  for (const rightColumn of [true, false]) {
+    const data = structuredClone(wayfairColumnOcrData)
+    const lines = data.blocks[0].paragraphs[0].lines
+    data.blocks[0].paragraphs[0].lines = [
+      ...lines.slice(0, 6),
+      ...lines.slice(6, 10).flatMap((date, index) => {
+        const amount = lines[10 + index]
+        if (!rightColumn) {
+          amount.words[0].bbox = { x0: 80, x1: 190, y0: date.words[0].bbox.y0 + 45, y1: date.words[0].bbox.y1 + 45 }
+        }
+        const status = ['Paid', 'Pending', 'Due', 'Due'][index]
+        return [date, amount, { text: status, words: [{ text: status, confidence: 96 }] }]
+      })
+    ]
+    const rows = parsePaymentPlanScan(getReliableOcrLines(data, { paymentPlan: true })).installments
+    assert.deepEqual(rows.map(row => row.amount), ['51.53', '51.53', '51.53', '51.57'])
+    assert.deepEqual(rows.map(getInstallmentStatus), ['paid', 'pending', 'due', 'due'])
+  }
+})
 
 test('Loveseat Activity retains paid, pending and due rows with exact dates and provider balance', () => {
   const result = parsePaymentPlanScan(loveseatActivityLines)

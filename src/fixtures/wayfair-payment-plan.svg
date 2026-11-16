@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1170" height="1536" viewBox="0 0 1170 1536">
+  <rect width="1170" height="1536" fill="#ffffff"/>
+  <g fill="#181818" font-family="Arial, sans-serif">
+    <text x="80" y="130" font-size="54" font-weight="bold">Wayfair</text>
+    <text x="80" y="210" font-size="32">Provider: Klarna</text>
+    <text x="80" y="310" font-size="34">Original purchase amount: $363</text>
+    <text x="80" y="440" font-size="64">$206.16</text>
+    <text x="80" y="500" font-size="34">Remaining scheduled balance</text>
+    <text x="80" y="660" font-size="40" font-weight="bold">Payment schedule</text>
+    <g font-size="36">
+      <text x="80" y="800">November 24, 2026</text>
+      <text x="950" y="800">$51.53</text>
+      <text x="80" y="950">December 24, 2026</text>
+      <text x="950" y="950">$51.53</text>
+      <text x="80" y="1100">January 24, 2027</text>
+      <text x="950" y="1100">$51.53</text>
+      <text x="80" y="1250">February 24, 2027</text>
+      <text x="950" y="1250">$51.57</text>
+    </g>
+  </g>
+</svg>

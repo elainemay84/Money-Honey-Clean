@@ -104,3 +104,33 @@ export const loveseatActivityLines = [
   'O Jan 13, 2027', '$64.24 due',
   'O Feb 13, 2027', '$63.82 due'
 ]
+
+// Recreated Wayfair layout: AUTO OCR reads the left date column, then the right amount column.
+export const wayfairColumnOcrData = {
+  blocks: [{
+    paragraphs: [{
+      lines: [
+        ['Wayfair', 80, 90],
+        ['Provider: Klarna', 80, 187],
+        ['Original purchase amount: $363', 80, 283],
+        ['$206.16', 80, 389],
+        ['Remaining scheduled balance', 80, 475],
+        ['Payment schedule', 80, 631],
+        ['November 24, 2026', 80, 774],
+        ['December 24, 2026', 80, 924],
+        ['January 24, 2027', 80, 1074],
+        ['February 24, 2027', 80, 1224],
+        ['$51.53', 950, 771],
+        ['$51.53', 950, 921],
+        ['$51.53', 950, 1071],
+        ['$51.57', 950, 1221]
+      ].map(([text, x, y]) => ({
+        text,
+        words: text.split(' ').map((word, index) => ({
+          text: word, confidence: 96,
+          bbox: { x0: x + index * 120, x1: x + index * 120 + 110, y0: y, y1: y + 32 }
+        }))
+      }))
+    }]
+  }]
+}

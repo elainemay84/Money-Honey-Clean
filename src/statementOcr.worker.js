@@ -2,7 +2,7 @@ import { createWorker, PSM } from 'tesseract.js'
 import { getReliableOcrLines } from './statementData.js'
 
 let reader
-self.onmessage = async ({ data: { image, assets } }) => {
+self.onmessage = async ({ data: { image, assets, paymentPlan = false } }) => {
   try {
     reader ??= await createWorker('eng', 1, {
       workerPath: `${assets}worker.min.js`,
@@ -31,7 +31,7 @@ self.onmessage = async ({ data: { image, assets } }) => {
     await reader.setParameters({ tessedit_pageseg_mode: PSM.AUTO })
     self.postMessage({ ready: true })
     const { data } = await reader.recognize(new Uint8Array(image), {}, { text: false, blocks: true })
-    self.postMessage({ lines: getReliableOcrLines(data) })
+    self.postMessage({ lines: getReliableOcrLines(data, { paymentPlan }) })
   } catch {
     self.postMessage({ error: true })
   }
