@@ -197,24 +197,29 @@ async function openManualDebt(container) {
   await click(button(container, 'Add Manually'))
 }
 
+async function openPaymentPlan(container, scan = false) {
+  await click(button(container, 'Add debt'))
+  await click(button(container, 'Add Payment Plan'))
+  await click(button(container, scan ? 'Scan / Upload Payment Plan' : 'Enter Manually'))
+}
+
 test('scanned payment plan rows are editable before save and Bills records one linked payment with the chosen date', async () => {
   const date = localDate()
   const previous = shiftDate(date, -14)
   const following = shiftDate(date, 17)
   const Component = () => React.createElement(Debt, {
     statementExtractor: async () => parseDebtStatement([
-      'Afterpay', 'Merchant: Example Store', 'Purchase amount: $100', 'Remaining balance: $80', 'Category: Shopping',
+      'Afterpay', 'Merchant: Example Store', 'Purchase amount: $100', 'Remaining balance: $80', 'Category: Shopping', 'APR: 15%',
       `Installment 1 ${previous} $20 Paid`, `Installment 2 ${date} $29.99 Unpaid`,
       `Installment 3 ${following} $50.01 Unpaid`
     ])
   })
   const before = readAccountData()
   let container = await render(Component)
-  await click(button(container, 'Add debt'))
-  await click(button(container, 'Scan / Upload'))
+  await openPaymentPlan(container, true)
   await chooseStatementFile(container, 'Statement image')
   let form = container.querySelector('form')
-  assert.equal(form.querySelector('[aria-label="Payment setup"]').value, 'plan')
+  assert.ok(container.querySelector('[aria-label="Add payment plan form"]'))
   assert.equal(form.querySelector('[aria-label="Purchase Category"]').value, 'Shopping')
   assert.equal(form.querySelectorAll('input[type="checkbox"]:checked').length, 1)
   await changeValue(form.querySelector('[aria-label="Installment 2 amount"]'), '30')
@@ -228,6 +233,8 @@ test('scanned payment plan rows are editable before save and Bills records one l
   await submit(form)
   assert.equal(container.querySelector('form'), null)
   assert.equal(loadDebts()[0].currentBalance, 80)
+  assert.equal(loadDebts()[0].interestRate, 15)
+  assert.equal(loadDebts()[0].paymentCalculationMethod, 'principal-only')
   assert.equal(loadDebts()[0].paymentSchedule.installments[0].paid, true)
   assert.equal(loadDebts()[0].paymentSchedule.installments[2].dueDate, shiftDate(following, 1))
   assert.deepEqual(readAccountData(), before)
@@ -268,8 +275,7 @@ test('partial scanned cards populate recognized fields and preserve missing valu
   })
   const before = readAccountData()
   const container = await render(Component)
-  await click(button(container, 'Add debt'))
-  await click(button(container, 'Scan / Upload'))
+  await openPaymentPlan(container, true)
   await chooseStatementFile(container, 'Statement PDF', 'plan.pdf', 'application/pdf')
   const form = container.querySelector('form')
   assert.equal(form.querySelector('[aria-label="Installment 1 date"]').value, previous)
@@ -278,6 +284,8 @@ test('partial scanned cards populate recognized fields and preserve missing valu
   assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '20.01')
   assert.equal(form.querySelector('[aria-label="Installment 3 amount"]').value, '')
   assert.equal(form.querySelectorAll('input[type="checkbox"]:checked').length, 1)
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'PayPal plan')
+  await changeValue(form.querySelector('[aria-label="Purchase Category"]'), 'Shopping')
   await changeValue(form.querySelector('[aria-label="Installment 3 amount"]'), '29.99')
   await submit(form)
   assert.equal(container.querySelector('form'), null)
@@ -285,101 +293,75 @@ test('partial scanned cards populate recognized fields and preserve missing valu
   assert.deepEqual(readAccountData(), before)
 })
 
-test('Generate Schedule previews remaining payments before replacing rows and keeps statement-paid installments', async () => {
-  const date = localDate()
-  const previous = shiftDate(date, -14)
-  const Component = () => React.createElement(Debt, {
-    statementExtractor: async () => parseDebtStatement([
-      'Klarna', 'Purchase amount: $120.03', 'Remaining balance: $100.03',
-      `Payment 1 ${previous} $20 Paid`, `Payment 2 ${date} $30 Unpaid`
-    ])
-  })
+test('manual payment plans generate immediately and save using only the required fields', async () => {
   const before = readAccountData()
-  const container = await render(Component)
-  await click(button(container, 'Add debt'))
-  await click(button(container, 'Scan / Upload'))
-  await chooseStatementFile(container, 'Statement image')
+  const container = await render(Debt)
+  await openPaymentPlan(container)
   const form = container.querySelector('form')
-  await changeValue(form.querySelector('[aria-label="Installment 2 amount"]'), '31')
-  await click([...form.querySelectorAll('summary')].find(item => item.textContent === 'Generate Schedule'))
-  await changeValue(form.querySelector('[aria-label="First payment date"]'), date)
-  await click(button(form, 'Preview Schedule'))
-  const preview = form.querySelector('[aria-label="Generated schedule preview"]')
-  assert.ok(preview)
-  assert.equal(preview.querySelectorAll('li').length, 5)
-  assert.match(preview.textContent, /\$25\.01/)
-  assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '31')
-  assert.equal(form.querySelector('[aria-label="Installment 3 date"]'), null)
+  assert.equal(form.querySelector('[aria-label="Number of payments"]').value, '4')
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Example Store')
+  await changeValue(form.querySelector('[aria-label="Purchase Category"]'), 'Shopping')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '188.28')
+  await changeValue(form.querySelector('[aria-label="First payment date"]'), '2026-11-20')
+  assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][type="date"]')].map(input => input.value),
+    ['2026-11-20', '2026-12-04', '2026-12-18', '2027-01-01'])
+  assert.deepEqual([...form.querySelectorAll('input[aria-label^="Installment"][inputmode="decimal"]')].map(input => input.value),
+    ['47.07', '47.07', '47.07', '47.07'])
+  assert.deepEqual([...form.querySelector('[aria-label="Generated schedule frequency"]').options].map(option => option.value), ['', 'biweekly', 'monthly'])
+  await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'monthly')
+  assert.equal(form.querySelector('[aria-label="Installment 2 date"]').value, '2026-12-20')
+  await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'biweekly')
+  assert.doesNotMatch(form.textContent, /Generate Schedule|Preview Schedule/)
   assert.equal(loadDebts().length, 0)
-  assert.deepEqual(readAccountData(), before)
-  await changeValue(form.querySelector('[aria-label="Number of payments"]'), '3')
-  assert.equal(form.querySelector('[aria-label="Generated schedule preview"]'), null)
-  await changeValue(form.querySelector('[aria-label="Number of payments"]'), '4')
-  await click(button(form, 'Preview Schedule'))
-  await click(button(form, 'Use Generated Schedule'))
-  assert.equal(form.querySelector('[aria-label="Installment 1 date"]').value, previous)
-  assert.equal(form.querySelector('[aria-label="Installment 1 amount"]').value, '20')
-  assert.equal(form.querySelector('[aria-label="Installment 2 date"]').value, date)
-  assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '25.01')
-  assert.equal(form.querySelector('[aria-label="Installment 5 amount"]').value, '25')
-  assert.equal(form.querySelector('[aria-label="Installment 3 date"]').value, shiftDate(date, 14))
-  assert.equal(form.querySelector('[aria-label="Installment 3 amount"]').disabled, false)
-  await changeValue(form.querySelector('[aria-label="Installment 3 date"]'), shiftDate(date, 15))
   await submit(form)
   assert.equal(container.querySelector('form'), null)
-  const debt = loadDebts()[0]
-  assert.equal(debt.paymentSchedule.remainingTotal, 100.03)
-  assert.equal(debt.paymentSchedule.completedInstallments, 1)
-  assert.equal(debt.paymentSchedule.installments[2].dueDate, shiftDate(date, 15))
+  assert.equal(loadDebts()[0].currentBalance, 188.28)
+  assert.equal(loadDebts()[0].paymentSchedule.installments.length, 4)
   assert.deepEqual(readAccountData(), before)
-  let bills
-  await act(async () => { ({ bills } = synchronizeDebtBills()) })
-  const occurrences = getBillOccurrencesInRange(bills.filter(bill => bill.debtId === debt.id), date, shiftDate(date, 90))
-  assert.equal(occurrences.length, 4)
-  assert.deepEqual(occurrences.map(row => row.amount), [25.01, 25.01, 25.01, 25])
 })
 
-test('schedule-only scanner suggestions can be applied without selecting unrelated debt fields', async () => {
-  const date = localDate()
+test('partial scanned schedules are preserved when plan inputs change', async () => {
   const Component = () => React.createElement(Debt, {
-    statementExtractor: async () => ({ values: {}, installments: [{ dueDate: date, amount: '25.01', paid: false }] })
+    statementExtractor: async () => parseDebtStatement([
+      'Klarna', 'Merchant: Example Store', 'Category: Shopping', 'Remaining balance: $100.03',
+      'Number of installments: 4', 'Payment 1 2026-11-20 $30 Unpaid', 'Payment 2 2026-12-04'
+    ])
   })
   const container = await render(Component)
-  await openManualDebt(container)
+  await openPaymentPlan(container, true)
+  await chooseStatementFile(container, 'Statement PDF', 'plan.pdf', 'application/pdf')
   const form = container.querySelector('form')
-  await changeValue(form.querySelector('[aria-label="Payment setup"]'), 'plan')
-  await click(button(form, 'Scan / Upload Statement'))
-  await chooseStatementFile(form, 'Statement image')
-  await click(button(form, 'Apply Suggestions to Form'))
-  assert.equal(form.querySelector('[aria-label="Installment 1 date"]').value, date)
-  assert.equal(form.querySelector('[aria-label="Installment 1 amount"]').value, '25.01')
-  assert.match(form.textContent, /Statement scanned/)
+  assert.equal(form.querySelector('[aria-label="Installment 1 amount"]').value, '30')
+  assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '')
+  assert.equal(form.querySelector('[aria-label="Installment 3 date"]').value, '')
+  assert.equal(form.querySelector('[aria-label="Installment 4 amount"]').value, '')
+  await submit(form)
+  assert.ok(form.querySelector('[role="alert"]'))
+  assert.equal(loadDebts().length, 0)
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '110.03')
+  assert.equal(form.querySelector('[aria-label="Installment 1 amount"]').value, '30')
+  assert.equal(form.querySelector('[aria-label="Installment 2 amount"]').value, '')
+  assert.equal(loadDebts().length, 0)
 })
 
-test('a provider summary without installment dates offers generation without inventing rows', async () => {
+test('a provider summary without installment dates does not invent a schedule', async () => {
   const Component = () => React.createElement(Debt, {
     statementExtractor: async () => parseDebtStatement(['Afterpay', 'Remaining balance: $100.03'])
   })
   const container = await render(Component)
-  await click(button(container, 'Add debt'))
-  await click(button(container, 'Scan / Upload'))
+  await openPaymentPlan(container, true)
   await chooseStatementFile(container, 'Statement image')
   const form = container.querySelector('form')
-  assert.equal(form.querySelector('[aria-label="Payment setup"]').value, 'plan')
   assert.equal(form.querySelector('[aria-label="Installment 1 date"]'), null)
-  assert.match(form.textContent, /No installment rows found/)
-  assert.ok([...form.querySelectorAll('summary')].some(item => item.textContent === 'Generate Schedule'))
   assert.equal(loadDebts().length, 0)
 })
 
-test('Payment Plan is opt-in and regular Bill scanning fills a reviewed draft without saving transactions', async () => {
+test('regular Debt stays free of installment editors and Bill scanning fills a reviewed draft', async () => {
   let container = await render(Debt)
   await openManualDebt(container)
   let form = container.querySelector('form')
   assert.equal(form.querySelector('[aria-label="Installment 1 date"]'), null)
-  await changeValue(form.querySelector('[aria-label="Payment setup"]'), 'plan')
-  assert.equal(form.querySelectorAll('[aria-label="Installment 1 date"]').length, 1)
-  assert.ok(button(form, 'Scan / Upload Statement'))
+  assert.equal(form.querySelector('[aria-label="Payment setup"]'), null)
   const Component = () => React.createElement(Bills, {
     statementExtractor: async () => parseBillStatement([
       'Biller: City Electric', 'Amount due: $81.23', `Due date: ${localDate()}`, 'Category: Housing & Utilities'
@@ -413,7 +395,7 @@ test('Debt floating menu toggles, dismisses outside or with Escape, and never op
   assert.equal(trigger.getAttribute('aria-expanded'), 'true')
   assert.equal(trigger.getAttribute('aria-controls'), 'debt-add-actions')
   assert.equal(container.querySelector('[role="dialog"]'), null)
-  assert.deepEqual([...container.querySelectorAll('#debt-add-actions button')].map(item => item.textContent.trim()), ['Add Manually', 'Scan / Upload'])
+  assert.deepEqual([...container.querySelectorAll('#debt-add-actions button')].map(item => item.getAttribute('aria-label') || item.textContent.trim()), ['Add Manually', 'Scan / Upload', 'Add Payment Plan'])
   await click(button(container, 'Close add debt menu'))
   assert.equal(trigger.getAttribute('aria-expanded'), 'false')
   assert.equal(container.querySelector('#debt-add-actions'), null)
