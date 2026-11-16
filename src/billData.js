@@ -118,9 +118,10 @@ function isDueInMonth(bill, year, monthIndex, candidate) {
     case 'monthly':
       return candidate.getUTCDate() === dateFromParts(year, monthIndex, monthOffset ? bill.debtDueDay ?? anchorDay : anchorDay).getUTCDate()
     case 'quarterly':
-      return monthOffset % 3 === 0 && candidate.getUTCDate() === dateFromParts(year, monthIndex, anchorDay).getUTCDate()
+    case 'semiannual':
     case 'yearly':
-      return monthOffset % 12 === 0 && candidate.getUTCDate() === dateFromParts(year, monthIndex, anchorDay).getUTCDate()
+      return monthOffset % { quarterly: 3, semiannual: 6, yearly: 12 }[bill.frequency] === 0
+        && candidate.getUTCDate() === dateFromParts(year, monthIndex, monthOffset ? bill.debtDueDay ?? anchorDay : anchorDay).getUTCDate()
     default:
       return false
   }

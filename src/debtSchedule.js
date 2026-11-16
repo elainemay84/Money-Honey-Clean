@@ -1,8 +1,35 @@
 import { parseFinancialAmount, parseInstallmentCount } from './financialAmounts.js'
 
 export const DEBT_SCHEDULE_OPTIONS = [
-  ['monthly', 'Monthly'], ['biweekly', 'Every 2 Weeks'], ['pay-in-4', 'Pay in 4'], ['custom', 'Custom']
+  ['monthly', 'Monthly'], ['biweekly', 'Every 2 Weeks'], ['recurring', 'Recurring'], ['pay-in-4', 'Pay in 4'], ['custom', 'Custom']
 ]
+
+export const PAYMENT_FREQUENCY_OPTIONS = [
+  ['weekly', 'Weekly'], ['biweekly', 'Every 2 Weeks'], ['twice-monthly', 'Twice a Month'], ['monthly', 'Monthly'],
+  ['quarterly', 'Every 3 Months'], ['semiannual', 'Every 6 Months'], ['annual', 'Annually']
+]
+
+const MONTH_STEPS = { monthly: 1, quarterly: 3, semiannual: 6, annual: 12 }
+const DAY_STEPS = { weekly: 7, biweekly: 14 }
+
+function clampedDate(year, monthIndex, day) {
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(year, monthIndex, Math.min(day, last)))
+}
+
+export function defaultTwiceMonthlyDays(date = '') {
+  const day = isScheduleDate(date) ? Number(date.slice(-2)) : 1
+  return day <= 15 ? [day, day + 15] : [day - 15, day]
+}
+
+export function createRecurringSchedule(frequency, startDate = '') {
+  if (frequency === 'monthly') return defaultSchedule(startDate)
+  return {
+    kind: frequency === 'biweekly' ? 'biweekly' : 'recurring', frequency, startDate, dueDay: '',
+    ...(frequency === 'twice-monthly' ? { daysOfMonth: defaultTwiceMonthlyDays(startDate) } : {}),
+    completedInstallments: 0, totalInstallments: '', remainingTotal: '', installmentAmount: ''
+  }
+}
 
 export function scheduleFromForm(schedule, nextDate) {
   const finite = schedule.totalInstallments !== '' && schedule.totalInstallments != null
@@ -10,6 +37,9 @@ export function scheduleFromForm(schedule, nextDate) {
     ...schedule,
     startDate: schedule.startDate || nextDate || '',
     dueDay: schedule.dueDay === '' || schedule.dueDay == null ? null : parseInstallmentCount(schedule.dueDay, 'Usual due day'),
+    ...(schedule.frequency === 'twice-monthly'
+      ? { daysOfMonth: (schedule.daysOfMonth ?? []).map(Number).sort((a, b) => a - b) }
+      : {}),
     intervalDays: schedule.frequency === 'days' ? parseInstallmentCount(schedule.intervalDays, 'Interval') : null,
     totalInstallments: finite ? parseInstallmentCount(schedule.totalInstallments, 'Total installments') : null,
     completedInstallments: finite ? parseInstallmentCount(schedule.completedInstallments, 'Completed installments') : 0,
@@ -42,7 +72,7 @@ export function validatePaymentSchedule(schedule) {
   if (schedule == null) return
   if (typeof schedule !== 'object' || Array.isArray(schedule)
     || !DEBT_SCHEDULE_OPTIONS.some(([key]) => key === schedule.kind)
-    || !['monthly', 'biweekly', 'weekly', 'days'].includes(schedule.frequency)) {
+    || ![...PAYMENT_FREQUENCY_OPTIONS.map(([key]) => key), 'days'].includes(schedule.frequency)) {
     throw new Error('Choose a valid payment schedule and frequency.')
   }
   if ((schedule.kind === 'monthly' && schedule.frequency !== 'monthly')
@@ -50,6 +80,18 @@ export function validatePaymentSchedule(schedule) {
     throw new Error('Use Custom for a different payment frequency.')
   }
   if (schedule.startDate && !isScheduleDate(schedule.startDate)) throw new Error('Choose a valid first upcoming payment date.')
+  if (schedule.frequency === 'twice-monthly') {
+    const days = schedule.daysOfMonth
+    if (!Array.isArray(days) || days.length !== 2 || days.some(day => !Number.isInteger(day) || day < 1 || day > 31) || days[0] === days[1]) {
+      throw new Error('Choose two different payment days between 1 and 31.')
+    }
+    if (schedule.startDate) {
+      const start = new Date(`${schedule.startDate}T00:00:00Z`)
+      if (!days.some(day => clampedDate(start.getUTCFullYear(), start.getUTCMonth(), day).getUTCDate() === start.getUTCDate())) {
+        throw new Error('Next Payment Due must fall on one of the two payment days.')
+      }
+    }
+  }
   if (schedule.dueDay != null && (!Number.isInteger(schedule.dueDay) || schedule.dueDay < 1 || schedule.dueDay > 31)) {
     throw new Error('The usual due day must be between 1 and 31.')
   }
@@ -92,16 +134,32 @@ export function validatePaymentSchedule(schedule) {
   }
 }
 
+function twiceMonthlyDate(schedule, index) {
+  const start = new Date(`${schedule.startDate}T00:00:00Z`)
+  const days = [...schedule.daysOfMonth].sort((a, b) => a - b)
+  let found = -1
+  for (let month = 0; month <= index + 2; month += 1) {
+    const dates = [...new Set(days.map(day =>
+      clampedDate(start.getUTCFullYear(), start.getUTCMonth() + month, day).getTime()))]
+    for (const time of dates) {
+      if (time < start.getTime()) continue
+      found += 1
+      if (found === index) return new Date(time)
+    }
+  }
+  return start
+}
+
 function scheduledDate(schedule, index) {
   const date = new Date(`${schedule.startDate}T00:00:00Z`)
-  if (schedule.frequency === 'monthly') {
-    const month = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + index, 1))
+  if (MONTH_STEPS[schedule.frequency]) {
+    // Calendar periods: later months use the usual due day, clamped to shorter months.
     const day = index === 0 ? date.getUTCDate() : schedule.dueDay ?? date.getUTCDate()
-    const last = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 0)).getUTCDate()
-    date.setTime(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), Math.min(day, last)))
+    date.setTime(clampedDate(date.getUTCFullYear(), date.getUTCMonth() + MONTH_STEPS[schedule.frequency] * index, day).getTime())
+  } else if (schedule.frequency === 'twice-monthly') {
+    date.setTime(twiceMonthlyDate(schedule, index).getTime())
   } else {
-    const interval = schedule.frequency === 'biweekly' ? 14 : schedule.frequency === 'weekly' ? 7 : schedule.intervalDays
-    date.setUTCDate(date.getUTCDate() + interval * index)
+    date.setUTCDate(date.getUTCDate() + (DAY_STEPS[schedule.frequency] ?? schedule.intervalDays) * index)
   }
   return date.toISOString().slice(0, 10)
 }

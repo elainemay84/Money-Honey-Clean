@@ -197,6 +197,26 @@ test('a partially paid automatic Pay in 4 plan restores its exact schedule, link
   assert.deepEqual(loadDebts(target), loadDebts(storage))
 })
 
+test('new payment frequencies and twice-monthly days round-trip through backups with their linked bills', () => {
+  const { storage } = sampleStorage()
+  saveDebts([
+    { id: 10, name: 'Twice monthly', type: 'Other', startingBalance: 500, currentBalance: 400, minimumPayment: 50, nextPaymentDue: '2027-01-15', paymentHistory: [],
+      paymentSchedule: { kind: 'recurring', frequency: 'twice-monthly', daysOfMonth: [15, 31], startDate: '2027-01-15', dueDay: null, completedInstallments: 0, totalInstallments: null, remainingTotal: null, installmentAmount: null } },
+    { id: 11, name: 'Semiannual', type: 'Other', startingBalance: 900, currentBalance: 900, minimumPayment: 150, nextPaymentDue: '2026-08-31', paymentHistory: [],
+      paymentSchedule: { kind: 'recurring', frequency: 'semiannual', startDate: '2026-08-31', dueDay: null, completedInstallments: 0, totalInstallments: null, remainingTotal: null, installmentAmount: null } }
+  ], storage)
+  synchronizeDebtBills(storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  assert.deepEqual(createBackupSnapshot(target).data, snapshot.data)
+  assert.deepEqual(loadDebts(target), loadDebts(storage))
+  const { debts, bills } = synchronizeDebtBills(target)
+  assert.deepEqual(bills.filter(bill => bill.debtId).map(bill => [bill.frequency, bill.daysOfMonth ?? null]), [['twice-monthly', [15, 31]], ['semiannual', null]])
+  assert.equal(getDebtScheduleStatus(debts[0], bills, [], '2027-01-20').nextDueDate, '2027-01-15')
+  assert.equal(getDebtScheduleStatus(debts[1], bills, [], '2026-09-01').nextDueDate, '2026-08-31')
+})
+
 test('installment schedules and statement reference totals round-trip without rewriting legacy debts or payment histories', () => {
   const { storage } = sampleStorage()
   const debts = [

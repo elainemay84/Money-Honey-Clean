@@ -3,7 +3,7 @@ import ResponsiveText from './ResponsiveText'
 import StatementAutofill from './StatementAutofill'
 import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
-import { createPayInFourSchedule, defaultSchedule, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
+import { defaultSchedule, getDebtInstallmentProgress, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { loadBillData } from './billData.js'
@@ -123,7 +123,6 @@ export default function Debt({ statementExtractor } = {}) {
   const [editingDebtId, setEditingDebtId] = useState(null)
   const [formValues, setFormValues] = useState(blankDebt)
   const [paymentMethodWasSelected, setPaymentMethodWasSelected] = useState(false)
-  const [isNewPayInFour, setIsNewPayInFour] = useState(false)
   const [formError, setFormError] = useState('')
   const [isAssigneeManagerOpen, setIsAssigneeManagerOpen] = useState(false)
   const [editingAssignee, setEditingAssignee] = useState(null)
@@ -159,9 +158,7 @@ export default function Debt({ statementExtractor } = {}) {
   let schedulePreviewError = ''
   try {
     if (formSchedule) {
-      const paymentSchedule = isNewPayInFour
-        ? createPayInFourSchedule(formValues.currentBalance, formValues.nextPaymentDue)
-        : scheduleFromForm(formSchedule, formValues.nextPaymentDue)
+      const paymentSchedule = scheduleFromForm(formSchedule, formValues.nextPaymentDue)
       validatePaymentSchedule(paymentSchedule)
       formScheduleStatus = scheduleStatusFor({ ...formValues, paymentSchedule })
     }
@@ -250,7 +247,6 @@ export default function Debt({ statementExtractor } = {}) {
     setEditingDebtId(null)
     setFormValues(blankDebt())
     setPaymentMethodWasSelected(false)
-    setIsNewPayInFour(false)
     setFormError('')
     setIsFormOpen(true)
   }
@@ -272,7 +268,6 @@ export default function Debt({ statementExtractor } = {}) {
       paymentCalculationMethod: getDebtPaymentCalculationMethod(debt)
     })
     setPaymentMethodWasSelected(true)
-    setIsNewPayInFour(false)
     setFormError('')
     setIsFormOpen(true)
   }
@@ -328,10 +323,8 @@ export default function Debt({ statementExtractor } = {}) {
         currentBalance: parseFinancialAmount(formValues.currentBalance, 'Current balance'),
         interestRate: numeric(formValues.interestRate, 'APR'),
         minimumPayment: numeric(formValues.minimumPayment, 'Minimum payment'),
-        ...(formSchedule ? { paymentSchedule: isNewPayInFour
-          ? createPayInFourSchedule(formValues.currentBalance, formValues.nextPaymentDue)
-          : formSchedule === editingDebt?.paymentSchedule
-            ? formSchedule : scheduleFromForm(formSchedule, formValues.nextPaymentDue) } : {}),
+        ...(formSchedule ? { paymentSchedule: formSchedule === editingDebt?.paymentSchedule
+          ? formSchedule : scheduleFromForm(formSchedule, formValues.nextPaymentDue) } : {}),
         nextPaymentDue: formValues.nextPaymentDue || null
       })
       persistDebt(debt)
@@ -802,7 +795,6 @@ export default function Debt({ statementExtractor } = {}) {
                 setStatementReview(true)
                 setSelectedDebtId(null)
                 setEditingDebtId(null)
-                setIsNewPayInFour(false)
                 setFormError('')
                 setAddMode(null)
                 setIsFormOpen(true)
@@ -905,7 +897,7 @@ export default function Debt({ statementExtractor } = {}) {
                       value={formValues[key]}
                       onChange={event => setFormValues({
                         ...formValues, [key]: event.target.value,
-                        ...(key === 'currentBalance' && !isNewPayInFour && formSchedule?.kind === 'pay-in-4'
+                        ...(key === 'currentBalance' && formSchedule?.kind === 'pay-in-4'
                           && formSchedule.frequency === 'biweekly' && formSchedule.completedInstallments === 0
                           && formSchedule.installmentAmount == null && !formValues.paymentHistory.length
                           && !editingDebtBill?.paymentHistory?.length
@@ -967,20 +959,18 @@ export default function Debt({ statementExtractor } = {}) {
                     return
                   }
                   setFormError('')
-                  setIsNewPayInFour(paymentSchedule.kind === 'pay-in-4')
                   setFormValues({ ...formValues, paymentSchedule })
                 }}
                 fieldStyle={inputStyle} labelStyle={formLabel} />
-              <label style={formLabel}>{isNewPayInFour ? 'First Payment Due Date' : 'Next Payment Due'}
+              <label style={formLabel}>Next Payment Due
                 <input
-                  aria-label={isNewPayInFour ? 'First Payment Due Date' : 'Next Payment Due'}
+                  aria-label="Next Payment Due"
                   type="date"
                   value={formValues.nextPaymentDue}
-                  required={isNewPayInFour}
                   onChange={event => {
                     let next
                     try {
-                      if (!isNewPayInFour && editingDebt && formValues.paymentHistory.length && formSchedule) {
+                      if (editingDebt && formValues.paymentHistory.length && formSchedule) {
                         const paymentSchedule = scheduleFromForm(formSchedule, formValues.nextPaymentDue)
                         validatePaymentSchedule(paymentSchedule)
                         next = getDebtScheduleStatus({ ...formValues, paymentSchedule }, bills, accountData?.transactions ?? []).nextScheduledDate
@@ -990,7 +980,7 @@ export default function Debt({ statementExtractor } = {}) {
                       ...(formValues.paymentSchedule ? { paymentSchedule: next && formValues.paymentHistory.length ? {
                         ...formValues.paymentSchedule,
                         dateAdjustments: [...(formValues.paymentSchedule.dateAdjustments ?? []).filter(item => item.scheduledDate !== next), { scheduledDate: next, dueDate: event.target.value }]
-                      } : { ...formValues.paymentSchedule, startDate: event.target.value } } : {})
+                      } : { ...formValues.paymentSchedule, startDate: event.target.value, dueDay: '' } } : {})
                     })
                   }}
                   style={inputStyle}

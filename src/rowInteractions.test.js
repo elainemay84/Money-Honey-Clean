@@ -5,6 +5,7 @@ import { createServer } from 'vite'
 import { getReliableOcrLines, parseDebtStatement } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
+import { getBillOccurrencesInRange } from './billData.js'
 
 const browser = new Window({ url: 'http://localhost/' })
 for (const key of [
@@ -447,7 +448,7 @@ test('one-field and two-field scans fill the normal Add Debt form while uncertai
     assert.equal(form.querySelector('[aria-label="Interest rate · annual percentage (optional)"]').value, apr)
     assert.equal(form.querySelector('[aria-label="Next Payment Due"]').value, date)
     assert.equal(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]').value, '')
-    assert.deepEqual([...form.querySelector('[aria-label="Payment Schedule"]').options].map(option => option.value), ['monthly', 'pay-in-4'])
+    assert.deepEqual([...form.querySelector('[aria-label="Payment Frequency"]').options].map(option => option.value), ['weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'semiannual', 'annual'])
     assert.equal(form.querySelector('[role="alert"]'), null)
     assert.doesNotMatch(form.textContent, /Not determined|Total Installments|Original Purchase/)
     await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Manually completed name')
@@ -517,7 +518,7 @@ test('statement scans keep reference amounts without exposing advanced fields or
   for (const label of ['Original Purchase Amount', 'Original Total Repayment', 'Amount Already Paid', 'Total Installments', 'Completed Installments']) {
     assert.equal(form.querySelector(`[aria-label="${label}"]`), null)
   }
-  assert.equal(form.querySelector('[aria-label="Payment Schedule"]').value, 'monthly')
+  assert.equal(form.querySelector('[aria-label="Payment Frequency"]').value, 'monthly')
   assert.equal(form.querySelector('[aria-label="Next Payment Due"]').value, '2026-11-16')
   assert.equal(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]').value, '1568')
   await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '1780.64')
@@ -558,7 +559,7 @@ test('a Home Depot-style OCR scan shows every supported field in the rendered Ad
   assert.equal(field('Minimum payment · amount due each cycle (optional)'), '296.74')
   assert.equal(field('Next Payment Due'), '2026-11-16')
   assert.equal(field('Account Last 4 Digits'), '')
-  assert.equal(field('Payment Schedule'), 'monthly')
+  assert.equal(field('Payment Frequency'), 'monthly')
   assert.equal(form.querySelector('[aria-label="Credit Limit"]'), null)
   assert.match(form.textContent, /Statement scanned\. Review your information before saving\./)
   await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Home Depot plan')
@@ -566,52 +567,92 @@ test('a Home Depot-style OCR scan shows every supported field in the rendered Ad
   assert.deepEqual(['money-honey-debts', 'money-honey-bills', 'money-honey-account-data'].map(key => browser.localStorage.getItem(key)), before)
 })
 
-test('compact Pay in 4 requires only balance and first due date and recalculates the four draft payments', async () => {
+test('Payment Frequency offers the recurring options, defaults to Monthly and saves an open-ended Every 2 Weeks plan', async () => {
   const container = await render(Debt)
   await openManualDebt(container)
   const form = container.querySelector('form')
-  assert.equal(form.querySelector('[aria-label="Statement autofill"]'), null)
-  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Four payments')
-  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '75.011')
-  await submit(form)
-  assert.match(form.querySelector('[role="alert"]').textContent, /two decimal/)
-  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '100')
-  assert.deepEqual([...form.querySelector('[aria-label="Payment Schedule"]').options].map(option => option.textContent), ['Monthly', 'Pay in 4'])
-  await changeValue(form.querySelector('[aria-label="Payment Schedule"]'), 'pay-in-4')
-  await submit(form)
-  assert.match(form.querySelector('[role="alert"]').textContent, /date/)
-  assert.equal(form.querySelector('[aria-label="First Payment Due Date"]').required, true)
-  await changeValue(form.querySelector('[aria-label="First Payment Due Date"]'), '2026-11-16')
-  assert.match(form.textContent, /Next scheduled payment: \$25\.00 · Nov 16, 2026/)
-  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '75.01')
-  await changeValue(form.querySelector('[aria-label="First Payment Due Date"]'), '2026-11-17')
+  const frequency = form.querySelector('[aria-label="Payment Frequency"]')
+  assert.equal(frequency.value, 'monthly')
+  assert.deepEqual([...frequency.options].map(option => option.textContent), [
+    'Weekly', 'Every 2 Weeks', 'Twice a Month', 'Monthly', 'Every 3 Months', 'Every 6 Months', 'Annually'
+  ])
+  assert.equal(form.querySelector('[aria-label="First payment day"]'), null)
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Biweekly loan')
   await changeValue(form.querySelector('[aria-label="Debt type"]'), 'Other')
-  assert.match(form.textContent, /Next scheduled payment: \$18\.75 · Nov 17, 2026/)
-  for (const label of ['Starting balance · original amount borrowed or owed', 'Completed Installments', 'Installment Amount', 'Usual Due Day', 'Total Installments']) {
+  await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '500')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '100')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '25')
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), '2026-11-16')
+  await changeValue(form.querySelector('[aria-label="Payment Frequency"]'), 'biweekly')
+  for (const label of ['Total Installments', 'Completed Installments', 'Installment Amount', 'First Payment Due Date']) {
     assert.equal(form.querySelector(`[aria-label="${label}"]`), null)
   }
-  assert.doesNotMatch(form.textContent, /Review \/ adjust|Original plan|Frequency|Remaining Scheduled/)
   await submit(form)
   const debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
-  assert.equal(debt.paymentSchedule.totalInstallments, 4)
-  assert.equal(debt.startingBalance, 75.01)
-  assert.equal(debt.currentBalance, 75.01)
-  assert.equal(debt.paymentSchedule.completedInstallments, 0)
-  assert.equal(debt.paymentHistory.length, 0)
+  assert.equal(debt.paymentSchedule.frequency, 'biweekly')
+  assert.equal(debt.paymentSchedule.totalInstallments, null)
+  assert.equal(debt.paymentSchedule.startDate, '2026-11-16')
   const bill = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.find(item => item.debtId === debt.id)
-  assert.deepEqual(bill.occurrenceOverrides.map(item => [item.dueDate, item.amount]), [
-    ['2026-11-17', 18.75], ['2026-12-01', 18.75], ['2026-12-15', 18.75], ['2026-12-29', 18.76]
-  ])
+  assert.equal(bill.frequency, 'biweekly')
+  assert.equal(bill.amount, 25)
+  assert.deepEqual(getBillOccurrencesInRange([bill], '2026-11-01', '2027-01-31').map(item => item.dueDate),
+    ['2026-11-16', '2026-11-30', '2026-12-14', '2026-12-28', '2027-01-11', '2027-01-25'])
+})
+
+test('Twice a Month picks two payment days and requires Next Payment Due to fall on one of them', async () => {
+  const container = await render(Debt)
+  await openManualDebt(container)
+  const form = container.querySelector('form')
+  await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Twice monthly')
+  await changeValue(form.querySelector('[aria-label="Debt type"]'), 'Other')
+  await changeValue(form.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), '500')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '400')
+  await changeValue(form.querySelector('[aria-label="Minimum payment · amount due each cycle (optional)"]'), '50')
+  await changeValue(form.querySelector('[aria-label="Next Payment Due"]'), '2027-01-15')
+  await changeValue(form.querySelector('[aria-label="Payment Frequency"]'), 'twice-monthly')
+  assert.equal(form.querySelector('[aria-label="First payment day"]').value, '15')
+  assert.equal(form.querySelector('[aria-label="Second payment day"]').value, '30')
+  await changeValue(form.querySelector('[aria-label="First payment day"]'), '10')
+  await submit(form)
+  assert.match(form.querySelector('[role="alert"]').textContent, /must fall on one of the two payment days/)
+  await changeValue(form.querySelector('[aria-label="First payment day"]'), '15')
+  await changeValue(form.querySelector('[aria-label="Second payment day"]'), '31')
+  await submit(form)
+  const debt = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts[0]
+  assert.deepEqual(debt.paymentSchedule.daysOfMonth, [15, 31])
+  const bill = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.find(item => item.debtId === debt.id)
+  assert.deepEqual(getBillOccurrencesInRange([bill], '2027-01-01', '2027-03-01').map(item => item.dueDate),
+    ['2027-01-15', '2027-01-31', '2027-02-15', '2027-02-28'])
+})
+
+test('editing a saved unpaid Pay in 4 plan keeps it as four payments and recalculates from the balance', async () => {
+  saveDebts([{
+    id: 8, name: 'Four payments', type: 'Other', startingBalance: 75.01, currentBalance: 75.01,
+    minimumPayment: null, interestRate: 0, nextPaymentDue: '2026-11-17', paymentHistory: [],
+    paymentSchedule: { kind: 'pay-in-4', frequency: 'biweekly', startDate: '2026-11-17', totalInstallments: 4, completedInstallments: 0, remainingTotal: 75.01, installmentAmount: null }
+  }], browser.localStorage)
+  synchronizeDebtBills(browser.localStorage)
+  const container = await render(Debt)
   assert.match(container.querySelector('[aria-label="Debt row: Four payments"]').textContent, /Next payment \$18\.75/)
   await click(container.querySelector('[aria-label="Debt row: Four payments"]'))
   await click(button(container, 'Edit Debt'))
   const editForm = container.querySelector('form')
+  const frequency = editForm.querySelector('[aria-label="Payment Frequency"]')
+  assert.equal(frequency.value, 'pay-in-4')
+  assert.equal(frequency.selectedOptions[0].textContent, 'Pay in 4 (saved plan)')
+  assert.equal(editForm.querySelector('[aria-label="Starting balance · original amount borrowed or owed"]'), null)
   await changeValue(editForm.querySelector('[aria-label="Current balance · amount still owed"]'), '100.03')
   assert.match(editForm.textContent, /Next scheduled payment: \$25\.00 · Nov 17, 2026/)
   await submit(editForm)
-  const editedBill = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.find(item => item.debtId === debt.id)
-  assert.deepEqual(editedBill.occurrenceOverrides.map(item => item.amount), [25, 25, 25, 25.03])
-  assert.equal(loadDebts(browser.localStorage)[0].paymentHistory.length, 0)
+  const saved = loadDebts(browser.localStorage)[0]
+  assert.equal(saved.paymentSchedule.kind, 'pay-in-4')
+  assert.equal(saved.paymentSchedule.totalInstallments, 4)
+  const editedBill = JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills.find(item => item.debtId === 8)
+  assert.equal(editedBill.frequency, 'debt-installments')
+  assert.deepEqual(editedBill.occurrenceOverrides.map(item => [item.dueDate, item.amount]), [
+    ['2026-11-17', 25], ['2026-12-01', 25], ['2026-12-15', 25], ['2026-12-29', 25.03]
+  ])
+  assert.equal(saved.paymentHistory.length, 0)
 })
 
 test('editing a paid Pay in 4 plan keeps its original allocation, transactions and cleared status', async () => {
@@ -633,8 +674,8 @@ test('editing a paid Pay in 4 plan keeps its original allocation, transactions a
   const form = container.querySelector('form')
   assert.match(form.textContent, /Next scheduled payment: \$25\.00 · Nov 30, 2026/)
   assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '75.01')
-  await changeValue(form.querySelector('[aria-label="Payment Schedule"]'), 'monthly')
-  assert.equal(form.querySelector('[aria-label="Payment Schedule"]').value, 'pay-in-4')
+  await changeValue(form.querySelector('[aria-label="Payment Frequency"]'), 'monthly')
+  assert.equal(form.querySelector('[aria-label="Payment Frequency"]').value, 'pay-in-4')
   assert.match(form.querySelector('[role="alert"]').textContent, /kept to protect its links/)
   await changeValue(form.querySelector('[aria-label="Debt name"]'), 'Renamed plan')
   await submit(form)

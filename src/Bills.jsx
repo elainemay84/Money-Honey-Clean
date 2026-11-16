@@ -1283,7 +1283,7 @@ export default function Bills() {
                   {[
                     ['occurrence', 'This occurrence'],
                     ['schedule', 'Recurring schedule']
-                  ].filter(([scope]) => scope === 'occurrence' || !['debt-installments', 'interval'].includes(editingSchedule?.frequency)).map(([scope, label]) => (
+                  ].filter(([scope]) => scope === 'occurrence' || !['debt-installments', 'interval', 'semiannual'].includes(editingSchedule?.frequency)).map(([scope, label]) => (
                     <label key={scope} style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1303,7 +1303,7 @@ export default function Bills() {
                   ))}
                 </fieldset>
               )}
-              {['debt-installments', 'interval'].includes(editingSchedule?.frequency) && <p style={{ fontSize: 11, margin: 0 }}>Edit the overall payment schedule in Debt. This form can adjust this occurrence; undo a skip before rescheduling it.</p>}
+              {['debt-installments', 'interval', 'semiannual'].includes(editingSchedule?.frequency) && <p style={{ fontSize: 11, margin: 0 }}>Edit the overall payment schedule in Debt. This form can adjust this occurrence; undo a skip before rescheduling it.</p>}
               <input aria-label={flow === 'out' ? 'Bill name' : 'Income name'} placeholder={flow === 'out' ? 'Bill name' : 'Income name'} value={name} onChange={event => setName(event.target.value)} style={field} required />
               <FinancialInput aria-label="Amount" min="0.01" placeholder="Amount" value={amount} onChange={event => setAmount(event.target.value)} style={field} required />
               <input aria-label={flow === 'out' ? 'Due date' : 'First expected date'} type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} style={field} required />

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { getBillOccurrencesInRange, loadBillData, saveBillData, updateBillOccurrenceSkip, updateScheduleOccurrence } from './billData.js'
-import { createPayInFourSchedule, getDebtInstallmentProgress, getDebtScheduledPayments, validatePaymentSchedule } from './debtSchedule.js'
+import { createPayInFourSchedule, createRecurringSchedule, getDebtInstallmentProgress, getDebtScheduledPayments, scheduleFromForm, validatePaymentSchedule } from './debtSchedule.js'
 import {
   DEBT_STORAGE_KEY,
   addDebtAssignee,
@@ -181,6 +181,88 @@ test('monthly anchors survive short months and custom schedules support exact da
   for (const changes of [{ completedInstallments: 4 }, { intervalDays: 0 }, { installmentAmount: 8 }, { remainingTotal: 1.234 }]) {
     assert.throws(() => validatePaymentSchedule({ ...custom.paymentSchedule, ...changes }))
   }
+})
+
+function recurringDebt(frequency, startDate, changes = {}) {
+  return installmentDebt({ currentBalance: 1000, minimumPayment: 50, nextPaymentDue: startDate,
+    paymentSchedule: scheduleFromForm(createRecurringSchedule(frequency, startDate), startDate), ...changes })
+}
+
+test('payment frequencies advance weekly and biweekly by days and longer periods by calendar months', () => {
+  const dates = (frequency, start, count = 4) => getDebtScheduledPayments(recurringDebt(frequency, start), count).map(item => item.dueDate)
+  assert.deepEqual(dates('weekly', '2026-12-28'), ['2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18'])
+  assert.deepEqual(dates('biweekly', '2026-12-28'), ['2026-12-28', '2027-01-11', '2027-01-25', '2027-02-08'])
+  assert.deepEqual(dates('monthly', '2027-01-31'), ['2027-01-31', '2027-02-28', '2027-03-31', '2027-04-30'])
+  assert.deepEqual(dates('quarterly', '2026-11-30'), ['2026-11-30', '2027-02-28', '2027-05-30', '2027-08-30'])
+  assert.deepEqual(dates('semiannual', '2026-08-31', 3), ['2026-08-31', '2027-02-28', '2027-08-31'])
+  assert.deepEqual(dates('annual', '2028-02-29', 3), ['2028-02-29', '2029-02-28', '2030-02-28'])
+  const biweekly = recurringDebt('biweekly', '2026-11-16')
+  validatePaymentSchedule(biweekly.paymentSchedule)
+  assert.equal(biweekly.paymentSchedule.totalInstallments, null)
+  assert.equal(getDebtScheduledPayments(biweekly, 12).length, 12)
+  assert.equal(getDebtInstallmentProgress(biweekly), null)
+})
+
+test('Twice a Month uses two chosen days, clamps short months and requires the next due date on a chosen day', () => {
+  const debt = recurringDebt('twice-monthly', '2027-01-15', {
+    paymentSchedule: { ...createRecurringSchedule('twice-monthly', '2027-01-15'), daysOfMonth: [31, 15], totalInstallments: null, completedInstallments: 0, dueDay: null }
+  })
+  debt.paymentSchedule = scheduleFromForm(debt.paymentSchedule, '2027-01-15')
+  assert.deepEqual(debt.paymentSchedule.daysOfMonth, [15, 31])
+  validatePaymentSchedule(debt.paymentSchedule)
+  assert.deepEqual(getDebtScheduledPayments(debt, 6).map(item => item.dueDate),
+    ['2027-01-15', '2027-01-31', '2027-02-15', '2027-02-28', '2027-03-15', '2027-03-31'])
+  validatePaymentSchedule({ ...debt.paymentSchedule, startDate: '2027-02-28' })
+  assert.throws(() => validatePaymentSchedule({ ...debt.paymentSchedule, startDate: '2027-01-20' }), /one of the two payment days/)
+  for (const daysOfMonth of [[15], [15, 15], [0, 15], [15, 32], undefined]) {
+    assert.throws(() => validatePaymentSchedule({ ...debt.paymentSchedule, daysOfMonth }), /two different payment days/)
+  }
+})
+
+test('recurring frequencies sync to bills, advance after a recorded payment and never mark passed dates paid', () => {
+  for (const [frequency, start, billFrequency, expected] of [
+    ['biweekly', '2026-11-16', 'biweekly', ['2026-11-16', '2026-11-30', '2026-12-14']],
+    ['twice-monthly', '2027-02-15', 'twice-monthly', ['2027-02-15', '2027-02-28', '2027-03-15']],
+    ['semiannual', '2026-08-31', 'semiannual', ['2026-08-31', '2027-02-28', '2027-08-31']],
+    ['annual', '2028-02-29', 'yearly', ['2028-02-29', '2029-02-28', '2030-02-28']]
+  ]) {
+    const storage = createStorage()
+    saveAccountData([{ id: 1, name: 'Checking', openingBalance: 2000 }], [], storage)
+    saveDebts([recurringDebt(frequency, start)], storage)
+    let { debts, bills } = synchronizeDebtBills(storage)
+    assert.equal(bills[0].frequency, billFrequency)
+    assert.deepEqual(getBillOccurrencesInRange(bills, '2026-01-01', '2030-12-31').slice(0, 3).map(item => item.dueDate), expected)
+    assert.deepEqual(getDebtScheduledPayments(debts[0], 3).map(item => item.dueDate), expected)
+    const later = getDebtScheduleStatus(debts[0], bills, [], expected[2])
+    assert.equal(later.nextDueDate, expected[0])
+    assert.equal(later.overdueCount, 2)
+    assert.equal(loadDebts(storage)[0].currentBalance, 1000)
+    assert.equal(loadDebts(storage)[0].paymentHistory.length, 0)
+    createDebtPayment(7, `paid:${frequency}`, { total: 50, principal: 50, accountId: 1, date: start }, storage)
+    ;({ debts, bills } = synchronizeDebtBills(storage))
+    assert.equal(debts[0].currentBalance, 950)
+    assert.equal(getNextDebtPaymentDue(debts[0]), expected[1])
+    assert.equal(getDebtScheduleStatus(debts[0], bills, loadSavedAccountData(storage).transactions, start).nextDueDate, expected[1])
+  }
+})
+
+test('existing Pay in 4 plans and legacy schedules load unchanged without extra or open-ended payments', () => {
+  const storage = createStorage()
+  const payInFour = { kind: 'pay-in-4', frequency: 'biweekly', startDate: '2026-11-30', completedInstallments: 2, totalInstallments: 4, remainingTotal: 50.01 }
+  const legacyMonthly = { kind: 'monthly', frequency: 'monthly', startDate: '2026-11-15', dueDay: 15, completedInstallments: 0 }
+  saveDebts([installmentDebt({ paymentSchedule: payInFour }), installmentDebt({ id: 8, minimumPayment: 40, paymentSchedule: legacyMonthly })], storage)
+  const raw = storage.getItem(DEBT_STORAGE_KEY)
+  const [loadedPayInFour, loadedMonthly] = loadDebts(storage)
+  assert.deepEqual(loadedPayInFour.paymentSchedule, payInFour)
+  assert.deepEqual(loadedMonthly.paymentSchedule, legacyMonthly)
+  assert.deepEqual(getDebtScheduledPayments(loadedPayInFour, 50).map(item => [item.dueDate, item.amount, item.installmentNumber]), [
+    ['2026-11-30', 25, 3], ['2026-12-14', 25.01, 4]
+  ])
+  const { bills } = synchronizeDebtBills(storage)
+  assert.equal(bills.find(bill => bill.debtId === 7).frequency, 'debt-installments')
+  assert.equal(getBillOccurrencesInRange(bills.filter(bill => bill.debtId === 7), '2026-01-01', '2030-12-31').length, 2)
+  assert.equal(bills.find(bill => bill.debtId === 8).frequency, 'monthly')
+  assert.deepEqual(JSON.parse(storage.getItem(DEBT_STORAGE_KEY)).debts.map(debt => debt.paymentSchedule), JSON.parse(raw).debts.map(debt => debt.paymentSchedule))
 })
 
 test('changing installment frequency preserves paid installment identities and never schedules them again', () => {

@@ -468,6 +468,10 @@ function preserveDebtBillHistory(bill) {
   return overrides
 }
 
+function debtBillFrequency(frequency) {
+  return frequency === 'days' ? 'interval' : frequency === 'annual' ? 'yearly' : frequency ?? 'monthly'
+}
+
 function updateDebtSchedule(bill, debt, managed) {
   const schedule = debt.paymentSchedule
   const finite = schedule?.totalInstallments != null
@@ -503,8 +507,9 @@ function updateDebtSchedule(bill, debt, managed) {
     name: debt.name,
     amount: finite ? generated[0]?.amount ?? bill.amount ?? 0 : debt.minimumPayment,
     dueDate: schedule?.startDate || debt.nextPaymentDue,
-    frequency: finite ? 'debt-installments' : schedule?.frequency === 'days' ? 'interval' : schedule?.frequency ?? 'monthly',
+    frequency: finite ? 'debt-installments' : debtBillFrequency(schedule?.frequency),
     ...(schedule ? { intervalDays: schedule.intervalDays, debtDueDay: schedule.dueDay } : {}),
+    ...(!finite && schedule?.frequency === 'twice-monthly' ? { daysOfMonth: schedule.daysOfMonth } : {}),
     debtId: debt.id,
     debtManaged: managed,
     ...(managed ? { active: true, archived: false } : {}),
