@@ -11,6 +11,7 @@ import {
   calculateOverallDebtSummary,
   createDebtPayment,
   debtPaymentNeedsBalanceReview,
+  deleteDebt,
   deleteDebtAssignee,
   getDebtPaymentCalculationMethod,
   getDebtPrincipalPaid,
@@ -1100,4 +1101,35 @@ test('calculateOverallDebtSummary computes total remaining, paid off, and progre
     totalPaidOff: 0,
     progressPercent: 0
   })
+})
+
+test('deleteDebt removes only that debt, keeps transactions unlinked, and keeps bills holding payment history', () => {
+  const storage = createStorage()
+  const payment = { id: '1:1', transactionId: 50, total: 20, principal: 20, date: '2026-11-01' }
+  saveDebts([
+    installmentDebt({ id: 1, name: 'Duplicate', paymentSchedule: undefined, minimumPayment: 20, billId: 10, paymentHistory: [payment] }),
+    installmentDebt({ id: 2, name: 'Keep', paymentSchedule: undefined, minimumPayment: 30, billId: 12 })
+  ], storage)
+  saveAccountData([{ id: 1, name: 'Checking', openingBalance: 500 }], [
+    { id: 50, accountId: 1, amount: -20, date: '2026-11-01', transactionType: 'debt-payment', linkedDebtId: 1, linkedDebtPaymentId: '1:1' },
+    { id: 51, accountId: 1, amount: -30, date: '2026-11-01', transactionType: 'debt-payment', linkedDebtId: 2 }
+  ], storage)
+  saveBillData({ bills: [
+    { id: 10, name: 'Duplicate', debtId: 1, debtManaged: true, paymentHistory: [{ transactionId: 50 }] },
+    { id: 11, name: 'Duplicate extra', debtId: 1, debtManaged: true, paymentHistory: [] },
+    { id: 12, name: 'Keep', debtId: 2, debtManaged: true, paymentHistory: [] },
+    { id: 13, name: 'My own bill', debtId: 1, debtManaged: false, paymentHistory: [] }
+  ] }, storage)
+
+  assert.deepEqual(deleteDebt(1, storage).map(debt => debt.name), ['Keep'])
+  const [kept, other] = loadSavedAccountData(storage).transactions
+  assert.equal(kept.amount, -20)
+  assert.equal(kept.transactionType, 'debt-payment')
+  assert.equal(kept.linkedDebtId, undefined)
+  assert.equal(kept.linkedDebtPaymentId, undefined)
+  assert.equal(other.linkedDebtId, 2)
+  const bills = loadBillData([], storage).bills
+  assert.deepEqual(bills.map(bill => [bill.id, bill.debtId, bill.archived ?? false]), [[10, null, true], [12, 2, false], [13, null, false]])
+  assert.deepEqual(bills[0].paymentHistory, [{ transactionId: 50 }])
+  assert.throws(() => deleteDebt(1, storage), /no longer exists/)
 })

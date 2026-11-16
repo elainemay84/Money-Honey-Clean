@@ -17,7 +17,7 @@ export default function UpdateNotice() {
   const buttonStyle = { border: 0, borderRadius: 10, padding: '7px 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
   return (
     <div role="status" aria-live="polite" style={{
-      position: 'fixed', left: 24, right: 24, zIndex: 30,
+      position: 'fixed', left: 24, right: 24, zIndex: 16,
       bottom: 'calc(env(safe-area-inset-bottom) + 92px)',
       display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 8px 14px',
       background: 'var(--theme-card, #FFFDF8)', color: 'var(--theme-text, #4A3426)',

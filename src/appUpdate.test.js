@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
 import { Window } from 'happy-dom'
+import { after, test } from 'node:test'
 import { fetchLatestBuild, isUserEditing, startUpdateWatcher } from './appUpdate.js'
+
+const windows = []
+after(() => Promise.all(windows.map(win => win.happyDOM.close())))
 
 const RUNNING = 'aaaaaaaaaaaaaaaa'
 const LATEST = 'bbbbbbbbbbbbbbbb'
 
 function setup({ body = '', latest = LATEST, storage } = {}) {
   const win = new Window({ url: 'https://money-honey.test/' })
+  windows.push(win)
   const doc = win.document
   doc.head.innerHTML = `<meta name="money-honey-build" content="${RUNNING}">`
   doc.body.innerHTML = body
@@ -50,7 +54,8 @@ test('an open form or dialog is never reloaded automatically; the update is offe
     assert.deepEqual(updates, [LATEST])
     stop()
   }
-  const { doc } = setup()
+  const { doc, stop } = setup({ latest: RUNNING })
+  stop()
   doc.body.innerHTML = '<input aria-label="Search">'
   doc.querySelector('input').focus()
   assert.equal(isUserEditing(doc), true)
@@ -58,20 +63,20 @@ test('an open form or dialog is never reloaded automatically; the update is offe
 
 test('returning to the foreground checks again and reloads once the form is closed', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 })
-  const { doc, state, reloads, updates, stop } = setup({ body: '<form></form>', latest: RUNNING })
+  const { win, doc, state, reloads, updates, stop } = setup({ body: '<form></form>', latest: RUNNING })
   await settle()
   assert.deepEqual([reloads.length, updates.length], [0, 0])
   state.latest = LATEST
   t.mock.timers.tick(11_000)
-  doc.dispatchEvent(new Event('visibilitychange'))
+  doc.dispatchEvent(new win.Event('visibilitychange'))
   await settle()
   assert.deepEqual([reloads.length, updates], [0, [LATEST]])
   doc.querySelector('form').remove()
-  doc.dispatchEvent(new Event('visibilitychange'))
+  doc.dispatchEvent(new win.Event('visibilitychange'))
   await settle()
   assert.equal(reloads.length, 0, 'repeated foreground events are throttled')
   t.mock.timers.tick(11_000)
-  doc.dispatchEvent(new Event('visibilitychange'))
+  doc.dispatchEvent(new win.Event('visibilitychange'))
   await settle()
   assert.equal(reloads.length, 1)
   stop()
@@ -98,6 +103,7 @@ test('a failed reload attempt is not repeated, and offline or invalid responses 
 
 test('development pages without a build stamp never check for updates', async () => {
   const win = new Window()
+  windows.push(win)
   let fetched = false
   startUpdateWatcher({ win, doc: win.document, fetchImpl: async () => { fetched = true }, onUpdate() {} })()
   await settle()

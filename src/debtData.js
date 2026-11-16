@@ -226,6 +226,58 @@ export function deleteDebtAssignee(name, storage = localStorage) {
   return changeDebtAssignee(name, null, storage)
 }
 
+export function isDebtPaidOff(debt) {
+  return Number(debt?.currentBalance) <= 0
+}
+
+function isTransactionLinkedToDebt(transaction, debt) {
+  return transaction.linkedDebtId === debt.id
+    || (debt.paymentHistory ?? []).some(payment => payment.transactionId != null && payment.transactionId === transaction.id)
+}
+
+export function getDebtDeletionLinks(debt, transactions = []) {
+  return {
+    payments: (debt.paymentHistory ?? []).filter(payment => !payment.reversedAt).length,
+    transactions: transactions.filter(transaction => isTransactionLinkedToDebt(transaction, debt)).length
+  }
+}
+
+// Deletes one debt. Linked account transactions are kept and only unlinked, so a later debt that reuses
+// the id cannot inherit them. A schedule bill created for the debt is removed, or archived if it holds
+// payment history; a user-created bill that was linked to the debt is kept and unlinked.
+export function deleteDebt(debtId, storage = localStorage) {
+  const debts = loadDebts(storage)
+  const debt = debts.find(item => item.id === debtId)
+  if (!debt) throw new Error('This debt no longer exists.')
+
+  const accountData = loadSavedAccountData(storage)
+  const linkedTransactions = accountData?.transactions.filter(transaction => isTransactionLinkedToDebt(transaction, debt)) ?? []
+  const { bills } = loadBillData([], storage)
+  const isLinkedBill = bill => bill.debtId === debt.id
+  const nextBills = bills.flatMap(bill => {
+    if (!isLinkedBill(bill)) return [bill]
+    if (!bill.debtManaged) return [{ ...bill, debtId: null }]
+    if (!(bill.paymentHistory ?? []).length) return []
+    return [{ ...bill, debtId: null, debtManaged: false, active: false, archived: true }]
+  })
+
+  if (linkedTransactions.length) {
+    const transactions = accountData.transactions.map(transaction => {
+      if (!linkedTransactions.includes(transaction)) return transaction
+      const unlinked = { ...transaction }
+      delete unlinked.linkedDebtId
+      delete unlinked.linkedDebtPaymentId
+      return unlinked
+    })
+    saveAccountData(accountData.accounts, transactions, storage)
+  }
+  if (bills.some(isLinkedBill)) {
+    saveBillData({ bills: nextBills }, storage)
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('money-honey-bills-updated'))
+  }
+  return saveDebts(debts.filter(item => item.id !== debt.id), storage).debts
+}
+
 export function createDebtId(debts) {
   return debts.reduce((max, debt) => Math.max(max, debt.id), 0) + 1
 }

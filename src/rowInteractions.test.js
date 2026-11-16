@@ -2485,15 +2485,67 @@ test('Credit-card debt card opens the edit form directly with no payment managem
   assert.equal(debt.currentBalance, 500)
   assert.equal(debt.paymentHistory[0].principal, 0)
 
-  await click(container.querySelector('[aria-label="Debt row: Store card debt"]'))
-  await click(button(container.querySelector('[aria-label="Store card debt debt details"]'), 'Edit Debt'))
-  await click(button(container.querySelector('[aria-label="Edit debt form"]'), 'Archive Debt'))
+  const openEdit = async () => {
+    await click(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+    await click(button(container.querySelector('[aria-label="Store card debt debt details"]'), 'Edit Debt'))
+    return container.querySelector('[aria-label="Edit debt form"]')
+  }
+  const editForm = await openEdit()
+  assert.equal([...editForm.querySelectorAll('button')].some(item => item.textContent === 'Archive Debt'), false)
+  await click(button(editForm, 'Cancel'))
+
+  const storedDebts = JSON.parse(browser.localStorage.getItem('money-honey-debts'))
+  storedDebts.debts[0].currentBalance = 0
+  browser.localStorage.setItem('money-honey-debts', JSON.stringify(storedDebts))
+  await act(async () => browser.dispatchEvent(new browser.Event('money-honey-debts-updated')))
+  await click(button(await openEdit(), 'Archive Debt'))
   assert.equal(container.querySelector('[aria-label="Debt row: Store card debt"]'), null)
   await click(container.querySelector('[aria-label="Show Archived Debts"]'))
-  await click(container.querySelector('[aria-label="Debt row: Store card debt"]'))
-  await click(button(container.querySelector('[aria-label="Store card debt debt details"]'), 'Edit Debt'))
-  await click(button(container.querySelector('[aria-label="Edit debt form"]'), 'Restore Debt'))
+  await click(button(await openEdit(), 'Restore Debt'))
   assert.ok(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+})
+
+test('Delete Debt removes an unpaid duplicate after confirmation and keeps linked transactions', async () => {
+  const container = await render(Debt)
+  for (const name of ['Duplicate card', 'Keep card']) {
+    await openManualDebt(container)
+    const form = container.querySelector('[aria-label="Add debt form"] form')
+    await changeValue(form.querySelector('[aria-label="Debt name"]'), name)
+    await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), name === 'Keep card' ? '300' : '200')
+    await submit(form)
+  }
+  const totals = () => container.querySelector('[aria-label="Overall debt progress"]').textContent
+  assert.match(totals(), /\$500\.00/)
+
+  const accountData = readAccountData()
+  const duplicateId = JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts.find(item => item.name === 'Duplicate card').id
+  accountData.transactions.push({ id: 9001, accountId: 1, date: localDate(), name: 'Card payment', amount: -20, category: 'Debt Payments', transactionType: 'debt-payment', linkedDebtId: duplicateId })
+  browser.localStorage.setItem('money-honey-account-data', JSON.stringify(accountData))
+  await act(async () => browser.dispatchEvent(new browser.Event('money-honey-accounts-updated')))
+
+  const openEdit = async () => {
+    await click(container.querySelector('[aria-label="Debt row: Duplicate card"]'))
+    await click(button(container.querySelector('[aria-label="Duplicate card debt details"]'), 'Edit Debt'))
+    return container.querySelector('[aria-label="Edit debt form"]')
+  }
+  let confirmation = ''
+  browser.confirm = message => { confirmation = message; return false }
+  await click(button(await openEdit(), 'Delete Debt'))
+  assert.match(confirmation, /^Are you sure you want to delete this debt\?/)
+  assert.match(confirmation, /1 linked account transaction will be kept/)
+  assert.ok(container.querySelector('[aria-label="Debt row: Duplicate card"]'))
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts.length, 2)
+  await click(button(container.querySelector('[aria-label="Edit debt form"]'), 'Cancel'))
+
+  browser.confirm = () => true
+  await click(button(await openEdit(), 'Delete Debt'))
+  assert.equal(container.querySelector('[aria-label="Debt row: Duplicate card"]'), null)
+  assert.ok(container.querySelector('[aria-label="Debt row: Keep card"]'))
+  assert.match(totals(), /\$300\.00/)
+  assert.deepEqual(JSON.parse(browser.localStorage.getItem('money-honey-debts')).debts.map(item => item.name), ['Keep card'])
+  const kept = readAccountData().transactions.find(item => item.id === 9001)
+  assert.equal(kept.amount, -20)
+  assert.equal(kept.linkedDebtId, undefined)
 })
 
 test('Debt links a matching monthly bill instead of duplicating its schedule', async () => {

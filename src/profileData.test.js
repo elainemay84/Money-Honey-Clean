@@ -124,6 +124,8 @@ test('every Money Honey storage key used by the app source is covered by the all
     ...BACKUP_STORAGE_KEYS,
     PENDING_OPERATION_STORAGE_KEY,
     'money-honey-profile-action-done',
+    // sessionStorage-only guard against repeated update reloads; never financial data.
+    'money-honey-update-reload',
     ...notStorageKeys
   ])
   assert.deepEqual([...sourceKeys].filter(key => !known.has(key)), [])

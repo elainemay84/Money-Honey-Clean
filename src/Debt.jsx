@@ -14,6 +14,7 @@ import {
   DEBT_PAYMENT_CALCULATION_METHODS,
   createDebtId,
   debtPaymentNeedsBalanceReview,
+  deleteDebt,
   deleteDebtAssignee,
   getDebtPaymentCalculationMethod,
   getAvailableCredit,
@@ -23,6 +24,8 @@ import {
   getDebtProgress,
   getDebtRemainingPercent,
   getDebtTypes,
+  getDebtDeletionLinks,
+  isDebtPaidOff,
   loadDebtData,
   renameDebtAssignee,
   saveDebts,
@@ -409,6 +412,7 @@ export default function Debt({ statementExtractor } = {}) {
 
   function setArchived(archived) {
     if (!editingDebt) return
+    if (archived && !isDebtPaidOff(editingDebt)) return
     if (archived && !window.confirm(`Archive ${editingDebt.name}? Its bill schedule and payment history will be preserved.`)) {
       return
     }
@@ -418,6 +422,23 @@ export default function Debt({ statementExtractor } = {}) {
     saveDebts(nextDebts)
     setDebts(nextDebts)
     setIsFormOpen(false)
+  }
+
+  function removeDebt() {
+    if (!editingDebt) return
+    const links = getDebtDeletionLinks(editingDebt, accountData?.transactions ?? [])
+    const warnings = []
+    if (links.payments) warnings.push(`${links.payments} recorded ${links.payments === 1 ? 'payment' : 'payments'} in this debt's history will be deleted with it.`)
+    if (links.transactions) warnings.push(`${links.transactions} linked account ${links.transactions === 1 ? 'transaction' : 'transactions'} will be kept in Accounts but no longer linked to a debt.`)
+    const message = ['Are you sure you want to delete this debt?', ...warnings].join('\n\n')
+    if (!window.confirm(message)) return
+    try {
+      setDebts(deleteDebt(editingDebt.id))
+      setIsFormOpen(false)
+      setEditingDebtId(null)
+    } catch (error) {
+      setFormError(error.message)
+    }
   }
 
   function detailValue(label, value) {
@@ -1018,11 +1039,20 @@ export default function Debt({ statementExtractor } = {}) {
             {editingDebt && (
               <details style={{ marginTop: 16, paddingTop: 10, borderTop: '1px solid #E9D6B7', color: '#9B7955', fontSize: 11 }}>
                 <summary style={{ cursor: 'pointer' }}>Debt management</summary>
-                <button
-                  type="button"
-                  onClick={() => setArchived(!editingDebt.archived)}
-                  style={{ ...control, minHeight: 38, marginTop: 9, color: editingDebt.archived ? '#79502A' : '#9B463E', fontSize: 11 }}
-                >{editingDebt.archived ? 'Restore Debt' : 'Archive Debt'}</button>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 9 }}>
+                  {(editingDebt.archived || isDebtPaidOff(editingDebt)) && (
+                    <button
+                      type="button"
+                      onClick={() => setArchived(!editingDebt.archived)}
+                      style={{ ...control, minHeight: 38, color: editingDebt.archived ? '#79502A' : '#9B463E', fontSize: 11 }}
+                    >{editingDebt.archived ? 'Restore Debt' : 'Archive Debt'}</button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={removeDebt}
+                    style={{ ...control, minHeight: 38, color: '#9B463E', fontSize: 11 }}
+                  >Delete Debt</button>
+                </div>
               </details>
             )}
           </section>

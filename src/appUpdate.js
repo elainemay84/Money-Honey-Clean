@@ -77,7 +77,6 @@ export function startUpdateWatcher({
   const onOnline = () => check('online')
   doc.addEventListener('visibilitychange', onVisible)
   win.addEventListener('pageshow', onPageShow)
-  win.addEventListener('focus', onVisible)
   win.addEventListener('online', onOnline)
   const timer = win.setInterval(() => check('interval'), intervalMs)
   check('launch')
@@ -86,7 +85,6 @@ export function startUpdateWatcher({
     stopped = true
     doc.removeEventListener('visibilitychange', onVisible)
     win.removeEventListener('pageshow', onPageShow)
-    win.removeEventListener('focus', onVisible)
     win.removeEventListener('online', onOnline)
     win.clearInterval(timer)
   }
