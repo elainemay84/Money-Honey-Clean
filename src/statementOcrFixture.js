@@ -90,3 +90,17 @@ export const electricScooterMarkerOcrData = ocrData([
   [['O', 58, 124, 151], ['Nov', 95, 189, 239], ['15,', 95, 248, 283], ['2027', 62, 292, 351]],
   [['$52.36', 96, 188, 254], ['due', 96, 262, 297]]
 ])
+
+// Activity text with checked timeline markers, yearless dates and a provider balance
+// that must not be recalculated from installment totals.
+export const loveseatActivityLines = [
+  'In progress', 'Christopher Knight Loveseat on Aug 14',
+  '$197.38', 'Remaining balance', 'Payment processing',
+  'It can take up to 2 business days.', 'Activity',
+  '\u2713 Sep 16', '$64.24 paid', 'From linked bank',
+  'v Oct 16', '$64.24 paid', 'From linked bank',
+  'O Nov 13', '$64.24 pending', 'From linked bank',
+  'O Dec 13', '$64.24 due',
+  'O Jan 13, 2027', '$64.24 due',
+  'O Feb 13, 2027', '$63.82 due'
+]

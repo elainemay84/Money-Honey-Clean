@@ -120,6 +120,14 @@ only once. This history is display-only: statement-paid rows do not create bank
 transactions or reduce the outstanding balance again. Installment counts and
 financial payoff progress are shown separately.
 
+All visible Activity rows are imported, including **Paid**, **Pending**, and
+**Due** installments. Pending rows appear separately from completed Payment History
+and never count as completed or create payable Bills. Once the provider confirms a
+pending payment, change its status to **Paid on statement** in **Edit Debt**.
+This only updates tracking; it does not create another transaction or deduct the
+payment again. The imported remaining balance stays exactly as shown by the provider
+unless you edit it, even when it differs from the sum of scheduled payments.
+
 Dark-mode screenshots are inverted and small screenshots are enlarged on your
 device before reading, so light-on-dark timeline text is read reliably.
 Timeline circles and connector lines beside rows are ignored.
@@ -141,7 +149,7 @@ payments are not invented. Activity-timeline inference is specific to Add Paymen
 Plan and does not add installment controls to ordinary Add Debt or Add Bill.
 
 Saving creates one debt and one linked finite bill schedule containing only
-unpaid installments, not an indefinite recurrence. Rows recorded as paid on the
+due installments, not an indefinite recurrence. Rows recorded as paid on the
 statement count toward progress but never create historical bank transactions.
 Recorded payments retain their links and cannot be removed through the row editor;
 correct or undo those payments in Accounts/Bills.

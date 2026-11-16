@@ -1,8 +1,30 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, validateStatementSuggestions } from './statementData.js'
-import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData } from './statementOcrFixture.js'
+import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
 import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
+import { getInstallmentStatus } from './debtSchedule.js'
+
+test('Loveseat Activity retains paid, pending and due rows with exact dates and provider balance', () => {
+  const result = parsePaymentPlanScan(loveseatActivityLines)
+  assert.equal(result.values.currentBalance, '197.38')
+  assert.equal(result.values.name, 'Christopher Knight Loveseat')
+  assert.equal(result.planTerms.count, '6')
+  assert.equal(result.planTerms.firstDate, '2026-09-16')
+  assert.deepEqual(result.installments.map(row => [row.dueDate, row.amount, getInstallmentStatus(row)]), [
+    ['2026-09-16', '64.24', 'paid'],
+    ['2026-10-16', '64.24', 'paid'],
+    ['2026-11-13', '64.24', 'pending'],
+    ['2026-12-13', '64.24', 'due'],
+    ['2027-01-13', '64.24', 'due'],
+    ['2027-02-13', '63.82', 'due']
+  ])
+  assert.equal(result.installments[2].paid, false)
+  // A marker alone is not proof of completion; explicit pending text wins.
+  const pending = parsePaymentPlanScan(['Activity', '\u2713 Nov 13, 2026', '$64.24 pending']).installments[0]
+  assert.equal(getInstallmentStatus(pending), 'pending')
+  assert.equal(pending.paid, false)
+})
 
 const scooterSchedule = Array.from({ length: 12 }, (_, index) => ({
   dueDate: index === 0 ? '2026-12-15' : `2027-${String(index).padStart(2, '0')}-15`,

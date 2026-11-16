@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import FinancialInput from './FinancialInput'
-import { createPaymentPlan, generatePaymentPlan, PAYMENT_FREQUENCY_OPTIONS, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
+import { createPaymentPlan, generatePaymentPlan, getInstallmentStatus, PAYMENT_FREQUENCY_OPTIONS, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 
 export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldStyle, labelStyle, paymentHistory = [], balance, hasBillHistory = false }) {
   const rows = useMemo(() => sortPaymentPlanInstallments(sourceRows), [sourceRows])
@@ -17,11 +17,11 @@ export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldSty
   }
   function generate() {
     try {
-      const paid = rows.filter(row => row.paid)
-      const firstNumber = Math.max(0, ...paid.map((row, index) => row.installmentNumber ?? index + 1))
+      const retained = rows.filter(row => getInstallmentStatus(row) !== 'due')
+      const firstNumber = Math.max(0, ...retained.map((row, index) => row.installmentNumber ?? index + 1))
       const generated = generatePaymentPlan(balance, count, firstDate, frequency).installments
         .map((row, index) => ({ ...row, installmentNumber: firstNumber + index + 1 }))
-      const combined = sortPaymentPlanInstallments([...paid, ...generated])
+      const combined = sortPaymentPlanInstallments([...retained, ...generated])
       validatePaymentSchedule(createPaymentPlan(combined))
       setPreview({ source: rows, balance, rows: combined })
       setError('')
@@ -33,12 +33,12 @@ export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldSty
   return (
     <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'grid', gap: 8 }}>
       <legend>Installments</legend>
-      <p style={{ margin: 0, fontSize: 11 }}>Review scanned dates and amounts, or generate a schedule below. Complete any missing fields. Paid on statement is tracking only; no historical bank transactions are created.</p>
+      <p style={{ margin: 0, fontSize: 11 }}>Review scanned dates, amounts and statuses. Paid and pending on statement are tracking only: no bank transactions or balance deductions. Confirm pending payments here when the provider marks them paid.</p>
       {!rows.length && <p role="status" style={{ margin: 0, fontSize: 11 }}>No installment rows found. Generate a schedule or add the missing installments.</p>}
       {canGenerate && <details>
         <summary>Generate Schedule</summary>
         <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
-          <p style={{ margin: 0, fontSize: 11 }}>Divide the current remaining balance into payments. Using this schedule replaces unpaid rows, including corrections; paid statement rows are kept.</p>
+          <p style={{ margin: 0, fontSize: 11 }}>Divide the current remaining balance into payments. Using this schedule replaces due rows, including corrections; paid and pending statement rows are kept.</p>
           <label style={labelStyle}>Number of payments
             <input aria-label="Number of payments" type="number" min="1" max="600" value={count} style={fieldStyle}
               onChange={event => { setCount(event.target.value); setPreview(null) }} />
@@ -80,10 +80,13 @@ export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldSty
               </label>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-              <label style={{ fontSize: 12 }}>
-                <input type="checkbox" checked={row.paid || locked} disabled={locked}
-                  onChange={event => change(index, { paid: event.target.checked })} />
-                {locked ? 'Paid in Accounts / Bills' : 'Paid on statement'}
+              <label style={{ fontSize: 12 }}>Status
+                <select aria-label={`Installment ${index + 1} status`} value={locked ? 'paid' : getInstallmentStatus(row)} disabled={locked}
+                  onChange={event => change(index, { status: event.target.value, paid: event.target.value === 'paid' })}>
+                  <option value="due">Due</option>
+                  <option value="pending">Pending</option>
+                  <option value="paid">{locked ? 'Paid in Accounts / Bills' : 'Paid on statement'}</option>
+                </select>
               </label>
               <button type="button" disabled={locked} onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remove installment {index + 1}</button>
             </div>

@@ -317,7 +317,7 @@ function installmentAmount(text) {
 
 // Timeline circles and connectors beside each row are read as "O", "0", "©", "|" or an unreadable "[?]" word.
 // Only tokens before "$" or a month are stripped, so a minus sign or a split amount digit is never discarded.
-const TIMELINE_MARKER = new RegExp(`^(?:(?:\\[\\?\\]|[oO0Q@©®•●○◯◦|│¦!lI1()\\[\\]—~=*]{1,3})\\s+)+(?=\\$|${PARTIAL_ROW_DATE.source.slice(2)})`, 'i')
+const TIMELINE_MARKER = new RegExp(`^(?:(?:\\[\\?\\]|[✓✔√vVoO0Q@©®•●○◯◦|│¦!lI1()\\[\\]—~=*]{1,3})\\s+)+(?=\\$|${PARTIAL_ROW_DATE.source.slice(2)})`, 'i')
 
 function cleanRowLine(text, timeline) {
   const line = (text ?? '').replace(/\s*\|\s*/g, ' ').trim()
@@ -394,6 +394,7 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
         dueDate: dateMatch ? parseDate(dateMatch[0]) ?? '' : '',
         amount,
         paid: /\b(?:paid|completed)\b/i.test(rowText) && !/\b(?:unpaid|not(?: yet)? (?:paid|completed)|partially paid|pending|failed|due|upcoming|scheduled)\b/i.test(rowText),
+        ...(paymentPlan && /\bpending\b/i.test(rowText) ? { status: 'pending' } : {}),
         ...(yearless?.month ? { partial: yearless } : {}),
         ...(rowLabel ? { labeled: true } : {})
       })
@@ -403,7 +404,7 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
   resolveYearlessRows(installments)
   // An unlabeled match with neither a usable date nor an amount is OCR noise, not an installment.
   const rows = installments.filter(row => row.labeled || row.dueDate || row.amount)
-    .map(({ dueDate, amount, paid }) => ({ dueDate, amount, paid }))
+    .map(({ dueDate, amount, paid, status }) => ({ dueDate, amount, paid, ...(status ? { status } : {}) }))
   if (provider.size === 1) values.provider = [...provider][0]
   if (merchants.size === 1) values.merchant = [...merchants][0]
   if (categories.size === 1) values.purchaseCategory = [...categories][0]
