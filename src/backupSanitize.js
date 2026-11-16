@@ -216,11 +216,13 @@ export const SANITIZERS = {
       frequency: is.str,
       autopay: is.bool,
       accountId: is.int,
+      category: is.str,
       paymentHistory: is.objects
     })
     const incomes = cleanRecords(data.incomes ?? [], 'Income schedules', { id: is.int, name: is.str, amount: is.num }, {
       frequency: is.str,
       accountId: is.int,
+      category: is.str,
       paymentHistory: is.objects
     })
     return JSON.stringify({ version: BILL_STORAGE_VERSION, bills, incomes })

@@ -166,6 +166,24 @@ export function getDefaultCategoryForFlow(flow, config) {
   return !config || getCategories(config.customCategories, flow === 'in' ? 'income' : 'expense', config.builtInNames, config.disabledBuiltIns).includes(name) ? name : ''
 }
 
+export function isActiveCategory(name, kind, config) {
+  return Boolean(name) && getCategories(config.customCategories, kind, config.builtInNames, config.disabledBuiltIns).includes(name)
+}
+
+// Category fields for a transaction created or linked from a bill (flow 'out') or income (flow 'in').
+// A deleted category is never applied to new transactions; uncategorized schedules keep the old default.
+export function getScheduleTransactionCategoryFields(flow, category, storage = localStorage) {
+  const kind = flow === 'in' ? 'income' : 'expense'
+  let config = null
+  try {
+    config = loadCategoryConfig(storage)
+  } catch {
+    config = null
+  }
+  if (category && (!config || isActiveCategory(category, kind, config))) return { category, categoryType: kind }
+  return null
+}
+
 export function suggestTransactionCategory(transactions, name, kind, customCategories = [], builtInNames = {}, disabledBuiltIns = []) {
   const normalizedName = normalizeName(name)
   if (!normalizedName) return ''

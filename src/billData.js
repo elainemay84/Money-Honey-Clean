@@ -1,5 +1,5 @@
 import { getLinkedOccurrenceTransaction } from './accountStorage.js'
-import { getDefaultCategoryForFlow } from './categoryData.js'
+import { getDefaultCategoryForFlow, getScheduleTransactionCategoryFields } from './categoryData.js'
 
 export const BILL_STORAGE_KEY = 'money-honey-bills'
 export const BILL_STORAGE_VERSION = 1
@@ -711,6 +711,29 @@ export function createIncomeId(incomes) {
   return incomes.reduce((maxId, income) => Math.max(maxId, income.id), 0) + 1
 }
 
+// Keeps bills (expense) or income schedules (income) attached to a category after it is renamed.
+export function renameScheduleCategory(oldName, newName, kind, storage = localStorage) {
+  if (!oldName || oldName === newName || storage.getItem(BILL_STORAGE_KEY) === null) return false
+  const key = kind === 'income' ? 'incomes' : 'bills'
+  let changed = false
+  const schedules = loadBillData([], storage)[key].map(schedule => {
+    let next = schedule
+    if (schedule.category === oldName) next = { ...next, category: newName }
+    if (schedule.occurrenceOverrides?.some(override => override.category === oldName)) {
+      next = {
+        ...next,
+        occurrenceOverrides: schedule.occurrenceOverrides.map(override =>
+          override.category === oldName ? { ...override, category: newName } : override
+        )
+      }
+    }
+    if (next !== schedule) changed = true
+    return next
+  })
+  if (changed) saveBillData({ [key]: schedules }, storage)
+  return changed
+}
+
 export function getIncomeTransactionOptions(storage = localStorage) {
   const saved = storage.getItem('money-honey-account-data')
   if (!saved) return []
@@ -825,7 +848,7 @@ export function createIncomeTransaction(income, dueDate, storage = localStorage,
     amount: Math.abs(income.amount),
     date: transactionDate,
     cleared: false,
-    category: income.category ?? getDefaultCategoryForFlow('in'),
+    category: getScheduleTransactionCategoryFields('in', income.category, storage)?.category ?? getDefaultCategoryForFlow('in'),
     categoryType: 'income',
     linkedIncomeOccurrenceId: occurrenceId
   }

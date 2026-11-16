@@ -1,6 +1,6 @@
 export const ACCOUNT_STORAGE_KEY = 'money-honey-account-data'
 export const ACCOUNT_STORAGE_VERSION = 1
-import { getDefaultCategoryForFlow } from './categoryData.js'
+import { getDefaultCategoryForFlow, getScheduleTransactionCategoryFields } from './categoryData.js'
 
 function assertAccountData(data) {
   if (!data || !Array.isArray(data.accounts) || !Array.isArray(data.transactions)) {
@@ -150,7 +150,8 @@ export function createOccurrenceTransaction(flow, occurrence, actualDate, storag
     amount: flow === 'out' ? -Math.abs(occurrence.amount) : Math.abs(occurrence.amount),
     date: actualDate,
     cleared: false,
-    category: occurrence.category ?? getDefaultCategoryForFlow(flow),
+    category: getDefaultCategoryForFlow(flow),
+    ...getScheduleTransactionCategoryFields(flow, occurrence.category, storage),
     ...linkedFields
   }
   data.transactions.push(transaction)
@@ -181,7 +182,11 @@ export function linkExistingOccurrenceTransaction(flow, occurrence, transactionI
 
   transaction.unlinkedOccurrenceIds = (transaction.unlinkedOccurrenceIds ?? [])
     .filter(id => id !== occurrence.occurrenceId && id !== `${occurrence.id}:${occurrence.scheduledDate ?? occurrence.dueDate}`)
-  Object.assign(transaction, getOccurrenceLinkFields(flow, occurrence.occurrenceId))
+  Object.assign(
+    transaction,
+    getScheduleTransactionCategoryFields(flow, occurrence.category, storage),
+    getOccurrenceLinkFields(flow, occurrence.occurrenceId)
+  )
   saveAccountData(data.accounts, data.transactions, storage)
   return transaction
 }

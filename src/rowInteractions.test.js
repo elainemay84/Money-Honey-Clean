@@ -6,6 +6,9 @@ import { getReliableOcrLines, parseDebtStatement } from './statementData.js'
 import { homeDepotOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { getBillOccurrencesInRange } from './billData.js'
+import { getSpendingByCategory } from './reportData.js'
+import { getBudgetSpendingByCategory } from './budgetData.js'
+import { EXPENSE_CATEGORIES } from './categoryData.js'
 
 const browser = new Window({ url: 'http://localhost/' })
 for (const key of [
@@ -2729,4 +2732,136 @@ test('an Every 6 Months bill appears every six calendar months in List and Calen
   const dialog = container.querySelector('[role="dialog"]')
   await click(dialog.querySelector('input[name="edit-scope"][value="schedule"]'))
   assert.equal(dialog.querySelector('select[aria-label="Frequency"]').value, 'semiannual')
+})
+
+test('bill and income Category dropdowns list active categories A–Z beneath the name and persist the choice', async () => {
+  browser.localStorage.setItem('money-honey-categories', JSON.stringify({
+    version: 1,
+    customCategories: [{ name: 'car wash', type: 'expense' }, { name: 'Side Gig', type: 'income' }],
+    builtInNames: { 'expense:Subscriptions': 'Streaming' },
+    disabledBuiltIns: ['expense:Pets'],
+    deletedCategories: [{ name: 'Pets', type: 'expense' }]
+  }))
+  let container = await render(Bills)
+  await click(button(container, 'Add bill'))
+  let form = container.querySelector('[role="dialog"] form')
+  const nameField = form.querySelector('[aria-label="Bill name"]')
+  let select = form.querySelector('select[aria-label="Category"]')
+  assert.equal(nameField.nextElementSibling, select)
+  assert.equal(select.value, '')
+  const options = [...select.options].map(option => option.textContent)
+  assert.equal(options[0], 'Select Category')
+  assert.deepEqual(options.slice(1), [...options.slice(1)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
+  assert.ok(options.includes('car wash') && options.includes('Streaming') && options.includes('Groceries'))
+  assert.equal(options.some(option => ['Pets', 'Subscriptions', 'Side Gig', 'Paycheck'].includes(option)), false)
+
+  await changeValue(nameField, 'Water')
+  await changeValue(form.querySelector('[aria-label="Amount"]'), '40')
+  await changeValue(select, 'car wash')
+  await submit(form)
+  let saved = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.equal(saved.bills.find(bill => bill.name === 'Water').category, 'car wash')
+  assert.equal(Object.hasOwn(saved.bills.find(bill => bill.name === 'Electric'), 'category'), false)
+
+  await click(button(container, 'Money In'))
+  await click(button(container, 'Add income'))
+  form = container.querySelector('[role="dialog"] form')
+  select = form.querySelector('select[aria-label="Category"]')
+  const incomeOptions = [...select.options].map(option => option.textContent).slice(1)
+  assert.deepEqual(incomeOptions, ['Child Support', 'Commission', 'Other Income', 'Paycheck', 'Side Gig'])
+  await changeValue(form.querySelector('[aria-label="Income name"]'), 'Freelance')
+  await changeValue(form.querySelector('[aria-label="Amount"]'), '300')
+  await changeValue(select, 'Side Gig')
+  await submit(form)
+  saved = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.equal(saved.incomes.find(income => income.name === 'Freelance').category, 'Side Gig')
+
+  container = await reload(Bills, container)
+  await click(container.querySelector('[aria-label="Bill row: Water"]'))
+  select = container.querySelector('[role="dialog"] select[aria-label="Category"]')
+  assert.equal(select.value, 'car wash')
+  await changeValue(select, '')
+  await submit(container.querySelector('[role="dialog"] form'))
+  await click(container.querySelector('[aria-label="Bill row: Electric"]'))
+  assert.equal(container.querySelector('[role="dialog"] select[aria-label="Category"]').value, '')
+})
+
+test('paying or receiving assigns the schedule category to the linked transaction and keeps it through date edits and reversals', async () => {
+  seedData({ recurring: true, recurringIncome: true })
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  bills.bills[0].category = 'Housing & Utilities'
+  bills.incomes[0].category = 'Commission'
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(bills))
+  const container = await render(Bills)
+
+  await click(button(container, 'Pay Repeating'))
+  await click(button(container.querySelector('[role="dialog"]'), 'Confirm'))
+  let [payment] = readAccountData().transactions
+  assert.equal(payment.category, 'Housing & Utilities')
+  assert.equal(payment.amount, -80)
+
+  await click(container.querySelector('[aria-label="Show Completed"]'))
+  await click(container.querySelector('[aria-label="Bill row: Repeating"]'))
+  const newDate = localDate(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000))
+  await changeValue(container.querySelector('[role="dialog"] [aria-label="Due date"]'), newDate)
+  browser.confirm = () => true
+  await submit(container.querySelector('[role="dialog"] form'))
+  ;[payment] = readAccountData().transactions
+  assert.equal(payment.date, newDate)
+  assert.equal(payment.category, 'Housing & Utilities')
+
+  await click(button(container, 'Paid Repeating'))
+  assert.equal(readAccountData().transactions.length, 0)
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills[0].category, 'Housing & Utilities')
+  await click(button(container, 'Pay Repeating'))
+  await click(button(container.querySelector('[role="dialog"]'), 'Confirm'))
+  assert.equal(readAccountData().transactions[0].category, 'Housing & Utilities')
+
+  await click(button(container, 'Money In'))
+  await click(button(container, 'Receive Paycheck'))
+  await click(button(container.querySelector('[role="dialog"]'), 'Confirm'))
+  const income = readAccountData().transactions.find(transaction => transaction.amount > 0)
+  assert.equal(income.category, 'Commission')
+  assert.equal(income.categoryType, 'income')
+
+  const transactions = readAccountData().transactions
+  const month = localDate().slice(0, 7)
+  const spending = getSpendingByCategory({ transactions, month, categories: EXPENSE_CATEGORIES })
+  assert.deepEqual(spending.items.map(item => [item.category, item.amount]), [['Housing & Utilities', 80]])
+  assert.equal(getBudgetSpendingByCategory({ transactions, today: localDate(), categories: EXPENSE_CATEGORIES })['Housing & Utilities'], 80)
+})
+
+test('a deleted bill category is kept on the bill and history but not applied to new payments; renames follow the bill', async () => {
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  bills.bills[0].category = 'Coffee'
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(bills))
+  browser.localStorage.setItem('money-honey-categories', JSON.stringify({
+    version: 1,
+    customCategories: [],
+    deletedCategories: [{ name: 'Coffee', type: 'expense' }]
+  }))
+  let container = await render(Bills)
+  await click(container.querySelector('[aria-label="Bill row: Electric"]'))
+  const select = container.querySelector('[role="dialog"] select[aria-label="Category"]')
+  assert.equal(select.value, 'Coffee')
+  assert.equal(select.selectedOptions[0].textContent, 'Coffee (deleted)')
+  await click(button(container.querySelector('[role="dialog"]'), 'Cancel'))
+  await click(button(container, 'Pay Electric'))
+  await click(button(container.querySelector('[role="dialog"]'), 'Confirm'))
+  assert.equal(readAccountData().transactions[0].category, 'Other')
+  assert.equal(JSON.parse(browser.localStorage.getItem('money-honey-bills')).bills[0].category, 'Coffee')
+
+  seedData()
+  const renamed = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  renamed.bills[0].category = 'Pets'
+  renamed.incomes[0].category = 'Pets'
+  browser.localStorage.setItem('money-honey-bills', JSON.stringify(renamed))
+  const Screen = () => React.createElement(Settings, { transactions: [], onTransactionsChange: () => {} })
+  container = await render(Screen)
+  await click(button(container, 'Pets'))
+  await changeValue(container.querySelector('[aria-label="Category name"]'), 'Animals')
+  await click(button(container, 'Save'))
+  const after = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  assert.equal(after.bills[0].category, 'Animals')
+  assert.equal(after.incomes[0].category, 'Pets')
 })

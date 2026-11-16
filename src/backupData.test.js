@@ -740,3 +740,29 @@ test('the safety backup downloads current data under a distinct filename without
     assert.deepEqual([...values.entries()], before)
   })
 })
+
+test('bill and income categories round-trip through backups; older backups without categories still restore and bad categories are rejected', () => {
+  const { storage } = sampleStorage()
+  saveBillData({
+    bills: [
+      { id: 1, name: 'Electric', amount: 80, dueDate: '2026-11-20', frequency: 'monthly', category: 'Housing & Utilities', paymentHistory: [] },
+      { id: 2, name: 'Legacy', amount: 10, dueDate: '2026-11-21', frequency: 'monthly', paymentHistory: [] }
+    ],
+    incomes: [{ id: 3, name: 'Job', amount: 900, dueDate: '2026-11-15', frequency: 'biweekly', category: 'Paycheck', paymentHistory: [] }]
+  }, storage)
+  const snapshot = createBackupSnapshot(storage)
+  const target = withStorage().storage
+  restoreBackup(parseBackup(JSON.stringify(snapshot), target).backup, target)
+  const restored = JSON.parse(target.getItem(BILL_STORAGE_KEY))
+  assert.equal(restored.bills[0].category, 'Housing & Utilities')
+  assert.equal(Object.hasOwn(restored.bills[1], 'category'), false)
+  assert.equal(restored.incomes[0].category, 'Paycheck')
+
+  const invalid = structuredClone(snapshot)
+  const data = JSON.parse(invalid.data[BILL_STORAGE_KEY])
+  data.incomes[0].category = 42
+  invalid.data[BILL_STORAGE_KEY] = JSON.stringify(data)
+  const before = createBackupSnapshot(target).data
+  assert.throws(() => importBackup(JSON.stringify(invalid), target), /invalid "category"/)
+  assert.deepEqual(createBackupSnapshot(target).data, before)
+})

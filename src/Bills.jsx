@@ -37,10 +37,25 @@ import {
   removeDebtPaymentForTransaction,
   saveDebts
 } from './debtData.js'
+import { getCategories, loadCategoryConfig } from './categoryData.js'
 
 const frequencies = ['one-time', 'weekly', 'biweekly', 'twice-monthly', 'monthly', 'quarterly', 'semiannual', 'yearly']
 const FREQUENCY_LABELS = { 'one-time': 'One-time', semiannual: 'Every 6 Months' }
 const money = amount => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+
+function readCategoryConfig() {
+  try {
+    return loadCategoryConfig()
+  } catch {
+    return { customCategories: [], builtInNames: {}, disabledBuiltIns: [] }
+  }
+}
+
+function withCategory(record, category) {
+  const next = { ...record, category }
+  if (!category) delete next.category
+  return next
+}
 
 function monthStart(date) {
   return new Date(Date.UTC(date.getFullYear(), date.getMonth(), 1))
@@ -154,6 +169,8 @@ export default function Bills() {
   const [linkedDebtId, setLinkedDebtId] = useState('')
   const [occurrenceError, setOccurrenceError] = useState('')
   const [name, setName] = useState('')
+  const [category, setCategory] = useState('')
+  const [categoryConfig, setCategoryConfig] = useState(readCategoryConfig)
   const [amount, setAmount] = useState('')
   const [dueDate, setDueDate] = useState(today)
   const [frequency, setFrequency] = useState('one-time')
@@ -230,6 +247,12 @@ export default function Bills() {
   ) / 100
   const editingSchedule = (flow === 'out' ? bills : incomes)
     .find(schedule => schedule.id === editingBillId)
+  const categoryOptions = getCategories(
+    categoryConfig.customCategories,
+    flow === 'out' ? 'expense' : 'income',
+    categoryConfig.builtInNames,
+    categoryConfig.disabledBuiltIns
+  )
   const selectedOccurrenceDebt = selectedOccurrence?.debtId == null
     ? null
     : debts.find(debt => debt.id === selectedOccurrence.debtId) ?? null
@@ -337,6 +360,8 @@ export default function Bills() {
     setEditingLinkedTransactionId(null)
     setEditingOccurrence(null)
     setName('')
+    setCategory('')
+    setCategoryConfig(readCategoryConfig())
     setAmount('')
     setDueDate(today)
     setFrequency(flow === 'in' ? 'monthly' : 'one-time')
@@ -359,6 +384,8 @@ export default function Bills() {
     setEditingLinkedTransactionId(null)
     setEditingOccurrence(null)
     setName(savedBill.name)
+    setCategory(savedBill.category ?? '')
+    setCategoryConfig(readCategoryConfig())
     setAmount(String(savedBill.amount))
     setDueDate(savedBill.dueDate)
     setFrequency(savedBill.frequency)
@@ -381,6 +408,8 @@ export default function Bills() {
     setEditingOccurrenceDate(occurrence.scheduledDate ?? occurrence.dueDate)
     setEditingLinkedTransactionId(occurrence.transactionId ?? null)
     setName(occurrence.name)
+    setCategory(occurrence.category ?? '')
+    setCategoryConfig(readCategoryConfig())
     setAmount(String(occurrence.amount))
     setDueDate(occurrence.dueDate)
     setFrequency(savedSchedule.frequency)
@@ -398,6 +427,7 @@ export default function Bills() {
       setEditingOccurrenceDate(null)
       setEditingLinkedTransactionId(null)
       setName(editingSchedule.name)
+      setCategory(editingSchedule.category ?? '')
       setAmount(String(editingSchedule.amount))
       setDueDate(editingSchedule.dueDate)
       setFrequency(editingSchedule.frequency)
@@ -411,6 +441,7 @@ export default function Bills() {
       setEditingOccurrenceDate(editingOccurrence.scheduledDate ?? editingOccurrence.dueDate)
       setEditingLinkedTransactionId(editingOccurrence.transactionId ?? null)
       setName(editingOccurrence.name)
+      setCategory(editingOccurrence.category ?? '')
       setAmount(String(editingOccurrence.amount))
       setDueDate(editingOccurrence.dueDate)
       setFrequency(editingSchedule?.frequency ?? 'one-time')
@@ -618,6 +649,10 @@ export default function Bills() {
           linkedChanges.accountId = accountId === '' ? null : Number(accountId)
         }
         if (dueDate !== editingOccurrence.dueDate) linkedChanges.date = dueDate
+        if (category && category !== (editingOccurrence.category ?? '')) {
+          linkedChanges.category = category
+          linkedChanges.categoryType = flow === 'out' ? 'expense' : 'income'
+        }
 
         if (Object.keys(linkedChanges).length && accountId === '') {
           setFormError('Choose an associated account to keep the linked transaction valid.')
@@ -647,6 +682,7 @@ export default function Bills() {
         accountId: accountId === '' ? null : Number(accountId),
         notes: notes.trim()
       }
+      if (category !== (editingOccurrence.category ?? '')) occurrenceChanges.category = category
       if (editingSchedule?.frequency === 'debt-installments' && numericAmount !== editingOccurrence.amount) {
         occurrenceChanges.debtAmountOverride = true
       }
@@ -721,7 +757,7 @@ export default function Bills() {
         return
       }
       updateBills(bills.map(bill => bill.id === editingBillId
-        ? {
+        ? withCategory({
           ...bill,
           name: name.trim(),
           amount: numericAmount,
@@ -732,7 +768,7 @@ export default function Bills() {
           accountId: accountId === '' ? null : Number(accountId),
           notes: notes.trim(),
           daysOfMonth: frequency === 'twice-monthly' ? selectedDays : []
-        }
+        }, category)
         : bill
       ))
     } else if (flow === 'out') {
@@ -743,7 +779,7 @@ export default function Bills() {
         setFormError(error.message)
         return
       }
-      updateBills([...bills, {
+      updateBills([...bills, withCategory({
         id: newBillId,
         name: name.trim(),
         amount: numericAmount,
@@ -757,7 +793,7 @@ export default function Bills() {
           ? [...new Set(daysOfMonth.map(Number).filter(day => Number.isInteger(day) && day >= 1 && day <= 31))].sort((a, b) => a - b)
           : [],
         paymentHistory: []
-      }])
+      }, category)])
     } else {
       const incomeChanges = {
         name: name.trim(),
@@ -770,17 +806,17 @@ export default function Bills() {
       }
       if (editingBillId !== null) {
         updateIncomes(incomes.map(income => income.id === editingBillId
-          ? { ...income, ...incomeChanges }
+          ? withCategory({ ...income, ...incomeChanges }, category)
           : income
         ))
       } else {
-        updateIncomes([...incomes, {
+        updateIncomes([...incomes, withCategory({
           id: createIncomeId(incomes),
           ...incomeChanges,
           active: true,
           archived: false,
           paymentHistory: []
-        }])
+        }, category)])
       }
     }
 
@@ -1307,6 +1343,11 @@ export default function Bills() {
               )}
               {['debt-installments', 'interval'].includes(editingSchedule?.frequency) && <p style={{ fontSize: 11, margin: 0 }}>Edit the overall payment schedule in Debt. This form can adjust this occurrence; undo a skip before rescheduling it.</p>}
               <input aria-label={flow === 'out' ? 'Bill name' : 'Income name'} placeholder={flow === 'out' ? 'Bill name' : 'Income name'} value={name} onChange={event => setName(event.target.value)} style={field} required />
+              <select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)} style={field}>
+                <option value="">Select Category</option>
+                {categoryOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                {category && !categoryOptions.includes(category) && <option value={category}>{category} (deleted)</option>}
+              </select>
               <FinancialInput aria-label="Amount" min="0.01" placeholder="Amount" value={amount} onChange={event => setAmount(event.target.value)} style={field} required />
               <input aria-label={flow === 'out' ? 'Due date' : 'First expected date'} type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} style={field} required />
               {editingScope === 'schedule' && (

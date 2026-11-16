@@ -8,6 +8,7 @@ import {
   saveCategoryConfig
 } from './categoryData.js'
 import { loadPayees, savePayees } from './payeeData.js'
+import { renameScheduleCategory } from './billData.js'
 import { isDebtPaymentTransaction } from './transactionRules.js'
 import PageHeader from './PageHeader'
 
@@ -104,6 +105,7 @@ export default function Settings({ onBack, transactions = [], onTransactionsChan
           }
           : transaction
       ))
+      renameScheduleCategory(oldName, name, editingCategory.type)
       setEditingCategory(null)
     } catch (error) {
       setManagementError(error.message)

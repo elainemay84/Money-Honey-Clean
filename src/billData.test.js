@@ -20,6 +20,8 @@ import {
   getPaySchedulePeriod,
   loadBills,
   loadPaySchedule,
+  renameScheduleCategory,
+  saveBillData,
   saveBills,
   savePaySchedule,
   saveIncomeSchedules,
@@ -732,4 +734,24 @@ test('every-six-months bills and income follow calendar months and clamp to shor
   const income = { id: 5, name: 'Bonus', amount: 600, dueDate: '2026-12-31', frequency: 'semiannual', accountId: 1, paymentHistory: [] }
   assert.deepEqual(getIncomeOccurrences([income], month(2027, 5)).map(item => item.dueDate), ['2027-06-30'])
   assert.deepEqual(getIncomeOccurrences([income], month(2027, 6)), [])
+})
+
+test('renaming a category updates matching bill or income categories and occurrence overrides only for that type', () => {
+  const values = new Map()
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }
+  assert.equal(renameScheduleCategory('Pets', 'Animals', 'expense', storage), false)
+  assert.equal(storage.getItem(BILL_STORAGE_KEY), null)
+  saveBillData({
+    bills: [
+      { id: 1, name: 'Vet', amount: 50, category: 'Pets', occurrenceOverrides: [{ scheduledDate: '2026-12-01', category: 'Pets' }], paymentHistory: [] },
+      { id: 2, name: 'Food', amount: 20, category: 'Groceries', paymentHistory: [{ dueDate: '2026-10-01', paid: true }] }
+    ],
+    incomes: [{ id: 3, name: 'Pet sitting', amount: 40, category: 'Pets', paymentHistory: [] }]
+  }, storage)
+  assert.equal(renameScheduleCategory('Pets', 'Animals', 'expense', storage), true)
+  const { bills, incomes } = loadBillData([], storage)
+  assert.equal(bills[0].category, 'Animals')
+  assert.equal(bills[0].occurrenceOverrides[0].category, 'Animals')
+  assert.deepEqual(bills[1], { id: 2, name: 'Food', amount: 20, category: 'Groceries', paymentHistory: [{ dueDate: '2026-10-01', paid: true }] })
+  assert.equal(incomes[0].category, 'Pets')
 })
