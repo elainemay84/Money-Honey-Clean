@@ -837,7 +837,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
         {rows.map(item => (
           <div
             key={item.id}
-            className="account-transaction-row"
+            className={`account-transaction-row${item.cleared ? '' : ' account-transaction-row-uncleared'}`}
             data-transaction-id={item.id}
             data-transaction-sequence={item.sequence}
             role="group"

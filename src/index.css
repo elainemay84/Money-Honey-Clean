@@ -545,6 +545,20 @@ body {
   --responsive-base-size: 20px;
 }
 
+.account-transaction-row {
+  background-color: transparent;
+  transition: background-color 180ms ease;
+}
+
+.account-transaction-row-uncleared {
+  background-color: rgba(184, 117, 34, 0.08);
+  background-color: color-mix(in srgb, var(--theme-accent, #B87522) 8%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-transaction-row { transition: none; }
+}
+
 .account-transaction-row :is(.account-transaction-name, .responsive-text, .account-transaction-date) {
   line-height: 1.2 !important;
 }
