@@ -32,6 +32,7 @@ import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budg
 import { getHistoricalCategories, getReportingTransactions, loadCategoryConfig } from './categoryData.js'
 import { calculateDailySpending } from './dailySpending.js'
 import { loadAppearanceSize, saveAppearanceSize } from './appearanceData.js'
+import UpdateNotice from './UpdateNotice.jsx'
 import {
   FONT_STYLES,
   getNavigationColors,
@@ -1063,6 +1064,7 @@ function App() {
 
 
 
+<UpdateNotice />
 <nav style={{
   position: 'fixed',
   left: 24,
