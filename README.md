@@ -185,6 +185,10 @@ press Escape to dismiss; choosing an action or leaving Debt also closes the menu
 The Add button stays above the bottom navigation and iPhone safe area.
 Primary Add buttons and form Add/Save actions use the selected theme's solid accent
 with contrasting black or white text, larger touch targets, and a subtle shadow.
+Expanded Add options, including the payment-plan submenu, use matching rounded
+buttons with the same theme-accent fill and contrasting text/icons as primary
+buttons, plus borders and soft shadows. The menu scrolls on short screens and
+stays above the navigation.
 Manual entry opens the compact form without a scanner. The compact **Scan Statement**
 sheet has full-width **Take Photo**, **Choose Image** (Photos or a file), and
 **Choose PDF** rows, plus **Enter Manually** and **Cancel**. It stays above the

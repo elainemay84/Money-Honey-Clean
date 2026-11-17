@@ -151,15 +151,6 @@ body {
   max-width: calc(100vw - 40px);
 }
 
-.debt-fab-circle {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  border: none;
-  border-radius: 50%;
-  box-shadow: 0 4px 14px #76552255;
-}
-
 .theme-primary-action {
   min-height: 44px !important;
   background: var(--theme-accent, #B87522) !important;
@@ -278,38 +269,63 @@ body {
 .debt-fab-actions {
   display: grid;
   gap: 10px;
-  margin-right: 5px;
+  box-sizing: border-box;
+  width: min(260px, calc(100vw - 64px));
+  max-width: 100%;
+  max-height: calc(90dvh - 188px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: debt-fab-enter 140ms ease-out;
 }
 
 .debt-fab-action {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  min-height: 48px;
-  padding: 0;
-  border: none;
-  background: transparent;
+  justify-content: space-between;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 1px solid var(--theme-border);
+  border-radius: 16px;
+  box-shadow: 0 4px 10px #00000038;
   font-family: inherit;
   cursor: pointer;
 }
 
+.debt-fab-action,
+.debt-fab-action .debt-fab-label,
+.debt-fab-action .debt-fab-circle {
+  background: var(--theme-accent);
+  color: var(--theme-button-text) !important;
+}
+
+.debt-fab-action:focus-visible {
+  outline: 2px solid var(--theme-button-text);
+  outline-offset: -4px;
+}
+
 .debt-fab-label {
-  padding: 6px 9px;
-  border-radius: 8px;
-  background: var(--theme-card, #FFFFFF);
-  color: var(--theme-text, #493320);
-  box-shadow: 0 2px 8px #76552222;
-  font-size: 12px;
-  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .debt-fab-circle {
-  width: 48px;
-  height: 48px;
-  background: var(--theme-card, #FFFFFF);
-  color: var(--theme-accent, #B87522);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 22px;
 }
 
 @keyframes debt-fab-enter {
