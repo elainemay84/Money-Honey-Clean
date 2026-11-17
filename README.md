@@ -125,6 +125,11 @@ only once. This history is display-only: statement-paid rows do not create bank
 transactions or reduce the outstanding balance again. Installment counts and
 financial payoff progress are shown separately.
 
+Debt Details includes a collapsed **Future Payments** list below Payoff Progress
+for saved installment schedules. It shows today's and future unpaid installments
+in due-date order, excluding paid and pending entries, and updates when the saved
+schedule or recorded payments change.
+
 All visible Activity rows are imported, including **Paid**, **Pending**, and
 **Due** installments. Pending rows appear separately from completed Payment History
 and never count as completed or create payable Bills. Once the provider confirms a
@@ -177,7 +182,9 @@ unchanged.
 The Debt **+** button expands labeled floating actions for adding a debt manually,
 scanning a debt statement, or adding a payment plan. Tap the main **X** again, tap outside, or
 press Escape to dismiss; choosing an action or leaving Debt also closes the menu.
-The gold button stays above the bottom navigation and iPhone safe area.
+The Add button stays above the bottom navigation and iPhone safe area.
+Primary Add buttons and form Add/Save actions use the selected theme's solid accent
+with contrasting black or white text, larger touch targets, and a subtle shadow.
 Manual entry opens the compact form without a scanner. The compact **Scan Statement**
 sheet has full-width **Take Photo**, **Choose Image** (Photos or a file), and
 **Choose PDF** rows, plus **Enter Manually** and **Cancel**. It stays above the

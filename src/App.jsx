@@ -308,7 +308,7 @@ function App() {
       '--theme-nav': themeNavigation,
       '--theme-nav-text': navigationColors.inactive,
       '--theme-nav-active': navigationColors.active,
-      '--theme-button-text': themeStyle.buttonText,
+      '--theme-button-text': previewTextColor(activeTheme.colors.accent, '#000000', '#FFFFFF'),
       '--theme-secondary-text': previewTextColor(activeTheme.colors.card),
       '--theme-muted-text': previewTextColor(activeTheme.colors.card),
       '--theme-modal-text': activeTheme.colors.text,
@@ -449,6 +449,7 @@ function App() {
               </div>
               <button
                 type="submit"
+                className="theme-primary-action"
                 style={{
                   justifySelf: 'end',
                   border: 'none',

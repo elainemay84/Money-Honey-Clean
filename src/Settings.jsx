@@ -174,7 +174,7 @@ export default function Settings({ onBack, transactions = [], onTransactionsChan
             <option value="expense">Expense</option>
             <option value="income">Income</option>
           </select>
-          <button type="submit" aria-label="Add category" style={{ ...field, padding: '9px 12px', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', whiteSpace: 'nowrap', cursor: 'pointer' }}>Add</button>
+          <button type="submit" className="theme-primary-action" aria-label="Add category" style={{ ...field, padding: '9px 12px', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', whiteSpace: 'nowrap', cursor: 'pointer' }}>Add</button>
         </form>
         {[
           ['Expense categories', 'expense'],
@@ -200,7 +200,7 @@ export default function Settings({ onBack, transactions = [], onTransactionsChan
         <h2 style={{ margin: '0 0 10px', fontSize: 18 }}>Saved Payees</h2>
         <form onSubmit={addPayee} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, marginBottom: 14 }}>
           <input aria-label="New payee name" placeholder="Payee or merchant" value={newPayee} onChange={event => setNewPayee(event.target.value)} style={{ ...field, flex: 1 }} />
-          <button type="submit" aria-label="Add payee" style={{ ...field, padding: '9px 12px', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', whiteSpace: 'nowrap', cursor: 'pointer' }}>Add</button>
+          <button type="submit" className="theme-primary-action" aria-label="Add payee" style={{ ...field, padding: '9px 12px', background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', whiteSpace: 'nowrap', cursor: 'pointer' }}>Add</button>
         </form>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {payees.map(payee => (
@@ -248,7 +248,7 @@ export default function Settings({ onBack, transactions = [], onTransactionsChan
             )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
               <button type="button" onClick={() => { setEditingCategory(null); setEditingPayee(null); setManagementError('') }} style={field}>Cancel</button>
-              <button type="button" onClick={editingCategory ? saveCategoryEdit : () => renamePayee(editingPayee, payeeDraft)} style={{ ...field, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
+              <button type="button" className="theme-primary-action" onClick={editingCategory ? saveCategoryEdit : () => renamePayee(editingPayee, payeeDraft)} style={{ ...field, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
                 Save
               </button>
             </div>

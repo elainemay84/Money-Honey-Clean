@@ -505,7 +505,7 @@ export default function Themes({
           ))}
         </div>
         <div className="manual-theme-actions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-          <button type="button" onClick={saveAsNew} style={{ ...field, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', cursor: 'pointer' }}>
+          <button type="button" className="theme-primary-action" onClick={saveAsNew} style={{ ...field, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold', cursor: 'pointer' }}>
             Save as New
           </button>
           <button

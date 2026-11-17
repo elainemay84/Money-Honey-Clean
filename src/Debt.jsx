@@ -5,10 +5,10 @@ import FinancialInput from './FinancialInput'
 import DebtScheduleFields from './DebtScheduleFields'
 import PaymentPlanFields from './PaymentPlanFields'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
-import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, getInstallmentStatus, getPaidInstallmentNumbers, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
+import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, getDebtScheduledPayments, getInstallmentStatus, getPaidInstallmentNumbers, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
 import { loadSavedAccountData } from './accountStorage.js'
-import { loadBillData } from './billData.js'
+import { getTodayDate, loadBillData } from './billData.js'
 import {
   applyPrincipalOnlyToReviewPayments,
   addDebtAssignee,
@@ -78,7 +78,7 @@ const detailsDialog = {
   width: '100%',
   maxWidth: 420,
   maxHeight: '88dvh',
-  overflow: 'hidden',
+  overflowY: 'auto',
   padding: 16,
   borderRadius: '18px 18px 16px 16px',
   background: '#FFF8ED'
@@ -156,6 +156,12 @@ export default function Debt({ statementExtractor } = {}) {
   const selectedPendingInstallments = selectedDebt?.paymentSchedule?.kind === 'payment-plan'
     ? sortPaymentPlanInstallments(selectedDebt.paymentSchedule.installments)
       .filter(row => getInstallmentStatus(row) === 'pending' && !selectedPaidNumbers.has(row.installmentNumber))
+    : []
+  const selectedHasInstallments = selectedDebt?.paymentSchedule?.kind === 'payment-plan'
+    || selectedDebt?.paymentSchedule?.totalInstallments != null
+  const selectedFutureInstallments = selectedHasInstallments
+    ? sortPaymentPlanInstallments(getDebtScheduledPayments(selectedDebt)
+      .filter(row => !selectedPaidNumbers.has(row.installmentNumber) && row.dueDate >= getTodayDate()))
     : []
   const scheduleStatusFor = debt => getDebtScheduleStatus(
     debt,
@@ -512,7 +518,7 @@ export default function Debt({ statementExtractor } = {}) {
   }
 
   return (
-    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: ['menu', 'plan-choice'].includes(addMode) ? 196 : 8 }}>
+    <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: ['menu', 'plan-choice'].includes(addMode) ? 196 : 84 }}>
       <ResponsiveText style={{
         margin: '0 0 14px',
         color: '#B87522',
@@ -658,7 +664,7 @@ export default function Debt({ statementExtractor } = {}) {
       <div ref={addMenuRef} className="debt-fab">
         <button
           type="button"
-          className="debt-fab-toggle"
+          className="debt-fab-toggle theme-primary-action theme-add-button theme-floating-add"
           aria-label={['menu', 'plan-choice'].includes(addMode) ? 'Close add debt menu' : 'Add debt'}
           aria-expanded={['menu', 'plan-choice'].includes(addMode)}
           aria-controls={['menu', 'plan-choice'].includes(addMode) ? 'debt-add-actions' : undefined}
@@ -792,6 +798,21 @@ export default function Debt({ statementExtractor } = {}) {
                 }} />
               </div>
             </div>
+            {selectedHasInstallments && <details className="debt-future-payments" key={selectedDebt.id}>
+              <summary>
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m9 5 7 7-7 7" />
+                </svg>
+                Future Payments
+                <span>{selectedFutureInstallments.length} upcoming</span>
+              </summary>
+              {selectedFutureInstallments.length ? <ul aria-label="Future payments">
+                {selectedFutureInstallments.map(row => <li key={row.installmentNumber}>
+                  <time dateTime={row.dueDate}>{displayDate(row.dueDate)}</time>
+                  <strong>{money(row.amount)}</strong>
+                </li>)}
+              </ul> : <p>No upcoming installments.</p>}
+            </details>}
             {selectedPendingInstallments.length > 0 && <section aria-label="Pending payments" style={{ flexShrink: 0 }}>
               <h3 style={{ margin: '12px 0 5px', color: '#79502A', fontSize: 13 }}>Pending Payments</h3>
               <div style={{ maxHeight: 'min(16dvh, 110px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -914,7 +935,7 @@ export default function Debt({ statementExtractor } = {}) {
                 <input aria-label={editingAssignee === null ? 'New assignee name' : 'Assignee name'} value={assigneeName} onChange={event => setAssigneeName(event.target.value)} style={inputStyle} required />
               </label>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button type="submit" style={control}>{editingAssignee === null ? 'Add Assignee' : 'Save Assignee'}</button>
+                <button type="submit" className="theme-primary-action" style={control}>{editingAssignee === null ? 'Add Assignee' : 'Save Assignee'}</button>
                 {editingAssignee !== null && (
                   <button type="button" onClick={() => { setEditingAssignee(null); setAssigneeName(''); setAssigneeError('') }} style={control}>Cancel Rename</button>
                 )}

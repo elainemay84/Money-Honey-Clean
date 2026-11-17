@@ -259,7 +259,7 @@ export default function Budgets({ transactions, today }) {
               Rollover is saved as a preference but is not yet applied to calculations.
             </p>
           )}
-          <button type="button" onClick={saveSettings} style={{ ...button, display: 'block', width: '100%', marginTop: 12, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
+          <button type="button" className="theme-primary-action" onClick={saveSettings} style={{ ...button, display: 'block', width: '100%', marginTop: 12, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>
             Save Settings
           </button>
         </section>
@@ -388,7 +388,7 @@ export default function Budgets({ transactions, today }) {
             {notice && <p role="alert">{notice}</p>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
               <button type="button" onClick={() => setEditingBudget(null)} style={button}>Cancel</button>
-              <button type="button" onClick={saveBudget} style={{ ...button, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>Save</button>
+              <button type="button" className="theme-primary-action" onClick={saveBudget} style={{ ...button, background: '#B87522', color: '#FFFFFF', fontWeight: 'bold' }}>Save</button>
             </div>
             {budgets[editingBudget] != null && (
               <button type="button" onClick={deleteBudget} style={{ display: 'block', margin: '10px auto 0', border: 'none', background: 'transparent', color: '#9B463E', cursor: 'pointer' }}>

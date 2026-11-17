@@ -7,7 +7,7 @@ import { createWorker, PSM } from 'tesseract.js'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
 import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
-import { createPaymentPlan, getDebtInstallmentProgress, getInstallmentStatus } from './debtSchedule.js'
+import { createPayInFourSchedule, createPaymentPlan, createRecurringSchedule, getDebtInstallmentProgress, getInstallmentStatus, scheduleFromForm } from './debtSchedule.js'
 import { createBackupSnapshot, parseBackup } from './backupData.js'
 import { getBillOccurrencesInRange } from './billData.js'
 import { getSpendingByCategory } from './reportData.js'
@@ -209,6 +209,96 @@ async function openPaymentPlan(container, scan = false) {
   await click(button(container, 'Add Payment Plan'))
   await click(button(container, scan ? 'Scan / Upload Payment Plan' : 'Enter Manually'))
 }
+
+test('Future Payments shows only upcoming unpaid installments and refreshes after edits and payments without writing data', async () => {
+  const today = localDate()
+  const dates = [10, 20, 30, 40, 50, 60].map(days => shiftDate(today, days))
+  saveDebts([{
+    id: 7, name: 'Future plan', type: 'Other', startingBalance: 160, currentBalance: 160,
+    minimumPayment: 20, interestRate: 0, paymentHistory: [{
+      id: 'already-recorded', total: 20.03, principal: 20.03, date: today,
+      scheduledDueDate: dates[2], installmentNumber: 5
+    }],
+    paymentSchedule: createPaymentPlan([
+      { dueDate: dates[4], amount: 20.05, installmentNumber: 1 },
+      { dueDate: dates[0], amount: 20.01, paid: true, installmentNumber: 2 },
+      { dueDate: dates[1], amount: 20.02, status: 'pending', installmentNumber: 3 },
+      { dueDate: today, amount: 20, installmentNumber: 4 },
+      { dueDate: dates[2], amount: 20.03, installmentNumber: 5 },
+      { dueDate: shiftDate(today, -1), amount: 19.99, installmentNumber: 6 },
+      { dueDate: dates[3], amount: 20.04, installmentNumber: 7 }
+    ])
+  }])
+  const container = await render(Debt)
+  const snapshot = () => Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => {
+    const key = localStorage.key(index)
+    return [key, localStorage.getItem(key)]
+  }))
+  const before = snapshot()
+  await click(container.querySelector('[aria-label="Debt row: Future plan"]'))
+  const dialog = container.querySelector('[aria-label="Future plan debt details"]')
+  let future = dialog.querySelector('.debt-future-payments')
+  assert.ok(future)
+  assert.equal(future.open, false)
+  assert.match(future.querySelector('summary').textContent, /Future Payments\s*3 upcoming/)
+  const labels = ['Payoff Progress', 'Future Payments', 'Pending Payments', 'Payment History']
+  assert.deepEqual(labels.map(label => dialog.textContent.indexOf(label)),
+    labels.map(label => dialog.textContent.indexOf(label)).sort((a, b) => a - b))
+  const rows = () => [...future.querySelectorAll('li')].map(row => [
+    row.querySelector('time').dateTime, row.querySelector('strong').textContent
+  ])
+  assert.deepEqual(rows(), [[today, '$20.00'], [dates[3], '$20.04'], [dates[4], '$20.05']])
+  assert.deepEqual(snapshot(), before)
+  future.open = true
+  assert.deepEqual(snapshot(), before)
+  await act(async () => {
+    saveDebts(loadDebts().map(debt => ({
+      ...debt,
+      paymentSchedule: createPaymentPlan(debt.paymentSchedule.installments.map(row =>
+        row.installmentNumber === 7 ? { ...row, dueDate: dates[5], amount: 20.07 } : row))
+    })))
+  })
+  assert.equal(future.open, true)
+  assert.deepEqual(rows(), [[today, '$20.00'], [dates[4], '$20.05'], [dates[5], '$20.07']])
+  await act(async () => {
+    createDebtPayment(7, 'overdue-payment', { total: 19.99, principal: 19.99, date: today, accountId: 1 })
+    createDebtPayment(7, 'today-payment', { total: 20, principal: 20, date: today, accountId: 1 })
+  })
+  assert.match(future.querySelector('summary').textContent, /2 upcoming/)
+  assert.deepEqual(rows(), [[dates[4], '$20.05'], [dates[5], '$20.07']])
+  const after = snapshot()
+  await click(button(dialog, 'Close debt details'))
+  await click(container.querySelector('[aria-label="Debt row: Future plan"]'))
+  future = container.querySelector('.debt-future-payments')
+  assert.equal(future.open, false)
+  assert.deepEqual(snapshot(), after)
+})
+
+test('Future Payments hides ordinary debts, reads saved legacy installment schedules and handles completed plans', async () => {
+  const firstDate = shiftDate(localDate(), 10)
+  const base = { type: 'Other', startingBalance: 100.03, currentBalance: 100.03, minimumPayment: 25, interestRate: 0, paymentHistory: [] }
+  saveDebts([
+    { ...base, id: 1, name: 'Ordinary loan' },
+    { ...base, id: 4, name: 'Recurring loan', paymentSchedule: scheduleFromForm(createRecurringSchedule('monthly', firstDate), firstDate) },
+    { ...base, id: 2, name: 'Saved Pay in 4', paymentSchedule: createPayInFourSchedule('100.03', firstDate) },
+    { ...base, id: 3, name: 'Completed plan', currentBalance: 0, paymentSchedule: createPaymentPlan([
+      { dueDate: firstDate, amount: 100.03, paid: true }
+    ]) }
+  ])
+  const container = await render(Debt)
+  for (const name of ['Ordinary loan', 'Recurring loan']) {
+    await click(container.querySelector(`[aria-label="Debt row: ${name}"]`))
+    assert.equal(container.querySelector('.debt-future-payments'), null)
+    await click(button(container, 'Close debt details'))
+  }
+  await click(container.querySelector('[aria-label="Debt row: Saved Pay in 4"]'))
+  const future = container.querySelector('.debt-future-payments')
+  assert.match(future.querySelector('summary').textContent, /4 upcoming/)
+  assert.deepEqual([...future.querySelectorAll('li strong')].map(item => item.textContent), ['$25.00', '$25.00', '$25.00', '$25.03'])
+  await click(button(container, 'Close debt details'))
+  await click(container.querySelector('[aria-label="Debt row: Completed plan"]'))
+  assert.match(container.querySelector('.debt-future-payments').textContent, /0 upcoming.*No upcoming installments\./s)
+})
 
 test('real Wayfair image OCR populates all Add Payment Plan amounts, survives rerenders and saves exact cents', { timeout: 30000 }, async () => {
   saveDebts([{

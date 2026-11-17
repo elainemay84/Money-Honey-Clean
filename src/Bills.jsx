@@ -1126,26 +1126,9 @@ export default function Bills({ statementExtractor } = {}) {
       <button
         type="button"
         aria-label={flow === 'out' ? 'Add bill' : 'Add income'}
+        className="theme-primary-action theme-add-button theme-floating-add theme-add-fixed"
         title={flow === 'out' ? 'Add Bill' : 'Add Income'}
         onClick={openNewBill}
-        style={{
-          position: 'fixed',
-          right: 'max(20px, calc((100vw - 460px) / 2))',
-          bottom: 'calc(100px + env(safe-area-inset-bottom))',
-          zIndex: 20,
-          width: 58,
-          height: 58,
-          display: 'grid',
-          placeItems: 'center',
-          border: 'none',
-          borderRadius: '50%',
-          background: '#B87522',
-          color: '#FFFFFF',
-          boxShadow: '0 4px 14px #76552255',
-          fontSize: 32,
-          lineHeight: 1,
-          cursor: 'pointer'
-        }}
       >
         +
       </button>

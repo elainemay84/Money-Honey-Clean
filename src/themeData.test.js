@@ -47,6 +47,19 @@ test('navigation colors maintain contrast against light and dark theme nav backg
   assert.equal(dark.active, '#fffaf2')
 })
 
+test('black or white action text meets 4.5:1 contrast on every theme accent and custom mid-gray', () => {
+  const luminance = hex => hex.slice(1).match(/../g).map(channel => {
+    const value = Number.parseInt(channel, 16) / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+  for (const background of [...THEME_PRESETS.map(theme => theme.colors.accent), '#777777', '#000000', '#FFFFFF']) {
+    const foreground = previewTextColor(background, '#000000', '#FFFFFF')
+    const values = [luminance(background), luminance(foreground)]
+    const contrast = (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05)
+    assert.ok(contrast >= 4.5, `${foreground} on ${background}: ${contrast.toFixed(2)}:1`)
+  }
+})
+
 function withStorage(values = {}) {
   const original = globalThis.localStorage
   const data = new Map(Object.entries(values))

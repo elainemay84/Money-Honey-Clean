@@ -323,10 +323,10 @@ function contrastRatio(foreground, background) {
   return (brightest + 0.05) / (darkest + 0.05)
 }
 
-export function previewTextColor(background) {
-  return contrastRatio(PREVIEW_DARK_TEXT, background) >= contrastRatio(PREVIEW_LIGHT_TEXT, background)
-    ? PREVIEW_DARK_TEXT
-    : PREVIEW_LIGHT_TEXT
+export function previewTextColor(background, darkText = PREVIEW_DARK_TEXT, lightText = PREVIEW_LIGHT_TEXT) {
+  return contrastRatio(darkText, background) >= contrastRatio(lightText, background)
+    ? darkText
+    : lightText
 }
 
 export function getNavigationColors(background, accent) {

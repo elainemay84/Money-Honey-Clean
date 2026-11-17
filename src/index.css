@@ -135,11 +135,15 @@ body {
   font-size: 11px;
 }
 
-.debt-fab {
+.debt-fab,
+.theme-add-fixed {
   position: fixed;
   right: max(20px, calc((100vw - 460px) / 2));
   bottom: calc(100px + env(safe-area-inset-bottom));
   z-index: 20;
+}
+
+.debt-fab {
   display: flex;
   flex-direction: column-reverse;
   align-items: flex-end;
@@ -147,7 +151,6 @@ body {
   max-width: calc(100vw - 40px);
 }
 
-.debt-fab-toggle,
 .debt-fab-circle {
   display: grid;
   place-items: center;
@@ -157,13 +160,111 @@ body {
   box-shadow: 0 4px 14px #76552255;
 }
 
-.debt-fab-toggle {
-  width: 58px;
-  height: 58px;
-  padding: 0;
-  background: #B87522;
-  color: #FFFFFF;
+.theme-primary-action {
+  min-height: 44px !important;
+  background: var(--theme-accent, #B87522) !important;
+  color: var(--theme-button-text, #241b14) !important;
+  border-color: var(--theme-accent, #B87522) !important;
+  box-shadow: 0 3px 9px #00000024 !important;
+  font-weight: 700;
   cursor: pointer;
+}
+
+.theme-add-button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.theme-add-button.theme-floating-add {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  box-shadow: 0 4px 14px #00000030 !important;
+  font-size: 34px;
+}
+
+.theme-primary-action:focus-visible,
+.debt-future-payments summary:focus-visible {
+  outline: 2px solid var(--theme-accent, #B87522);
+  outline-offset: 3px;
+}
+
+.theme-primary-action:disabled {
+  opacity: 0.55;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+
+.debt-future-payments {
+  flex-shrink: 0;
+  margin-top: 12px;
+  border-block: 1px solid var(--theme-border, #E9D6B7);
+  font-size: 12px;
+  text-align: left;
+}
+
+.debt-future-payments summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: var(--theme-text, #79502A);
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+
+.debt-future-payments summary::-webkit-details-marker {
+  display: none;
+}
+
+.debt-future-payments summary svg {
+  flex-shrink: 0;
+}
+
+.debt-future-payments[open] summary svg {
+  transform: rotate(90deg);
+}
+
+.debt-future-payments summary span {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.debt-future-payments ul {
+  max-height: min(24dvh, 180px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.debt-future-payments li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.debt-future-payments li strong {
+  white-space: nowrap;
+}
+
+.debt-future-payments > p {
+  padding-bottom: 8px;
 }
 
 .debt-fab-toggle svg {
