@@ -2210,6 +2210,152 @@ test('transaction row edits directly; clearing and inline date changes do not op
   assert.equal(container.querySelector('[role="dialog"]'), null)
 })
 
+function seedDuplicateTransaction(overrides = {}) {
+  const original = {
+    id: 7, sequence: 10, accountId: 1, name: 'Original payment', amount: -100,
+    date: '2026-11-07', cleared: true, category: 'Groceries', categoryType: 'expense',
+    notes: 'Keep this note', linkedOccurrenceType: 'bill',
+    linkedOccurrenceId: 'bill:1:2026-11-07', linkedBillOccurrenceId: 'bill:1:2026-11-07',
+    linkedIncomeOccurrenceId: 'income:2:2026-11-07',
+    linkedDebtId: 8, linkedDebtPaymentId: '8:1', transactionType: 'debt-payment',
+    paymentHistory: [{ transactionId: 7 }], receiptAttachments: ['receipt.png'],
+    recurringId: 12, unlinkedOccurrenceIds: ['bill:3:2026-11-07'],
+    ...overrides
+  }
+  saveAccountData([
+    { id: 1, name: 'Checking', type: 'Checking', openingBalance: 1000, openingDate: '2026-11-01', defaultCleared: true, archived: false },
+    { id: 2, name: 'Savings', type: 'Savings', openingBalance: 200, openingDate: '2026-11-01', defaultCleared: true, archived: false }
+  ], [
+    original,
+    { id: 8, sequence: 11, accountId: 1, name: 'Later deposit', amount: 50, date: '2026-11-09', cleared: true },
+    { id: 9, sequence: 12, accountId: 2, name: 'Savings deposit', amount: 10, date: '2026-11-09', cleared: true }
+  ])
+  const bills = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
+  bills.bills[0].paymentHistory = [{ dueDate: original.date, transactionId: original.id, paid: true }]
+  bills.incomes[0].paymentHistory = [{ dueDate: original.date, transactionId: original.id, received: true }]
+  saveBillData(bills)
+  saveDebts([{
+    id: 8, name: 'Loan', type: 'Other', startingBalance: 200, currentBalance: 100,
+    minimumPayment: 100, interestRate: 0, nextPaymentDue: '2026-12-07',
+    paymentHistory: [{ id: '8:1', transactionId: 7, date: original.date, total: 100, principal: 100, interest: 0, fees: 0 }]
+  }])
+  return readAccountData()
+}
+
+test('duplicate populates editable fields without saving, and cancel leaves the original unchanged', async () => {
+  const before = seedDuplicateTransaction({ category: 'Retired category' })
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(container.querySelector('[data-transaction-id="7"]'))
+  await click(button(container, 'Duplicate'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const field = label => dialog.querySelector(`[aria-label="${label}"]`)
+  assert.equal(dialog.querySelector('h2').textContent, 'Duplicate Transaction')
+  assert.equal(field('Payee or description').value, 'Original payment')
+  assert.equal(field('Amount').value, '100')
+  assert.equal(field('Transaction type').value, 'expense')
+  assert.equal(field('Transaction category').value, 'Retired category')
+  assert.equal(field('Transaction account').value, '1')
+  assert.equal(field('Transaction notes').value, 'Keep this note')
+  assert.equal(field('Transaction date').value, localDate())
+  assert.equal(dialog.querySelector('button[type="submit"]').textContent, 'Add Transaction')
+  assert.equal(dialog.querySelector('[aria-label="Delete Transaction"]'), null)
+  assert.deepEqual(readAccountData(), before)
+
+  await changeValue(field('Payee or description'), 'Different payee')
+  await changeValue(field('Amount'), '42')
+  await changeValue(field('Transaction type'), 'income')
+  await changeValue(field('Transaction category'), JSON.stringify(['income', 'Paycheck']))
+  await changeValue(field('Transaction notes'), 'Different note')
+  await changeValue(field('Transaction account'), '2')
+  await changeValue(field('Transaction date'), '2026-11-08')
+  assert.deepEqual(readAccountData(), before)
+  await click(button(dialog, 'Cancel'))
+  assert.equal(container.querySelector('[role="dialog"]'), null)
+  assert.deepEqual(readAccountData(), before)
+  await click(button(container, 'Add transaction'))
+  assert.equal(container.querySelector('[role="dialog"] h2').textContent, 'Add Transaction')
+  assert.equal(container.querySelector('[aria-label="Payee or description"]').value, '')
+  assert.equal(container.querySelector('[aria-label="Transaction notes"]'), null)
+})
+
+test('saving a duplicate creates an uncleared independent ID, recalculates balances, sorts, and survives backup', async () => {
+  const before = seedDuplicateTransaction()
+  const billBefore = browser.localStorage.getItem('money-honey-bills')
+  const debtBefore = browser.localStorage.getItem('money-honey-debts')
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(container.querySelector('[data-transaction-id="7"]'))
+  await click(button(container, 'Duplicate'))
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '40')
+  await changeValue(dialog.querySelector('[aria-label="Transaction date"]'), '2026-11-08')
+  await submit(dialog.querySelector('form'))
+  const data = readAccountData()
+  const duplicate = data.transactions.find(item => !before.transactions.some(original => original.id === item.id))
+  assert.equal(data.transactions.length, before.transactions.length + 1)
+  assert.ok(duplicate)
+  assert.deepEqual(duplicate, {
+    id: 10, sequence: 13, accountId: 1, name: 'Original payment', amount: -40,
+    date: '2026-11-08', cleared: false, category: 'Groceries', categoryType: 'expense',
+    notes: 'Keep this note'
+  })
+  assert.deepEqual(data.transactions.filter(item => item.id !== duplicate.id), before.transactions)
+  assert.equal(browser.localStorage.getItem('money-honey-bills'), billBefore)
+  assert.equal(browser.localStorage.getItem('money-honey-debts'), debtBefore)
+  assert.equal(container.querySelector('[role="dialog"]'), null)
+  assert.equal(container.querySelector('.page-header h1').textContent, 'Checking')
+  assert.deepEqual([...container.querySelectorAll('.account-summary-value')].map(item => item.textContent), [
+    '$950.00', '$910.00', '$40.00'
+  ])
+  const rowIds = () => [...container.querySelectorAll('.account-transaction-row')].map(row => Number(row.dataset.transactionId))
+  const runningBalances = () => [...container.querySelectorAll('.account-transaction-running')].map(item => item.textContent)
+  assert.deepEqual(rowIds(), [8, duplicate.id, 7])
+  assert.deepEqual(runningBalances(), ['$910.00', '$860.00', '$900.00'])
+  assert.ok(container.querySelector(`[data-transaction-id="${duplicate.id}"]`).classList.contains('account-transaction-row-uncleared'))
+  await changeValue(container.querySelector('[aria-label="Transaction sorting order"]'), 'asc')
+  assert.deepEqual(rowIds(), [7, duplicate.id, 8])
+  assert.deepEqual(runningBalances(), ['$900.00', '$860.00', '$910.00'])
+  const restored = parseBackup(JSON.stringify(createBackupSnapshot(browser.localStorage)), browser.localStorage).backup
+  assert.deepEqual(JSON.parse(restored.data['money-honey-account-data']), data)
+})
+
+test('an income refund duplicate preserves category type and can change all fields and destination from a report edit', async () => {
+  const before = seedDuplicateTransaction({ amount: 100 })
+  let editFinished = 0
+  const container = await render(() => React.createElement(Accounts, {
+    editRequest: { transactionId: 7, accountId: 1 },
+    onEditFinished: () => { editFinished++ }
+  }))
+  await click(button(container, 'Duplicate'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const field = label => dialog.querySelector(`[aria-label="${label}"]`)
+  assert.equal(field('Transaction type').value, 'income')
+  assert.equal(field('Transaction category').value, JSON.stringify(['expense', 'Groceries']))
+  await changeValue(field('Transaction type'), 'expense')
+  await changeValue(field('Transaction category'), 'Shopping')
+  await changeValue(field('Payee or description'), 'New purchase')
+  await changeValue(field('Amount'), '30')
+  await changeValue(field('Transaction account'), '2')
+  await changeValue(field('Transaction notes'), 'New note')
+  await changeValue(field('Transaction date'), '2026-11-08')
+  await submit(dialog.querySelector('form'))
+  const data = readAccountData()
+  const duplicate = data.transactions.find(item => item.id === 10)
+  assert.deepEqual(duplicate, {
+    id: 10, sequence: 13, accountId: 2, name: 'New purchase', amount: -30,
+    date: '2026-11-08', cleared: false, category: 'Shopping', categoryType: 'expense', notes: 'New note'
+  })
+  assert.deepEqual(data.transactions.filter(item => item.id !== duplicate.id), before.transactions)
+  assert.equal(editFinished, 0)
+  assert.equal(container.querySelector('.page-header h1').textContent, 'Savings')
+  assert.deepEqual([...container.querySelectorAll('.account-summary-value')].map(item => item.textContent), [
+    '$210.00', '$180.00', '$30.00'
+  ])
+  assert.deepEqual([...container.querySelectorAll('.account-transaction-row')].map(row => Number(row.dataset.transactionId)), [9, 10])
+  assert.deepEqual([...container.querySelectorAll('.account-transaction-running')].map(item => item.textContent), ['$180.00', '$170.00'])
+})
+
 test('ordinary transaction deletion requires confirmation, persists, and recalculates account balances', async () => {
   browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
     version: 1,
