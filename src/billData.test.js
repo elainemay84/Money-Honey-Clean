@@ -346,13 +346,15 @@ test('payday summary counts each recurring occurrence once and enforces Total Du
     clearedCount: summary.clearedCount,
     totalCount: summary.totalCount
   }, {
-    totalDue: 94.7,
+    totalDue: 257.05,
     cleared: 32.35,
-    remaining: 62.35,
+    remaining: 224.7,
     clearedCount: 2,
-    totalCount: 4
+    totalCount: 8
   })
-  assert.equal(summary.totalDue, 94.7)
+  assert.equal(summary.totalDue, 257.05)
+  assert.deepEqual(summary.occurrences.filter(item => item.dueDate < period.startDate)
+    .map(item => item.dueDate), ['2026-01-15', '2026-02-15', '2026-03-15', '2026-04-03'])
 })
 
 test('payday summary separates paid, cleared, unpaid, and skipped occurrences', () => {
@@ -401,10 +403,13 @@ test('payday summary separates paid, cleared, unpaid, and skipped occurrences', 
     totalDue: 105,
     paid: 80,
     cleared: 0,
-    remaining: 25,
+    remaining: 105,
     totalCount: 2,
     skippedCount: 1
   })
+  assert.equal(summary.pending, 80)
+  assert.equal(summary.unpaid, 25)
+  assert.equal(summary.totalDue, summary.cleared + summary.remaining)
 })
 
 test('pay schedule persists and an unconfigured schedule remains unset', () => {

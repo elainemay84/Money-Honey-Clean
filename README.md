@@ -19,6 +19,53 @@ If you are developing a production application, we recommend using TypeScript wi
 
 Run `npm test`, `npm run lint`, and `npm run build` to validate the application.
 
+## Home financial calculations
+
+Available Funds is the signed sum of opening balances plus cleared **and uncleared**
+register transactions dated through today, respecting each account's opening date.
+All active Checking, Savings, Cash and Other accounts (including negative balances)
+are included. Investment accounts, credit limits, credit-card balances, archived accounts, and future
+register entries are not available cash. Registers themselves still show their
+full dated running balances, including future entries.
+
+The forecast runs from today **through payday, inclusive**. Payday settings take
+precedence; otherwise the next active cash-account income occurrence supplies the
+cutoff. Settings supply dates, never an invented paycheck amount.
+
+`Projected Remaining Funds = Available Funds + Upcoming Income - Upcoming Expenses`
+
+Upcoming Income includes positive register entries after today through the cutoff,
+plus scheduled income not represented by a linked transaction or recorded receipt.
+A linked receipt uses its actual transaction date, not its original scheduled date.
+Upcoming Expenses includes negative register entries after today through the cutoff
+plus scheduled obligations not already reflected in those entries or Available
+Funds. Explicit transaction links/history IDs, not matching names, reconcile
+payments. A partial linked payment reserves only the unpaid difference. Future
+register entries beyond payday are excluded. Obligations already due, including
+overdue obligations before today, stay reserved until paid. Unassigned schedules
+are included conservatively in the aggregate forecast; schedules assigned to
+excluded accounts are not cash flows. Savings does not automatically transfer
+money to cover an individual checking-account shortfall.
+
+Debt schedules reuse their linked bill, or a read-only projection of the existing
+debt schedule when no bill has been saved yet. They are never added as both a debt
+expense and a bill expense. No dashboard calculation writes financial records.
+
+Bills Before Payday includes all non-skipped obligations due today through payday,
+plus older obligations not fully cleared, across all scheduled accounts.
+`Total Due = Cleared + Remaining`, and `Remaining = Paid but Uncleared + Unpaid`.
+Cleared uses fully matching, cleared linked payments; only fully
+cleared occurrences advance the count/progress bar. Mismatched amounts, accounts,
+or payees retain the existing review-required status, but the forecast still
+counts their actual cash movement only once. Pending payments remain in
+Remaining but are not deducted from forecast cash twice. Legacy paid flags without
+a linked account entry do not prove a cash deduction or clearance, so the amount
+remains reserved; no replacement transaction is invented. All summaries use cents.
+
+Account, bill/income, debt, and payday-setting save events update Home immediately.
+Storage events update other tabs; foregrounding and the local date rollover update
+the forecast day. Stored records and JSON backup formats are unchanged.
+
 ## Accounts overview
 
 Account cards use two compact lines: name and type on the left, balance and

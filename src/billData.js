@@ -510,7 +510,7 @@ export function getPaySchedulePeriod(schedule, today = formatLocalDate(new Date(
 
 export function getPaydayBillSummary(bills, period, transactions = []) {
   if (!period) return null
-  const occurrences = getBillOccurrencesInRange(bills, period.startDate, period.endDate, transactions)
+  const occurrences = getOutstandingBillOccurrences(bills, period.startDate, period.endDate, transactions)
   const summary = occurrences.reduce((totals, bill) => {
     if (bill.skipped) {
       totals.skippedCount += 1
@@ -519,13 +519,13 @@ export function getPaydayBillSummary(bills, period, transactions = []) {
 
     totals.totalCount += 1
     const cents = Math.round(bill.amount * 100)
-    const paid = isBillOccurrencePaid(bill)
-    if (paid) totals.paidCents += cents
+    if (isBillOccurrencePaid(bill)) totals.paidCents += cents
     if (isBillOccurrenceCleared(bill)) {
       totals.clearedCents += cents
       totals.clearedCount += 1
+    } else {
+      totals.remainingCents += cents
     }
-    if (!paid) totals.remainingCents += cents
     return totals
   }, {
     paidCents: 0,
@@ -540,15 +540,31 @@ export function getPaydayBillSummary(bills, period, transactions = []) {
   const cleared = summary.clearedCents / 100
   const remaining = summary.remainingCents / 100
   return {
-    totalDue: paid + remaining,
+    totalDue: (summary.clearedCents + summary.remainingCents) / 100,
     paid,
     cleared,
     remaining,
+    pending: (summary.paidCents - summary.clearedCents) / 100,
+    unpaid: (summary.clearedCents + summary.remainingCents - summary.paidCents) / 100,
     clearedCount: summary.clearedCount,
     totalCount: summary.totalCount,
     skippedCount: summary.skippedCount,
     occurrences
   }
+}
+
+export function getOutstandingBillOccurrences(bills, startDate, endDate, transactions = []) {
+  const dates = bills.filter(bill => !bill.archived && bill.active !== false).flatMap(bill => [
+    bill.dueDate,
+    ...(bill.occurrenceOverrides ?? []).flatMap(item => [item.scheduledDate, item.dueDate]),
+    ...(bill.paymentHistory ?? []).map(item => item.dueDate),
+    ...transactions.map(transaction => getLinkedScheduledDate(transaction, bill, false))
+  ]).filter(date => date && date < startDate)
+  const earliest = dates.reduce((first, date) => date < first ? date : first, startDate)
+  return getBillOccurrencesInRange(bills, earliest, endDate, transactions).filter(occurrence =>
+    occurrence.dueDate >= startDate
+    || (!occurrence.skipped && !isBillOccurrenceCleared(occurrence))
+  )
 }
 
 export function loadPaySchedule(storage = localStorage) {
@@ -580,6 +596,9 @@ export function savePaySchedule(schedule, storage = localStorage) {
     version: PAY_SCHEDULE_STORAGE_VERSION,
     schedule
   }))
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('money-honey-pay-schedule-updated'))
+  }
 }
 
 export function updateBillPayment(bill, dueDate, cleared, changedAt = new Date().toISOString()) {
