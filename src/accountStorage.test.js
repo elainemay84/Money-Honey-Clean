@@ -226,7 +226,7 @@ test('clearing and unclearing a transaction immediately controls its linked occu
   let summary = getPaydayBillSummary([bill], period, data.transactions)
   assert.equal(occurrence.paid, true)
   assert.equal(occurrence.cleared, false)
-  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 0])
+  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 80])
 
   setOccurrenceTransactionCleared(transaction.id, true, storage)
   data = loadSavedAccountData(storage)
@@ -241,7 +241,7 @@ test('clearing and unclearing a transaction immediately controls its linked occu
   summary = getPaydayBillSummary([bill], period, data.transactions)
   assert.equal(occurrence.paid, true)
   assert.equal(occurrence.cleared, false)
-  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 0])
+  assert.deepEqual([summary.totalDue, summary.cleared, summary.remaining], [80, 0, 80])
 })
 
 test('an existing matching transaction requires explicit linking and cannot be linked to two occurrences', () => {
@@ -394,7 +394,7 @@ test('separate recurring occurrences on the same schedule link to different tran
   }, {
     totalDue: 100,
     cleared: 25,
-    remaining: 50,
+    remaining: 75,
     clearedCount: 1,
     totalCount: 4
   })

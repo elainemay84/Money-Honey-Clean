@@ -19,14 +19,13 @@ import {
   createDemoBills,
   getTodayDate,
   getPaydayBillSummary,
-  getPaySchedulePeriod,
   loadBills,
   loadIncomeSchedules,
   loadPaySchedule,
   savePaySchedule
 } from './billData.js'
 import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
-import { calculateOverallDebtSummary, loadDebts } from './debtData.js'
+import { calculateOverallDebtSummary, getDebtForecastBills, loadDebts } from './debtData.js'
 import { calculatePaycheckForecast } from './paycheckForecast.js'
 import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budgetData.js'
 import { getHistoricalCategories, getReportingTransactions, loadCategoryConfig } from './categoryData.js'
@@ -53,7 +52,7 @@ const formatForecastDate = date => new Date(`${date}T00:00:00Z`).toLocaleDateStr
 })
 
 function App() {
-  const [today] = useState(getTodayDate)
+  const [today, setToday] = useState(getTodayDate)
   const [bills, setBills] = useState(() => loadBills(createDemoBills()))
   const [incomeSchedules, setIncomeSchedules] = useState(() => loadIncomeSchedules())
   const [paySchedule, setPaySchedule] = useState(() => loadPaySchedule())
@@ -94,21 +93,22 @@ function App() {
     : activeTheme.colors.background
   const themeStatusColor = themeStyle.statusBar ?? themeColor
   const isDarkTheme = previewTextColor(themeColor) === '#fffaf2'
-  const paydayPeriod = getPaySchedulePeriod(paySchedule, today)
   const transactions = accountData?.transactions ?? []
+  const forecastBills = getDebtForecastBills(bills, debts)
   const paycheckForecast = calculatePaycheckForecast({
     accounts: accountData?.accounts ?? [],
     transactions,
-    bills,
+    bills: forecastBills,
     incomes: incomeSchedules,
+    paySchedule,
     today
   })
-  const hasPaycheckForecast = paycheckForecast.hasIncomeSchedule && paycheckForecast.nextPayday
+  const hasPaycheckForecast = Boolean(paycheckForecast.nextPayday)
   const paydaySummary = getPaydayBillSummary(
-    bills,
+    forecastBills,
     hasPaycheckForecast
       ? { startDate: paycheckForecast.startDate, endDate: paycheckForecast.endDate }
-      : paydayPeriod,
+      : null,
     transactions
   )
   const activeDebts = debts.filter(debt => !debt.archived)
@@ -130,8 +130,9 @@ function App() {
   const rollingCashFlowForecast = calculatePaycheckForecast({
     accounts: accountData?.accounts ?? [],
     transactions,
-    bills,
+    bills: forecastBills,
     incomes: incomeSchedules,
+    paySchedule,
     today,
     forecastEndDate: rollingForecastEnd.toISOString().slice(0, 10)
   })
@@ -165,12 +166,27 @@ function App() {
     const refreshData = () => {
       setBills(loadBills(createDemoBills()))
       setIncomeSchedules(loadIncomeSchedules())
+      setPaySchedule(loadPaySchedule())
     }
     window.addEventListener('money-honey-bills-updated', refreshData)
+    window.addEventListener('money-honey-pay-schedule-updated', refreshData)
     window.addEventListener('storage', refreshData)
     return () => {
       window.removeEventListener('money-honey-bills-updated', refreshData)
+      window.removeEventListener('money-honey-pay-schedule-updated', refreshData)
       window.removeEventListener('storage', refreshData)
+    }
+  }, [])
+
+  useEffect(() => {
+    const refreshToday = () => setToday(getTodayDate())
+    window.addEventListener('focus', refreshToday)
+    document.addEventListener('visibilitychange', refreshToday)
+    const timer = window.setInterval(refreshToday, 60_000)
+    return () => {
+      window.removeEventListener('focus', refreshToday)
+      document.removeEventListener('visibilitychange', refreshToday)
+      window.clearInterval(timer)
     }
   }, [])
 
@@ -370,7 +386,7 @@ function App() {
                 {[
                   ['Available Funds', money(paycheckForecast.availableFunds)],
                   ['Upcoming Income', money(paycheckForecast.upcomingIncome)],
-                  ['Scheduled Bills', money(paycheckForecast.scheduledBills)],
+                  ['Upcoming Expenses', money(paycheckForecast.scheduledBills)],
                   ['Projected Remaining Funds', money(paycheckForecast.projectedRemainingFunds)]
                 ].map(([label, value]) => (
                   <div key={label} style={{
@@ -384,6 +400,12 @@ function App() {
                     <strong style={{ color: '#493320', whiteSpace: 'nowrap' }}>{value}</strong>
                   </div>
                 ))}
+                <p style={{ margin: 0, fontSize: 11 }}>
+                  Available includes cleared and uncleared entries through today in all active
+                  checking, savings, cash and other cash accounts, including negative balances.
+                  Forecast includes payday; expenses include registered payments and unpaid bills
+                  (including overdue bills), counted once.
+                </p>
               </div>
             ) : (
               <p style={{ margin: '9px 0 0' }}>Set up income to see your forecast</p>
@@ -515,6 +537,11 @@ function App() {
               </div>
               <p style={{ margin: '6px 0 0', color: '#79502A', fontSize: 11 }}>
                 {paydaySummary.clearedCount} of {paydaySummary.totalCount} bills cleared
+              </p>
+              <p style={{ margin: '6px 0 0', color: '#79502A', fontSize: 11 }}>
+                Remaining: {money(paydaySummary.pending)} paid but uncleared
+                {' · '}{money(paydaySummary.unpaid)} unpaid. All scheduled accounts;
+                includes overdue bills and payday.
               </p>
               {hasPaycheckForecast && paycheckForecast.nextPaydayIncome > 0 && (
                 <div style={{

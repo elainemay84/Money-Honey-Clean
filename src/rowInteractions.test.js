@@ -9,7 +9,8 @@ import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines }
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { createPayInFourSchedule, createPaymentPlan, createRecurringSchedule, getDebtInstallmentProgress, getInstallmentStatus, scheduleFromForm } from './debtSchedule.js'
 import { createBackupSnapshot, parseBackup } from './backupData.js'
-import { getBillOccurrencesInRange } from './billData.js'
+import { getBillOccurrencesInRange, getIncomeOccurrencesInRange, saveBillData, savePaySchedule } from './billData.js'
+import { createOccurrenceTransaction, saveAccountData, setOccurrenceTransactionCleared, updateOccurrenceTransaction } from './accountStorage.js'
 import { getSpendingByCategory } from './reportData.js'
 import { getBudgetSpendingByCategory } from './budgetData.js'
 import { EXPENSE_CATEGORIES } from './categoryData.js'
@@ -1552,6 +1553,100 @@ afterEach(async () => {
 after(async () => {
   await vite.close()
   browser.happyDOM.abort()
+})
+
+test('Home reconciles live account, clearing, payment, date, income, debt and payday changes without reload', async () => {
+  const today = localDate()
+  const payday = shiftDate(today, 2)
+  const accounts = [
+    { id: 1, name: 'Checking', type: 'Checking', openingBalance: 100, openingDate: today },
+    { id: 2, name: 'Savings', type: 'Savings', openingBalance: 50, openingDate: today }
+  ]
+  const expenses = [{ id: 1, accountId: 1, amount: -400, date: today, cleared: false }]
+  const bills = [{
+    id: 1, name: 'Utility', amount: 80, dueDate: today, accountId: 1,
+    frequency: 'one-time', paymentHistory: []
+  }]
+  const incomes = [{
+    id: 1, name: 'Paycheck', amount: 200, dueDate: payday, accountId: 1,
+    frequency: 'weekly', paymentHistory: []
+  }]
+  saveAccountData(accounts, expenses)
+  saveBillData({ bills, incomes })
+  savePaySchedule({ frequency: 'weekly', nextPayday: payday })
+  const financialDataBefore = browser.localStorage.getItem('money-honey-account-data')
+  const container = await render(App)
+  const forecast = [...container.querySelectorAll('section')].find(item =>
+    item.textContent.includes('LEFT UNTIL PAYDAY')
+  )
+  const summary = [...container.querySelectorAll('section')].find(item =>
+    item.textContent.includes('Bills Before Payday')
+  )
+  const amountFor = label => [...forecast.querySelectorAll('strong')].find(item =>
+    item.parentElement.querySelector('span')?.textContent === label
+  )?.textContent
+  const projected = () => amountFor('Projected Remaining Funds')
+  assert.equal(amountFor('Available Funds'), '-$250.00')
+  assert.equal(amountFor('Upcoming Income'), '$200.00')
+  assert.equal(amountFor('Upcoming Expenses'), '$80.00')
+  assert.equal(projected(), '-$130.00')
+  assert.equal(browser.localStorage.getItem('money-honey-account-data'), financialDataBefore)
+  assert.match(summary.textContent, /\$0.00 paid but uncleared.*\$80.00 unpaid/)
+
+  await act(async () => saveAccountData(accounts, [
+    ...expenses, { id: 2, accountId: 1, amount: -20, date: today, cleared: false }
+  ]))
+  assert.equal(projected(), '-$150.00')
+  await act(async () => setOccurrenceTransactionCleared(2, true))
+  assert.equal(projected(), '-$150.00')
+  await act(async () => setOccurrenceTransactionCleared(2, false))
+  assert.equal(projected(), '-$150.00')
+
+  let billPayment
+  await act(async () => {
+    const [occurrence] = getBillOccurrencesInRange(bills, today, payday, readAccountData().transactions)
+    billPayment = createOccurrenceTransaction('out', occurrence, today).transaction
+  })
+  assert.equal(amountFor('Available Funds'), '-$350.00')
+  assert.equal(amountFor('Upcoming Expenses'), '$0.00')
+  assert.equal(projected(), '-$150.00')
+  assert.match(summary.textContent, /\$80.00 paid but uncleared.*\$0.00 unpaid/)
+  assert.match(summary.textContent, /0 of 1 bills cleared/)
+
+  await act(async () => setOccurrenceTransactionCleared(billPayment.id, true))
+  assert.match(summary.textContent, /1 of 1 bills cleared/)
+  assert.equal(projected(), '-$150.00')
+  await act(async () => setOccurrenceTransactionCleared(billPayment.id, false))
+  assert.match(summary.textContent, /0 of 1 bills cleared/)
+  await act(async () => updateOccurrenceTransaction(billPayment.id, { date: shiftDate(today, 1) }))
+  assert.equal(amountFor('Available Funds'), '-$270.00')
+  assert.equal(amountFor('Upcoming Expenses'), '$80.00')
+  assert.equal(projected(), '-$150.00')
+
+  await act(async () => {
+    const [occurrence] = getIncomeOccurrencesInRange(incomes, today, payday, readAccountData().transactions)
+    createOccurrenceTransaction('in', occurrence, today)
+  })
+  assert.equal(amountFor('Available Funds'), '-$70.00')
+  assert.equal(amountFor('Upcoming Income'), '$0.00')
+  assert.equal(projected(), '-$150.00')
+
+  await act(async () => saveDebts([{
+    id: 7, name: 'Plan', type: 'Other', startingBalance: 30, currentBalance: 30,
+    minimumPayment: 30, interestRate: 0, accountId: 1, paymentHistory: [],
+    paymentSchedule: createPaymentPlan([{ dueDate: today, amount: 30 }])
+  }]))
+  assert.equal(projected(), '-$180.00')
+  await act(async () => createDebtPayment(7, '7:1', {
+    total: 30, principal: 30, interest: 0, fees: 0, date: today, accountId: 1
+  }))
+  assert.equal(projected(), '-$180.00')
+  assert.equal(amountFor('Available Funds'), '-$100.00')
+  assert.equal(amountFor('Upcoming Expenses'), '$80.00')
+
+  await act(async () => savePaySchedule({ frequency: 'weekly', nextPayday: today }))
+  assert.match(forecast.textContent, new RegExp(displayDate(today)))
+  assert.equal(amountFor('Upcoming Expenses'), '$80.00')
 })
 
 test('bill row opens editing directly; Pay records once and Paid requires confirmation to undo', async () => {

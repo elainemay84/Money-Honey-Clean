@@ -625,6 +625,69 @@ function updateDebtSchedule(bill, debt, managed) {
   }
 }
 
+export function getDebtForecastBills(bills, debts) {
+  let result = [...bills]
+  for (const debt of debts) {
+    if (debt.archived || !debtHasPaymentSchedule(debt)) continue
+    const linked = result.find(bill =>
+      bill.id === debt.billId && (bill.debtId == null || bill.debtId === debt.id)
+    ) ?? result.find(bill => bill.debtId === debt.id) ?? getMatchingDebtBill(result, debt)
+    const source = linked ?? {
+      id: debt.billId != null && !result.some(bill => bill.id === debt.billId)
+        ? debt.billId : `debt-${debt.id}`,
+      name: debt.name,
+      amount: debt.minimumPayment,
+      dueDate: debt.nextPaymentDue,
+      accountId: debt.accountId ?? null,
+      paymentHistory: [],
+      occurrenceOverrides: []
+    }
+    const paymentHistory = [
+      ...(source.paymentHistory ?? []),
+      ...(debt.paymentHistory ?? []).filter(payment =>
+        !payment.reversedAt && payment.scheduledDueDate && payment.transactionId != null
+      ).map(payment => ({
+        dueDate: payment.scheduledDueDate,
+        transactionId: payment.transactionId
+      }))
+    ]
+    const historicalOverrides = (debt.paymentHistory ?? []).filter(payment =>
+      !payment.reversedAt && payment.scheduledDueDate && payment.transactionId != null
+      && !source.occurrenceOverrides?.some(item => item.scheduledDate === payment.scheduledDueDate)
+    ).map(payment => ({
+      scheduledDate: payment.scheduledDueDate,
+      dueDate: debt.paymentSchedule?.installments?.find(row =>
+        row.scheduledDate === payment.scheduledDueDate
+      )?.dueDate ?? payment.scheduledDueDate,
+      name: debt.name,
+      amount: payment.total,
+      installmentNumber: payment.installmentNumber
+    }))
+    const pendingOverrides = debt.paymentSchedule?.kind === 'payment-plan'
+      ? debt.paymentSchedule.installments.filter(row =>
+        !row.paid && row.status === 'pending'
+      ).map(row => ({
+        ...row,
+        ...source.occurrenceOverrides?.find(item => item.scheduledDate === row.scheduledDate)
+      })) : []
+    const projected = updateDebtSchedule({
+      ...source,
+      paymentHistory,
+      occurrenceOverrides: [...(source.occurrenceOverrides ?? []), ...historicalOverrides]
+    }, debt, Boolean(source.debtManaged))
+    projected.occurrenceOverrides = [
+      ...projected.occurrenceOverrides,
+      ...pendingOverrides.filter(row =>
+        !projected.occurrenceOverrides.some(item => item.scheduledDate === row.scheduledDate)
+      )
+    ]
+    result = linked
+      ? result.map(bill => bill === linked ? projected : bill)
+      : [...result, projected]
+  }
+  return result
+}
+
 export function synchronizeDebtBills(storage = localStorage, choices = {}) {
   const data = loadBillData([], storage)
   let bills = data.bills
