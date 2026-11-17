@@ -80,6 +80,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const [payees] = useState(() => loadPayees())
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(Boolean(startEdit))
   const [editingTransactionId, setEditingTransactionId] = useState(startEdit ? startEdit.transaction.id : null)
+  const [isDuplicating, setIsDuplicating] = useState(false)
+  const [duplicateAccountId, setDuplicateAccountId] = useState(null)
+  const [duplicateNotes, setDuplicateNotes] = useState('')
   const [deleteConfirmation, setDeleteConfirmation] = useState(null)
   const [openingDrafts, setOpeningDrafts] = useState({})
   const [inputError, setInputError] = useState('')
@@ -228,11 +231,17 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     updateTransactions(current => moveTransactionToDate(current, id, date, sequence))
   }
 
-  function openEditTransaction(transaction) {
-    setEditingTransactionId(transaction.id)
+  function openEditTransaction(transaction, duplicate = false) {
+    setEditingTransactionId(duplicate ? null : transaction.id)
+    setIsDuplicating(duplicate)
+    setDuplicateAccountId(transaction.accountId)
+    setDuplicateNotes(transaction.notes ?? '')
+    if (duplicate) openedFromRequest.current = false
+    setInputError('')
+    setDeleteConfirmation(null)
     setNewName(transaction.name)
     setNewAmount(String(Math.abs(transaction.amount)))
-    setNewDate(transaction.date)
+    setNewDate(duplicate ? new Date().toLocaleDateString('en-CA') : transaction.date)
     setKind(transaction.amount < 0 ? 'expense' : 'income')
     setCategory(transaction.category ?? '')
     setCategoryType(getTransactionCategoryType(transaction, categoryConfig))
@@ -337,6 +346,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     try {
       amount = parseFinancialAmount(newAmount, 'Transaction amount', { signed: true })
       if (!newName.trim() || !newDate || amount === 0) throw new Error('Enter a name, date, and nonzero transaction amount.')
+      if (isDuplicating && !accounts.some(item => item.id === duplicateAccountId)) {
+        throw new Error('Choose an account for the duplicate transaction.')
+      }
     } catch (error) { setInputError(error.message); return }
     setInputError('')
 
@@ -364,19 +376,22 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
       updateTransactions(current => [...current, {
         id: nextTransactionId.current++,
         sequence: nextTransactionSequence.current++,
-        accountId: selectedAccount,
+        accountId: isDuplicating ? duplicateAccountId : selectedAccount,
         name: newName.trim(),
         amount: normalizeTransactionAmount(amount, kind),
         date: newDate,
-        cleared: account.defaultCleared,
+        cleared: isDuplicating ? false : account.defaultCleared,
         category: categoryWasChosen ? category : (category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out', categoryConfig)),
-        categoryType
+        categoryType,
+        ...(isDuplicating && duplicateNotes ? { notes: duplicateNotes } : {})
       }])
+      if (isDuplicating) setSelectedAccount(duplicateAccountId)
     }
 
     setNewName('')
     setNewAmount('')
     setEditingTransactionId(null)
+    setIsDuplicating(false)
     setIsAddTransactionOpen(false)
   }
 
@@ -952,6 +967,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
         title="Add Transaction"
         onClick={() => {
           setEditingTransactionId(null)
+          setIsDuplicating(false)
+          setInputError('')
           setDeleteConfirmation(null)
           setNewName('')
           setNewAmount('')
@@ -993,6 +1010,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               boxSizing: 'border-box',
               width: '100%',
               maxWidth: 460,
+              maxHeight: '85dvh',
+              overflowY: 'auto',
               padding: 20,
               borderRadius: '20px 20px 16px 16px',
               background: '#FFF8ED',
@@ -1006,7 +1025,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               marginBottom: 14
             }}>
               <h2 id="add-transaction-title" style={{ margin: 0, color: '#79502A' }}>
-                {editingTransactionId === null ? 'Add Transaction' : 'Edit Transaction'}
+                {isDuplicating ? 'Duplicate Transaction' : editingTransactionId === null ? 'Add Transaction' : 'Edit Transaction'}
               </h2>
               <button
                 type="button"
@@ -1028,6 +1047,21 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             </div>
             <form onSubmit={addTransaction} style={{ display: 'grid', gap: 10 }}>
               {inputError && <p role="alert">{inputError}</p>}
+              {isDuplicating && (
+                <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 12 }}>
+                  Account
+                  <select
+                    aria-label="Transaction account"
+                    value={duplicateAccountId}
+                    onChange={event => setDuplicateAccountId(accounts.find(item => String(item.id) === event.target.value)?.id ?? null)}
+                    style={field}
+                  >
+                    {accounts.filter(item => !item.archived || item.id === selectedAccount).map(item => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <select
                 aria-label="Transaction type"
                 value={kind}
@@ -1102,7 +1136,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   style={field}
                 >
                   <option value="">Uncategorized</option>
-                  {editingTransactionId !== null && category !== ''
+                  {(editingTransactionId !== null || isDuplicating) && category !== ''
                     && !(kind === 'income' && categoryType === 'expense' ? refundOptions : categoryOptions).includes(category) && (
                     <option value={kind === 'income' ? JSON.stringify([categoryType, category]) : category}>{category} (not an active category)</option>
                   )}
@@ -1120,6 +1154,15 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   ))}
                 </select>
               </label>
+              {isDuplicating && (
+                <input
+                  aria-label="Transaction notes"
+                  placeholder="Optional notes"
+                  value={duplicateNotes}
+                  onChange={event => setDuplicateNotes(event.target.value)}
+                  style={field}
+                />
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
                 <button
                   type="button"
@@ -1152,23 +1195,39 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 </button>
               </div>
               {editingTransactionId !== null && (
-                <button
-                  type="button"
-                  aria-label="Delete Transaction"
-                  onClick={openDeleteConfirmation}
-                  style={{
-                    justifySelf: 'start',
-                    border: 'none',
-                    padding: '4px 2px',
-                    background: 'transparent',
-                    color: '#9B463E',
-                    fontSize: 11,
-                    fontWeight: 'bold',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Delete Transaction
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const transaction = transactions.find(item => item.id === editingTransactionId)
+                      if (!transaction) {
+                        setInputError('The original transaction is no longer available.')
+                        return
+                      }
+                      openEditTransaction(transaction, true)
+                    }}
+                    style={{ ...field, background: '#FFFFFF', color: '#79502A', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete Transaction"
+                    onClick={openDeleteConfirmation}
+                    style={{
+                      justifySelf: 'start',
+                      border: 'none',
+                      padding: '4px 2px',
+                      background: 'transparent',
+                      color: '#9B463E',
+                      fontSize: 11,
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Delete Transaction
+                  </button>
+                </div>
               )}
             </form>
           </section>

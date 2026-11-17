@@ -82,6 +82,13 @@ dates show a compact date and calendar icon over a transparent, zoom-safe native
 date input; tapping or focusing it still uses the native date picker. Register
 line spacing stays compact independently of theme paragraph spacing.
 
+Edit Transaction's Duplicate action opens an unsaved copy in the Add Transaction
+form. Review or change its payee, amount, type, category, account, notes, and date
+(today by default), then choose Add Transaction or Cancel. Saving creates a new,
+uncleared transaction in the destination account's register; the original stays
+unchanged. Payment history, bill/debt links, attachments, and recurring references
+are not copied.
+
 ## Bills list urgency
 
 Money Out's List groups occurrences into Past Due, Due Within 30 Days (today
