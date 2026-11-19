@@ -8,7 +8,8 @@ import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePayme
 import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { createPayInFourSchedule, createPaymentPlan, createRecurringSchedule, getDebtInstallmentProgress, getInstallmentStatus, scheduleFromForm } from './debtSchedule.js'
-import { createBackupSnapshot, parseBackup } from './backupData.js'
+import { createBackupSnapshot, parseBackup, restoreBackup } from './backupData.js'
+import { loadPayees, savePayees } from './payeeData.js'
 import { getBillOccurrencesInRange, getIncomeOccurrencesInRange, saveBillData, savePaySchedule } from './billData.js'
 import { createOccurrenceTransaction, saveAccountData, setOccurrenceTransactionCleared, updateOccurrenceTransaction } from './accountStorage.js'
 import { getSpendingByCategory } from './reportData.js'
@@ -844,7 +845,7 @@ test('navigating away from Debt discards an expanded floating menu', async () =>
   await click(button(container, 'Add debt'))
   assert.ok(container.querySelector('#debt-add-actions'))
   await click(nav.children[0])
-  assert.equal(container.querySelector('.debt-fab'), null)
+  assert.equal(container.querySelector('.debt-fab:not(.home-fab)'), null)
   await click(nav.children[4])
   assert.equal(container.querySelector('#debt-add-actions'), null)
   assert.equal(button(container, 'Add debt').getAttribute('aria-expanded'), 'false')
@@ -1452,7 +1453,8 @@ test('transaction selectors sort active catalogs, retain historical edits and di
   assert.equal([...category.options].some(option => option.value === 'Groceries' || option.value === 'Other'), false)
   const names = [...category.options].slice(1).map(option => option.textContent)
   assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
-  assert.deepEqual([...container.querySelectorAll('#saved-payees option')].map(option => option.value), ['ALPHA', 'beta', 'zulu'])
+  await act(async () => container.querySelector('[aria-label="Payee or description"]').focus())
+  assert.deepEqual([...container.querySelectorAll('[role="option"]')].map(option => option.textContent), ['ALPHA', 'beta', 'zulu'])
   for (const type of ['income', 'expense']) {
     if (type === 'expense') await click(button(container, 'Add transaction'))
     await changeValue(container.querySelector('[aria-label="Transaction type"]'), 'income')
@@ -2241,6 +2243,259 @@ function seedDuplicateTransaction(overrides = {}) {
   }])
   return readAccountData()
 }
+
+test('Home floating menu toggles, dismisses, and resets on navigation without saving records', async () => {
+  const container = await render(App)
+  const keys = ['money-honey-account-data', 'money-honey-bills', 'money-honey-debts']
+  const before = keys.map(key => browser.localStorage.getItem(key))
+  const trigger = button(container, 'Open quick add menu')
+  assert.equal(container.querySelectorAll('.home-fab').length, 1)
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false')
+  await click(trigger)
+  assert.equal(trigger.getAttribute('aria-controls'), 'home-add-actions')
+  assert.deepEqual([...container.querySelectorAll('#home-add-actions button')].map(item => item.textContent.trim()), [
+    'Quick Add Transaction', 'Main Account'
+  ])
+  await click(trigger)
+  assert.equal(container.querySelector('#home-add-actions'), null)
+  await click(trigger)
+  await act(async () => container.querySelector('main').dispatchEvent(new browser.Event('pointerdown', { bubbles: true })))
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false')
+  await click(trigger)
+  await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false')
+  assert.equal(browser.document.activeElement, trigger)
+  await click(trigger)
+  await click(container.querySelector('nav').children[1])
+  await click(container.querySelector('nav').children[0])
+  assert.equal(button(container, 'Open quick add menu').getAttribute('aria-expanded'), 'false')
+  assert.deepEqual(keys.map(key => browser.localStorage.getItem(key)), before)
+})
+
+test('Home Main Account goes directly to its register, otherwise Accounts, without changing designation', async () => {
+  const before = seedDuplicateTransaction()
+  before.accounts[1].isMain = true
+  saveAccountData(before.accounts, before.transactions)
+  const container = await render(App)
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Main Account'))
+  assert.equal(container.querySelector('h1').textContent, 'Savings')
+  assert.equal(container.querySelector('.accounts-overview'), null)
+  assert.ok(container.querySelector('[data-transaction-id="9"]'))
+  assert.deepEqual(readAccountData(), before)
+  await click(container.querySelector('nav').children[0])
+  assert.equal(container.querySelector('#home-add-actions'), null)
+  await act(async () => saveAccountData(before.accounts.map(item => ({ ...item, isMain: false })), before.transactions))
+  const withoutMain = readAccountData()
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Main Account'))
+  assert.ok(container.querySelector('.accounts-overview'))
+  assert.deepEqual(readAccountData(), withoutMain)
+})
+
+test('Home Quick Add preselects Main Account, defaults to today and Uncleared, and cancels without saving', async () => {
+  const before = seedDuplicateTransaction()
+  before.accounts[1].isMain = true
+  saveAccountData(before.accounts, before.transactions)
+  const container = await render(App)
+  const keys = ['money-honey-account-data', 'money-honey-bills', 'money-honey-debts']
+  const saved = keys.map(key => browser.localStorage.getItem(key))
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Quick Add Transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  assert.equal(dialog.querySelector('h2').textContent, 'Add Transaction')
+  assert.equal(dialog.querySelector('[aria-label="Transaction account"]').value, '2')
+  assert.equal(dialog.querySelector('[aria-label="Transaction date"]').value, localDate())
+  assert.equal(dialog.querySelector('[aria-label="Transaction type"]').value, 'expense')
+  assert.equal(dialog.querySelector('[aria-label="Transaction cleared"]').checked, false)
+  assert.ok(dialog.querySelector('[aria-label="Transaction category"]'))
+  assert.equal(container.querySelector('#home-add-actions'), null)
+  await changeValue(dialog.querySelector('[aria-label="Transaction account"]'), '1')
+  await changeValue(dialog.querySelector('[aria-label="Payee or description"]'), 'Unfinished purchase')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '99')
+  await click(button(dialog, 'Cancel'))
+  assert.equal(container.querySelector('[role="dialog"]'), null)
+  assert.ok(container.querySelector('.home-fab'))
+  assert.equal(button(container, 'Open quick add menu').getAttribute('aria-expanded'), 'false')
+  assert.deepEqual(keys.map(key => browser.localStorage.getItem(key)), saved)
+})
+
+test('Home Quick Add changes destination before saving one independent transaction and refreshes Home and running balances', async () => {
+  const before = seedDuplicateTransaction()
+  before.accounts[1].isMain = true
+  saveAccountData(before.accounts, before.transactions)
+  const container = await render(App)
+  const forecastFunds = () => [...container.querySelectorAll('span')].find(item => item.textContent === 'Available Funds').nextElementSibling.textContent
+  assert.equal(forecastFunds(), '$1,160.00')
+  const linkedBefore = ['money-honey-bills', 'money-honey-debts'].map(key => browser.localStorage.getItem(key))
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Quick Add Transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('[aria-label="Transaction account"]'), '1')
+  await changeValue(dialog.querySelector('[aria-label="Transaction type"]'), 'income')
+  await changeValue(dialog.querySelector('[aria-label="Payee or description"]'), 'Quick deposit')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '25.50')
+  await changeValue(dialog.querySelector('[aria-label="Transaction category"]'), JSON.stringify(['income', 'Paycheck']))
+  await submit(dialog.querySelector('form'))
+  const data = readAccountData()
+  assert.equal(data.transactions.length, before.transactions.length + 1)
+  assert.deepEqual(data.transactions.slice(0, -1), before.transactions)
+  assert.deepEqual(data.accounts, before.accounts)
+  assert.deepEqual(data.transactions.at(-1), {
+    id: 10, sequence: 13, accountId: 1, name: 'Quick deposit', amount: 25.5,
+    date: localDate(), cleared: false, category: 'Paycheck', categoryType: 'income'
+  })
+  assert.deepEqual(['money-honey-bills', 'money-honey-debts'].map(key => browser.localStorage.getItem(key)), linkedBefore)
+  assert.ok(container.querySelector('.home-fab'))
+  assert.equal(forecastFunds(), '$1,185.50')
+  await click(container.querySelector('nav').children[1])
+  await click(container.querySelector('[data-account-id="1"]'))
+  assert.deepEqual([...container.querySelectorAll('.account-summary-value')].map(item => item.textContent), [
+    '$950.00', '$975.50', '$25.50'
+  ])
+  assert.equal(container.querySelector('[data-transaction-id="10"] .account-transaction-running').textContent, '$975.50')
+  assert.equal(container.querySelector('[data-transaction-id="10"] button').getAttribute('aria-pressed'), 'false')
+})
+
+test('Home Quick Add without a Main Account requires an account and supports an explicitly cleared expense', async () => {
+  const container = await render(App)
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Quick Add Transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const before = readAccountData()
+  assert.equal(dialog.querySelector('[aria-label="Transaction account"]').value, '')
+  await changeValue(dialog.querySelector('[aria-label="Payee or description"]'), 'Quick purchase')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '20')
+  await submit(dialog.querySelector('form'))
+  assert.match(dialog.querySelector('[role="alert"]').textContent, /Choose an account/)
+  assert.deepEqual(readAccountData(), before)
+  await changeValue(dialog.querySelector('[aria-label="Transaction account"]'), '1')
+  await click(dialog.querySelector('[aria-label="Transaction cleared"]'))
+  await submit(dialog.querySelector('form'))
+  const data = readAccountData()
+  assert.equal(data.transactions.length, 1)
+  assert.equal(data.transactions[0].amount, -20)
+  assert.equal(data.transactions[0].cleared, true)
+  assert.deepEqual(data.accounts, before.accounts)
+})
+
+test('payee autocomplete filters on focus and typing, selects without changing transaction fields, and works in Edit', async () => {
+  savePayees(['Acme', 'Alpha Shop', 'Beta Market', 'Gamma'], browser.localStorage)
+  const data = readAccountData()
+  data.accounts[0].isMain = true
+  data.transactions = [
+    { id: 1, sequence: 1, accountId: 1, name: 'Acme', amount: -45, date: localDate(), category: 'Groceries', categoryType: 'expense', cleared: true },
+    { id: 2, sequence: 2, accountId: 1, name: 'Original', amount: -15, date: localDate(), category: 'Shopping', categoryType: 'expense', cleared: false }
+  ]
+  saveAccountData(data.accounts, data.transactions)
+  const container = await render(App)
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Quick Add Transaction'))
+  let dialog = container.querySelector('[role="dialog"]')
+  let input = dialog.querySelector('[aria-label="Payee or description"]')
+  await act(async () => input.focus())
+  assert.equal(input.getAttribute('aria-expanded'), 'true')
+  assert.deepEqual([...dialog.querySelectorAll('[role="option"]')].map(item => item.textContent), ['Acme', 'Alpha Shop', 'Beta Market', 'Gamma'])
+  await changeValue(input, 'Ac')
+  assert.deepEqual([...dialog.querySelectorAll('[role="option"]')].map(item => item.textContent), ['Acme'])
+  await changeValue(dialog.querySelector('[aria-label="Transaction category"]'), 'Shopping')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '19')
+  await click(dialog.querySelector('[role="option"]'))
+  assert.equal(input.value, 'Acme')
+  assert.equal(dialog.querySelector('[aria-label="Transaction category"]').value, 'Shopping')
+  assert.equal(dialog.querySelector('[aria-label="Amount"]').value, '19')
+  assert.equal(dialog.querySelector('[aria-label="Transaction type"]').value, 'expense')
+  assert.equal(dialog.querySelector('[aria-label="Transaction account"]').value, '1')
+  assert.equal(input.getAttribute('aria-expanded'), 'false')
+  await submit(dialog.querySelector('form'))
+  assert.equal(readAccountData().transactions.at(-1).name, 'Acme')
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Main Account'))
+  await click(container.querySelector('[data-transaction-id="2"]'))
+  dialog = container.querySelector('[role="dialog"]')
+  input = dialog.querySelector('[aria-label="Payee or description"]')
+  await act(async () => input.focus())
+  await changeValue(input, 'mArK')
+  assert.deepEqual([...dialog.querySelectorAll('[role="option"]')].map(item => item.textContent), ['Beta Market'])
+  await act(async () => input.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })))
+  assert.equal(input.getAttribute('aria-activedescendant'), 'transaction-payee-option-0')
+  await act(async () => input.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })))
+  assert.equal(input.value, 'Beta Market')
+  assert.equal(input.getAttribute('aria-expanded'), 'false')
+  await act(async () => input.blur())
+  await act(async () => input.focus())
+  const option = dialog.querySelector('[role="option"]')
+  await act(async () => option.focus())
+  await click(option)
+  assert.equal(input.getAttribute('aria-expanded'), 'false')
+  assert.equal(dialog.querySelector('[aria-label="Transaction category"]').value, 'Shopping')
+  assert.equal(dialog.querySelector('[aria-label="Amount"]').value, '15')
+  await submit(dialog.querySelector('form'))
+  assert.equal(readAccountData().transactions.find(item => item.id === 2).name, 'Beta Market')
+})
+
+test('quick-saving a payee persists without saving a transaction, prevents formatting duplicates, and round-trips backup', async () => {
+  savePayees(["Joe's Market"], browser.localStorage)
+  const data = readAccountData()
+  data.accounts[0].isMain = true
+  saveAccountData(data.accounts, data.transactions)
+  const container = await render(App)
+  await click(button(container, 'Open quick add menu'))
+  await click(button(container, 'Quick Add Transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const input = dialog.querySelector('[aria-label="Payee or description"]')
+  await act(async () => input.focus())
+  await changeValue(input, ' JOES   market ')
+  assert.deepEqual([...dialog.querySelectorAll('[role="option"]')].map(item => item.textContent), ["Joe's Market"])
+  assert.equal([...dialog.querySelectorAll('button')].some(item => item.textContent === 'Save as New Payee'), false)
+  await changeValue(input, ' New Corner Shop ')
+  const before = readAccountData()
+  await click(button(dialog, 'Save as New Payee'))
+  assert.equal(input.value, 'New Corner Shop')
+  assert.ok(container.querySelector('[role="dialog"]'))
+  assert.deepEqual(readAccountData(), before)
+  assert.deepEqual(loadPayees(browser.localStorage), ["Joe's Market", 'New Corner Shop'])
+  const backup = parseBackup(JSON.stringify(createBackupSnapshot(browser.localStorage)), browser.localStorage).backup
+  savePayees(['Another'], browser.localStorage)
+  await act(async () => restoreBackup(backup, browser.localStorage))
+  assert.deepEqual(loadPayees(browser.localStorage), ["Joe's Market", 'New Corner Shop'])
+  await click(button(dialog, 'Cancel'))
+  await click(container.querySelector('nav').children[5])
+  await click(buttonContaining(container, 'Settings'))
+  await click(buttonContaining(container, 'Categories & Payees'))
+  assert.ok(button(container, 'New Corner Shop'))
+  assert.ok(button(container, "Joe's Market"))
+  assert.deepEqual(readAccountData(), before)
+})
+
+test('one-time descriptions do not save payees, and autocomplete surfaces storage failures without closing the form', async () => {
+  savePayees(['Existing'], browser.localStorage)
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(button(container, 'Add transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const input = dialog.querySelector('[aria-label="Payee or description"]')
+  await act(async () => input.focus())
+  await changeValue(input, 'One-time merchant')
+  const storage = browser.localStorage
+  const original = storage.setItem
+  Object.defineProperty(storage, 'setItem', { configurable: true, value: (key, value) => {
+    if (key === 'money-honey-payees') throw new browser.DOMException('Full', 'QuotaExceededError')
+    return original.call(storage, key, value)
+  } })
+  try {
+    await click(button(dialog, 'Save as New Payee'))
+    assert.match(dialog.querySelector('[role="alert"]').textContent, /Could not save payees/)
+    assert.equal(input.value, 'One-time merchant')
+    assert.ok(container.querySelector('[role="dialog"]'))
+  } finally {
+    Object.defineProperty(storage, 'setItem', { configurable: true, value: original })
+  }
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '12')
+  await submit(dialog.querySelector('form'))
+  assert.equal(readAccountData().transactions.at(-1).name, 'One-time merchant')
+  assert.deepEqual(loadPayees(browser.localStorage), ['Existing'])
+})
 
 test('duplicate populates editable fields without saving, and cancel leaves the original unchanged', async () => {
   const before = seedDuplicateTransaction({ category: 'Retired category' })

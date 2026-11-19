@@ -15,14 +15,16 @@ import { loadDebts, reconcileDebtPaymentForTransaction, removeDebtPaymentForTran
 import {
   getCategories,
   getDefaultCategoryForFlow,
+  getHistoricalCategories,
   getReportingTransactions,
   getTransactionCategoryType,
   loadCategoryConfig,
   suggestTransactionCategory
 } from './categoryData.js'
-import { loadPayees } from './payeeData.js'
+import PayeeAutocomplete from './PayeeAutocomplete'
 import FinancialInput from './FinancialInput'
 import { parseFinancialAmount } from './financialAmounts.js'
+import { classifyTransactions } from './transactionRules.js'
 
 const todayDate = new Date().toLocaleDateString('en-CA')
 
@@ -31,7 +33,7 @@ const money = amount =>
 
 // editRequest ({ transactionId, accountId }) opens the editor for that exact transaction, so other screens
 // (such as Reports) reuse this editor instead of duplicating it.
-export default function Accounts({ editRequest = null, onEditConsumed, onEditFinished }) {
+export default function Accounts({ editRequest = null, onEditConsumed, onEditFinished, entryRequest = null, onQuickAddFinished }) {
   const [initialAccountData] = useState(() =>
     loadAccountData(startingAccounts, startingTransactions)
   )
@@ -43,6 +45,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     return transaction ? { transaction } : null
   })
   const openedFromRequest = useRef(Boolean(startEdit))
+  const [isQuickAdd] = useState(entryRequest?.mode === 'quick-add')
+  const [entryAccountId] = useState(() => initialAccountData.accounts.find(item =>
+    !item.archived && item.id === entryRequest?.accountId)?.id ?? null)
   const [accounts, setAccounts] = useState(initialAccountData.accounts)
   const [transactions, setTransactions] = useState(initialAccountData.transactions)
   const nextAccountId = useRef(
@@ -54,8 +59,8 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const nextTransactionSequence = useRef(
     getNextTransactionSequence(initialAccountData.transactions)
   )
-  const [selectedAccount, setSelectedAccount] = useState(startEdit ? startEdit.transaction.accountId : null)
-  const [screen, setScreen] = useState(startEdit ? 'register' : 'overview')
+  const [selectedAccount, setSelectedAccount] = useState(startEdit ? startEdit.transaction.accountId : entryAccountId)
+  const [screen, setScreen] = useState(startEdit || isQuickAdd || entryAccountId !== null ? 'register' : 'overview')
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [newAccountName, setNewAccountName] = useState('')
   const [newAccountType, setNewAccountType] = useState('Checking')
@@ -68,7 +73,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   )
   const [newName, setNewName] = useState(startEdit?.transaction.name ?? '')
   const [newAmount, setNewAmount] = useState(startEdit ? String(Math.abs(startEdit.transaction.amount)) : '')
-  const [newDate, setNewDate] = useState(startEdit?.transaction.date ?? todayDate)
+  const [newDate, setNewDate] = useState(startEdit?.transaction.date ?? new Date().toLocaleDateString('en-CA'))
   const [kind, setKind] = useState(startEdit && startEdit.transaction.amount > 0 ? 'income' : 'expense')
   const [categoryConfig] = useState(() => loadCategoryConfig())
   const [category, setCategory] = useState(startEdit ? startEdit.transaction.category ?? '' : getDefaultCategoryForFlow('out', categoryConfig))
@@ -77,11 +82,11 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   const customCategories = categoryConfig.customCategories
   const builtInNames = categoryConfig.builtInNames
   const disabledBuiltIns = categoryConfig.disabledBuiltIns
-  const [payees] = useState(() => loadPayees())
-  const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(Boolean(startEdit))
+  const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(Boolean(startEdit) || isQuickAdd)
   const [editingTransactionId, setEditingTransactionId] = useState(startEdit ? startEdit.transaction.id : null)
   const [isDuplicating, setIsDuplicating] = useState(false)
-  const [duplicateAccountId, setDuplicateAccountId] = useState(null)
+  const [transactionAccountId, setTransactionAccountId] = useState(entryAccountId)
+  const [quickAddCleared, setQuickAddCleared] = useState(false)
   const [duplicateNotes, setDuplicateNotes] = useState('')
   const [deleteConfirmation, setDeleteConfirmation] = useState(null)
   const [openingDrafts, setOpeningDrafts] = useState({})
@@ -112,8 +117,17 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     }
   }, [isAddTransactionOpen, onEditFinished])
 
+  useEffect(() => {
+    if (isQuickAdd && !isAddTransactionOpen) onQuickAddFinished?.()
+  }, [isQuickAdd, isAddTransactionOpen, onQuickAddFinished])
+
   const categoryOptions = getCategories(customCategories, kind, builtInNames, disabledBuiltIns)
   const categoryTransactions = getReportingTransactions(transactions, categoryConfig)
+  const incomeTransactionIds = new Set(classifyTransactions({
+    transactions: categoryTransactions,
+    categories: getHistoricalCategories(categoryConfig),
+    accounts
+  }).filter(record => record.kind === 'income').map(record => record.transaction.id))
   // A credit can be tied to the expense category it refunds; Debt Payments is a different kind of record.
   const refundOptions = kind === 'income'
     ? getCategories(customCategories, 'expense', builtInNames, disabledBuiltIns).filter(item => item !== 'Debt Payments')
@@ -234,7 +248,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   function openEditTransaction(transaction, duplicate = false) {
     setEditingTransactionId(duplicate ? null : transaction.id)
     setIsDuplicating(duplicate)
-    setDuplicateAccountId(transaction.accountId)
+    setTransactionAccountId(transaction.accountId)
     setDuplicateNotes(transaction.notes ?? '')
     if (duplicate) openedFromRequest.current = false
     setInputError('')
@@ -346,8 +360,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
     try {
       amount = parseFinancialAmount(newAmount, 'Transaction amount', { signed: true })
       if (!newName.trim() || !newDate || amount === 0) throw new Error('Enter a name, date, and nonzero transaction amount.')
-      if (isDuplicating && !accounts.some(item => item.id === duplicateAccountId)) {
-        throw new Error('Choose an account for the duplicate transaction.')
+      if ((isDuplicating || isQuickAdd) && !accounts.some(item =>
+        item.id === transactionAccountId && (!isQuickAdd || !item.archived))) {
+        throw new Error('Choose an account for the transaction.')
       }
     } catch (error) { setInputError(error.message); return }
     setInputError('')
@@ -376,16 +391,16 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
       updateTransactions(current => [...current, {
         id: nextTransactionId.current++,
         sequence: nextTransactionSequence.current++,
-        accountId: isDuplicating ? duplicateAccountId : selectedAccount,
+        accountId: isDuplicating || isQuickAdd ? transactionAccountId : selectedAccount,
         name: newName.trim(),
         amount: normalizeTransactionAmount(amount, kind),
         date: newDate,
-        cleared: isDuplicating ? false : account.defaultCleared,
+        cleared: isQuickAdd ? quickAddCleared : isDuplicating ? false : account.defaultCleared,
         category: categoryWasChosen ? category : (category || getDefaultCategoryForFlow(kind === 'income' ? 'in' : 'out', categoryConfig)),
         categoryType,
         ...(isDuplicating && duplicateNotes ? { notes: duplicateNotes } : {})
       }])
-      if (isDuplicating) setSelectedAccount(duplicateAccountId)
+      if (isDuplicating || isQuickAdd) setSelectedAccount(transactionAccountId)
     }
 
     setNewName('')
@@ -771,7 +786,7 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: 210 }}>
       <PageHeader backLabel="Accounts" onBack={() => setScreen('overview')}>
-        {account.name}
+        {account?.name ?? 'Accounts'}
       </PageHeader>
 
       <section className="account-summary-card" aria-label="Account balances" style={{ ...card, background: '#F5D6A5', padding: 14 }}>
@@ -936,9 +951,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
               textAlign: 'right',
               fontVariantNumeric: 'tabular-nums'
             }}>
-              <ResponsiveText as="strong" className="account-transaction-amount" style={{
+              <ResponsiveText as="strong" className={`account-transaction-amount${incomeTransactionIds.has(item.id) ? ' account-transaction-income' : ''}`} style={{
                 display: 'block',
-                color: item.amount < 0 ? '#9B463E' : '#21834B',
+                color: 'var(--theme-text, #493320)',
                 textAlign: 'right',
                 whiteSpace: 'nowrap',
                 lineHeight: 1.1
@@ -1047,16 +1062,17 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
             </div>
             <form onSubmit={addTransaction} style={{ display: 'grid', gap: 10 }}>
               {inputError && <p role="alert">{inputError}</p>}
-              {isDuplicating && (
+              {(isDuplicating || isQuickAdd) && (
                 <label style={{ display: 'grid', gap: 4, color: '#79502A', fontSize: 12 }}>
                   Account
                   <select
                     aria-label="Transaction account"
-                    value={duplicateAccountId}
-                    onChange={event => setDuplicateAccountId(accounts.find(item => String(item.id) === event.target.value)?.id ?? null)}
+                    value={transactionAccountId ?? ''}
+                    onChange={event => setTransactionAccountId(accounts.find(item => String(item.id) === event.target.value)?.id ?? null)}
                     style={field}
                   >
-                    {accounts.filter(item => !item.archived || item.id === selectedAccount).map(item => (
+                    {isQuickAdd && <option value="">Choose an account</option>}
+                    {accounts.filter(item => !item.archived || (!isQuickAdd && item.id === selectedAccount)).map(item => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
                   </select>
@@ -1080,11 +1096,9 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 <option value="expense">Expense</option>
                 <option value="income">Income</option>
               </select>
-              <input
-                placeholder="Payee or description"
-                aria-label="Payee or description"
-                list="saved-payees"
+              <PayeeAutocomplete
                 value={newName}
+                onSelect={setNewName}
                 onChange={event => {
                   const value = event.target.value
                   setNewName(value)
@@ -1097,9 +1111,6 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                 }}
                 style={field}
               />
-              <datalist id="saved-payees">
-                {payees.map(payee => <option key={payee} value={payee} />)}
-              </datalist>
               <FinancialInput
                 signed
                 inputMode="decimal"
@@ -1162,6 +1173,17 @@ export default function Accounts({ editRequest = null, onEditConsumed, onEditFin
                   onChange={event => setDuplicateNotes(event.target.value)}
                   style={field}
                 />
+              )}
+              {isQuickAdd && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Transaction cleared"
+                    checked={quickAddCleared}
+                    onChange={event => setQuickAddCleared(event.target.checked)}
+                  />
+                  {quickAddCleared ? 'Cleared' : 'Uncleared'}
+                </label>
               )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
                 <button

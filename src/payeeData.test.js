@@ -44,6 +44,17 @@ test('legacy case variants do not block unrelated additions or get silently remo
   assert.deepEqual(loadPayees(storage), ['Coffee', 'coffee', 'New payee'])
 })
 
+test('formatting variants are rejected without rewriting existing legacy payees', () => {
+  const storage = createStorage()
+  storage.setItem(PAYEE_STORAGE_KEY, JSON.stringify({ version: 1, payees: ["Joe's Market", 'JOES  MARKET'] }))
+  const before = loadPayees(storage)
+  for (const duplicate of ['joes market', 'JOE’S-MARKET', " Joe's   Market "]) {
+    assert.throws(() => savePayees([...before, duplicate], storage), /already exists/)
+    assert.deepEqual(loadPayees(storage), before)
+  }
+  assert.equal(savePayees([...before, 'Other'], storage).length, 3)
+})
+
 test('deleting a saved payee leaves transaction data independent', () => {
   const storage = createStorage()
   savePayees(['Walmart'], storage)

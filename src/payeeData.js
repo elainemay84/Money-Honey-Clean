@@ -4,6 +4,10 @@ function normalize(name) {
   return String(name ?? '').trim()
 }
 
+export function payeeMatchKey(name) {
+  return normalize(name).normalize('NFKC').toLocaleLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, '')
+}
+
 export function loadPayees(storage = localStorage) {
   const saved = storage.getItem(PAYEE_STORAGE_KEY)
   if (saved === null) return []
@@ -24,13 +28,13 @@ export function savePayees(payees, storage = localStorage) {
   const names = payees.map(normalize)
   const previousCounts = new Map()
   for (const name of loadPayees(storage)) {
-    const key = name.toLocaleLowerCase()
+    const key = payeeMatchKey(name)
     previousCounts.set(key, (previousCounts.get(key) ?? 0) + 1)
   }
   const counts = new Map()
   for (const name of names) {
     if (!name) throw new Error('Enter a payee name.')
-    const key = name.toLocaleLowerCase()
+    const key = payeeMatchKey(name)
     const count = (counts.get(key) ?? 0) + 1
     if (count > 1 && count > (previousCounts.get(key) ?? 0)) throw new Error(`A payee named "${name}" already exists.`)
     counts.set(key, count)

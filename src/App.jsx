@@ -1,6 +1,7 @@
 
 import { useEffect, useState } from 'react'
 import Accounts from './Accounts'
+import HomeAddMenu from './HomeAddMenu'
 import Debt from './Debt'
 import { startingAccounts, startingTransactions } from './accountDefaults.js'
 import Bills from './Bills'
@@ -24,7 +25,7 @@ import {
   loadPaySchedule,
   savePaySchedule
 } from './billData.js'
-import { loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
+import { getMainAccountId, loadAccountData, loadSavedAccountData, saveAccountData } from './accountStorage.js'
 import { calculateOverallDebtSummary, getDebtForecastBills, loadDebts } from './debtData.js'
 import { calculatePaycheckForecast } from './paycheckForecast.js'
 import { calculateBudgetSnapshot, loadBudgetSettings, loadBudgets } from './budgetData.js'
@@ -34,6 +35,7 @@ import { loadAppearanceSize, saveAppearanceSize } from './appearanceData.js'
 import UpdateNotice from './UpdateNotice.jsx'
 import {
   FONT_STYLES,
+  getIncomeTextColor,
   getNavigationColors,
   getThemeBackground,
   getThemeStyle,
@@ -67,6 +69,7 @@ function App() {
   const [nextPayday, setNextPayday] = useState(paySchedule?.nextPayday ?? today)
   const [activePage, setActivePage] = useState(() => hasRestoreNotice() || getProfileActionNotice() ? 'Settings' : 'Home')
   const [editRequest, setEditRequest] = useState(null)
+  const [accountRequest, setAccountRequest] = useState(null)
   const [budgetSettings, setBudgetSettings] = useState(() => loadBudgetSettings())
   const [, setBudgetRevision] = useState(0)
   const [settingsView, setSettingsView] = useState(() => hasRestoreNotice() ? 'backup' : getProfileActionNotice() ?? 'menu')
@@ -311,6 +314,8 @@ function App() {
       '--theme-card': activeTheme.colors.card,
       '--theme-accent': activeTheme.colors.accent,
       '--theme-text': activeTheme.colors.text,
+      '--theme-income-text': getIncomeTextColor(activeTheme.colors.card),
+      '--theme-income-pending-text': getIncomeTextColor(activeTheme.colors.card, activeTheme.colors.accent),
       '--theme-border': `${activeTheme.colors.accent}66`,
       '--theme-heading-font': FONT_STYLES[activeTheme.headingFont].family,
       '--theme-body-font': FONT_STYLES[activeTheme.bodyFont].family,
@@ -800,11 +805,26 @@ function App() {
         <p style={{ textAlign: 'center', margin: '18px 0 0', color: '#79502A', fontSize: 12 }}>
           Made with a little buzz and a lot of honey. 🐝
         </p>
+        <HomeAddMenu
+          onQuickAdd={() => {
+            setAccountRequest({ mode: 'quick-add', accountId: getMainAccountId(accountData?.accounts) })
+            setActivePage('Accounts')
+          }}
+          onMainAccount={() => {
+            setAccountRequest({ mode: 'register', accountId: getMainAccountId(accountData?.accounts) })
+            setActivePage('Accounts')
+          }}
+        />
       </main>
 
 
 ) : activePage === 'Accounts' ? (
 <Accounts
+  entryRequest={accountRequest}
+  onQuickAddFinished={() => {
+    setAccountRequest(null)
+    setActivePage('Home')
+  }}
   editRequest={editRequest}
   onEditConsumed={() => setEditRequest(null)}
   onEditFinished={() => {
@@ -1121,7 +1141,10 @@ function App() {
 <div
   key={label}
   className={activePage === label ? 'theme-nav-item-active' : 'theme-nav-item'}
-  onClick={() => setActivePage(label)}
+  onClick={() => {
+    setAccountRequest(null)
+    setActivePage(label)
+  }}
   style={{
       flex: 1,
       textAlign: 'center',

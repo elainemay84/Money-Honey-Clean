@@ -684,6 +684,64 @@ body {
   --responsive-base-size: 14px;
 }
 
+.payee-autocomplete {
+  position: relative;
+  min-width: 0;
+}
+
+.payee-autocomplete-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  max-height: var(--payee-menu-max-height, 270px);
+  overflow: hidden;
+  border: 1px solid var(--theme-border, #E9D6B7);
+  border-radius: 12px;
+  background: var(--theme-card, #FFFFFF);
+  box-shadow: 0 4px 14px #00000030;
+}
+
+.payee-autocomplete-options {
+  min-height: 0;
+  max-height: min(220px, 30dvh);
+  flex: 0 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.payee-autocomplete-menu button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  background: var(--theme-card, #FFFFFF);
+  color: var(--theme-text, #493320);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.payee-autocomplete-menu button[aria-selected='true'],
+.payee-autocomplete-menu button:focus-visible {
+  background: color-mix(in srgb, var(--theme-accent, #B87522) 15%, var(--theme-card, #FFFFFF));
+}
+
+.payee-autocomplete-menu .payee-autocomplete-save {
+  flex-shrink: 0;
+  border-top: 1px solid var(--theme-border, #E9D6B7);
+  font-weight: 700;
+}
+
+.payee-autocomplete-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
 .account-transaction-running,
 .account-transaction-date time {
   --responsive-base-size: 11px;
@@ -1095,6 +1153,16 @@ body {
 .theme-customized section span,
 .theme-customized section strong {
   color: var(--theme-text) !important;
+}
+
+.account-transaction-row .account-transaction-income,
+.theme-customized section .account-transaction-row .account-transaction-income {
+  color: var(--theme-income-text, #1D6339) !important;
+}
+
+.account-transaction-row-uncleared .account-transaction-income,
+.theme-customized section .account-transaction-row-uncleared .account-transaction-income {
+  color: var(--theme-income-pending-text, var(--theme-income-text, #1D6339)) !important;
 }
 
 .theme-customized section button:not(.theme-preview) {
