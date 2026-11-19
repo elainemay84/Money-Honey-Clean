@@ -5,6 +5,7 @@ import {
   THEME_STORAGE_KEY,
   THEME_PRESETS,
   getDefaultThemeSettings,
+  getIncomeTextColor,
   getNavigationColors,
   getThemeBackground,
   getThemeStyle,
@@ -58,6 +59,34 @@ test('black or white action text meets 4.5:1 contrast on every theme accent and 
     const contrast = (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05)
     assert.ok(contrast >= 4.5, `${foreground} on ${background}: ${contrast.toFixed(2)}:1`)
   }
+})
+
+test('income green meets 4.5:1 contrast on theme cards and their uncleared tint, including custom colors', () => {
+  const channels = hex => hex.slice(1).match(/../g).map(channel => Number.parseInt(channel, 16) / 255)
+  const luminance = values => values.map(value =>
+    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  ).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+  const colors = [
+    ...THEME_PRESETS.map(theme => theme.colors),
+    ...['#000000', '#FFFFFF', '#777777', '#B24B99', '#448844'].map(card => ({ card, accent: '#825BA5' }))
+  ]
+  for (const { card, accent } of colors) {
+    for (const pending of [false, true]) {
+      const foreground = getIncomeTextColor(card, pending ? accent : card)
+      const rgb = channels(foreground)
+      assert.ok(rgb[1] > rgb[0] && rgb[1] > rgb[2], `${foreground} must remain green`)
+      const background = channels(card).map((value, index) =>
+        pending ? value * 0.92 + channels(accent)[index] * 0.08 : value)
+      const values = [luminance(background), luminance(rgb)]
+      const contrast = (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05)
+      assert.ok(contrast >= 4.5, `${foreground} on ${card}, pending=${pending}: ${contrast.toFixed(2)}:1`)
+    }
+  }
+})
+
+test('legacy shorthand custom theme colors still produce a green income color', () => {
+  assert.equal(getIncomeTextColor('#fff'), getIncomeTextColor('#ffffff'))
+  assert.equal(getIncomeTextColor('#111', '#b75'), getIncomeTextColor('#111111', '#bb7755'))
 })
 
 function withStorage(values = {}) {

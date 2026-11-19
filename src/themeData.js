@@ -294,7 +294,8 @@ const PREVIEW_LIGHT_TEXT = '#fffaf2'
 
 function colorChannels(color) {
   if (typeof color !== 'string') return null
-  const value = color.replace('#', '')
+  let value = color.replace('#', '')
+  if (/^[\da-f]{3}$/i.test(value)) value = [...value].map(channel => channel + channel).join('')
   if (!/^[\da-f]{6}$/i.test(value)) return null
   return [
     parseInt(value.slice(0, 2), 16) / 255,
@@ -304,7 +305,7 @@ function colorChannels(color) {
 }
 
 function relativeLuminance(color) {
-  const channels = colorChannels(color)
+  const channels = Array.isArray(color) ? color : colorChannels(color)
   if (!channels) return null
   return channels.reduce((total, channel, index) => {
     const linear = channel <= 0.03928
@@ -327,6 +328,23 @@ export function previewTextColor(background, darkText = PREVIEW_DARK_TEXT, light
   return contrastRatio(darkText, background) >= contrastRatio(lightText, background)
     ? darkText
     : lightText
+}
+
+export function getIncomeTextColor(card, accent = card) {
+  // Uncleared rows overlay the card with 8% accent; match that surface for contrast.
+  const cardChannels = colorChannels(card)
+  const accentChannels = colorChannels(accent)
+  if (!cardChannels || !accentChannels) return previewTextColor(card, '#1D6339', '#77E0A0')
+  const background = cardChannels.map((channel, index) => channel * 0.92 + accentChannels[index] * 0.08)
+  const dark = previewTextColor(background, '#000000', '#FFFFFF') === '#000000'
+  const channels = colorChannels(dark ? '#1D6339' : '#77E0A0')
+  for (let step = 0; step <= 100; step++) {
+    const color = `#${channels.map(channel =>
+      Math.round((channel + ((dark ? 0 : 1) - channel) * step / 100) * 255).toString(16).padStart(2, '0')
+    ).join('')}`
+    if (contrastRatio(color, background) >= 4.5) return color
+  }
+  return dark ? '#000000' : '#FFFFFF'
 }
 
 export function getNavigationColors(background, accent) {

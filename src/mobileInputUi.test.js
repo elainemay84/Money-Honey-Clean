@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { after, afterEach, test } from 'node:test'
 import { Window } from 'happy-dom'
 import { createServer } from 'vite'
+import { THEME_PRESETS, saveCustomThemes, saveThemeSettings } from './themeData.js'
 
 const browser = new Window({ url: 'http://localhost/', width: 390, height: 844 })
 for (const key of ['window', 'document', 'navigator', 'localStorage', 'Event', 'MouseEvent', 'HTMLElement', 'Node']) {
@@ -376,6 +377,121 @@ test('account register keeps compact secondary dates over zoom-safe native picke
   assert.deepEqual([...container.querySelectorAll('.account-transaction-row')].map(row => row.dataset.transactionId), ['1', '2'])
   assert.deepEqual([...container.querySelectorAll('.account-transaction-running')].map(element => element.textContent), ['$1,123,456.78', '$1,000,000.00'])
   assert.equal(browser.localStorage.getItem('money-honey-account-data'), before)
+})
+
+const shortcutThemes = [
+  ...THEME_PRESETS.filter(theme => ['honey-classic', 'forest-cabin', 'funky-pop', 'moody-plum', 'midnight'].includes(theme.id)),
+  ...['#FFFFFF', '#171C24', '#777777'].map((card, index) => ({
+    ...THEME_PRESETS[0],
+    id: `custom-shortcuts-${index}`,
+    name: `Custom shortcuts ${index}`,
+    colors: { background: card, card, accent: '#825BA5', text: index === 0 ? '#241B14' : '#FFFFFF' }
+  }))
+]
+
+for (const theme of shortcutThemes) {
+  test(`${theme.name}: Home reuses Debt floating styles and only income amounts are green`, async () => {
+    if (theme.id.startsWith('custom-')) saveCustomThemes([theme])
+    saveThemeSettings({ ...theme, themeId: theme.id })
+    browser.localStorage.setItem('money-honey-account-data', JSON.stringify({
+      version: 1,
+      accounts: [{
+        id: 1, name: 'Main Checking', type: 'Checking', openingBalance: 100,
+        openingDate: '2026-11-01', defaultCleared: true, isMain: true
+      }],
+      transactions: [
+        { id: 1, name: 'Income', amount: 100, categoryType: 'income', category: 'Paycheck', cleared: true },
+        { id: 2, name: 'Deposit', amount: 20, cleared: false },
+        { id: 3, name: 'Expense', amount: -500, category: 'Groceries', cleared: false },
+        { id: 4, name: 'Incoming transfer', amount: 50, type: 'transfer', cleared: true },
+        { id: 5, name: 'Transfer from savings', amount: 50, cleared: false },
+        { id: 6, name: 'Refund', amount: 30, categoryType: 'expense', category: 'Groceries', cleared: true },
+        { id: 7, name: 'Debt credit', amount: 10, linkedDebtId: 7, cleared: true },
+        { id: 8, name: 'Moved money', amount: 50, transferId: 'move-1', cleared: true },
+        { id: 9, name: 'Moved money again', amount: 50, isTransfer: true, cleared: false }
+      ].map(item => ({ ...item, accountId: 1, sequence: item.id, date: '2026-11-02' }))
+    }))
+    const container = browser.document.createElement('div')
+    browser.document.body.append(container)
+    root = createRoot(container)
+    await act(async () => root.render(React.createElement(App)))
+    const saved = browser.localStorage.getItem('money-honey-account-data')
+    const style = element => browser.getComputedStyle(element)
+    const mainButton = container.querySelector('.home-fab > button')
+    const homeStyle = style(mainButton)
+    const dimensions = ['width', 'height', 'borderRadius', 'boxShadow', 'backgroundColor', 'color']
+    const homeValues = dimensions.map(key => homeStyle[key])
+    assert.equal(homeStyle.width, '60px')
+    assert.equal(homeStyle.height, '60px')
+    assert.equal(homeStyle.borderRadius, '50%')
+    assert.equal(style(container.querySelector('.home-fab')).position, 'fixed')
+    assert.equal(style(container.querySelector('main > .responsive-text')).textAlign, 'center')
+    await click(mainButton)
+    const options = [...container.querySelectorAll('#home-add-actions button')]
+    assert.equal(options.length, 2)
+    for (const option of options) {
+      assert.equal(style(option).backgroundColor, homeStyle.backgroundColor)
+      assert.equal(style(option).color, homeStyle.color)
+      assert.equal(style(option.querySelector('.debt-fab-label')).color, homeStyle.color)
+      assert.equal(style(option).width, '100%')
+      assert.equal(style(option).minHeight, '56px')
+    }
+    await navigate('Debt')
+    assert.deepEqual(dimensions.map(key => style(container.querySelector('.debt-fab-toggle'))[key]), homeValues)
+    await navigate('Home')
+    await click(button('Open quick add menu'))
+    await click(button('Main Account'))
+    const normal = style(container.querySelector('.account-transaction-name')).color
+    for (const row of container.querySelectorAll('.account-transaction-row')) {
+      const amountColor = style(row.querySelector('.account-transaction-amount')).color
+      const runningColor = style(row.querySelector('.account-transaction-running')).color
+      assert.equal(runningColor, normal, `Running balance for ${row.dataset.transactionId}`)
+      if (['1', '2'].includes(row.dataset.transactionId)) {
+        assert.notEqual(amountColor, normal)
+        const [red, green, blue] = amountColor.startsWith('#')
+          ? amountColor.slice(1).match(/../g).map(channel => Number.parseInt(channel, 16))
+          : amountColor.match(/\d+/g).map(Number)
+        assert.ok(green > red && green > blue, `${amountColor} must be green`)
+      } else {
+        assert.equal(amountColor, normal, `Non-income amount for ${row.dataset.transactionId}`)
+      }
+    }
+    assert.equal(container.querySelector('[data-transaction-id="1"] .account-transaction-running').textContent, '$200.00')
+    assert.equal(container.querySelector('[data-transaction-id="3"] .account-transaction-running').textContent, '-$280.00')
+    assert.ok(container.querySelector('[data-transaction-id="2"]').classList.contains('account-transaction-row-uncleared'))
+    assert.equal(browser.localStorage.getItem('money-honey-account-data'), saved)
+  })
+}
+
+test('payee dropdown stays within the dialog above a reduced mobile viewport and keeps its save action accessible', async () => {
+  browser.happyDOM.setWindowSize({ width: 390, height: 450 })
+  browser.localStorage.setItem('money-honey-payees', JSON.stringify({
+    version: 1, payees: ['Alpha', 'Alpine', 'Alps', 'Almond', 'Alfred', 'Alaska']
+  }))
+  const container = browser.document.createElement('div')
+  browser.document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root.render(React.createElement(App)))
+  await click(button('Open quick add menu'))
+  await click(button('Quick Add Transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const input = dialog.querySelector('[aria-label="Payee or description"]')
+  dialog.getBoundingClientRect = () => ({ bottom: 400 })
+  input.getBoundingClientRect = () => ({ bottom: 250 })
+  await act(async () => input.focus())
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'Al')
+    input.dispatchEvent(new browser.Event('input', { bubbles: true }))
+    input.dispatchEvent(new browser.Event('change', { bubbles: true }))
+    browser.dispatchEvent(new browser.Event('resize'))
+  })
+  const menu = dialog.querySelector('.payee-autocomplete-menu')
+  assert.equal(menu.style.getPropertyValue('--payee-menu-max-height'), '144px')
+  assert.equal(browser.getComputedStyle(menu).position, 'absolute')
+  assert.equal(browser.getComputedStyle(menu.querySelector('[role="listbox"]')).overflowY, 'auto')
+  assert.equal(browser.getComputedStyle(button('Save as New Payee')).flexShrink, '0')
+  assert.equal(menu.querySelectorAll('[role="option"]').length, 6)
 })
 
 test('mobile sizing covers other editable control types without changing theme styling or desktop sizing', () => {

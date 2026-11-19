@@ -66,6 +66,17 @@ Account, bill/income, debt, and payday-setting save events update Home immediate
 Storage events update other tabs; foregrounding and the local date rollover update
 the forecast day. Stored records and JSON backup formats are unchanged.
 
+## Home quick actions
+
+Home's floating **+** uses the Debt page's expandable menu styling. **Quick Add
+Transaction** opens the existing transaction form with the Main Account selected
+when designated, today's date, and Uncleared status. Choose or change the account
+before saving; Cancel saves nothing. Entries use the normal transaction system
+without creating bill, debt-payment, or recurring links.
+
+**Main Account** opens that account's register directly, or Accounts if no active
+Main Account is designated. Neither shortcut changes the Main Account.
+
 ## Accounts overview
 
 Account cards use two compact lines: name and type on the left, balance and
@@ -81,6 +92,9 @@ balances underneath. Currency text fits its column without losing digits. Inline
 dates show a compact date and calendar icon over a transparent, zoom-safe native
 date input; tapping or focusing it still uses the native date picker. Register
 line spacing stays compact independently of theme paragraph spacing.
+Income/deposit amounts use a green shade with readable contrast against the
+selected theme's card and uncleared shading, including custom themes. Expenses,
+transfers, refunds, and running balances retain the theme's normal text color.
 
 Edit Transaction's Duplicate action opens an unsaved copy in the Add Transaction
 form. Review or change its payee, amount, type, category, account, notes, and date
@@ -88,6 +102,11 @@ form. Review or change its payee, amount, type, category, account, notes, and da
 uncleared transaction in the destination account's register; the original stays
 unchanged. Payment history, bill/debt links, attachments, and recurring references
 are not copied.
+
+The payee field suggests Saved Payees as you type. Select a suggestion without
+changing the other fields, or explicitly save a new payee from the dropdown.
+Unsaved descriptions remain valid, and saved payees use the existing Settings and
+backup storage.
 
 ## Bills list urgency
 
