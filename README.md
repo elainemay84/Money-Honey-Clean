@@ -95,6 +95,9 @@ line spacing stays compact independently of theme paragraph spacing.
 Income/deposit amounts use a green shade with readable contrast against the
 selected theme's card and uncleared shading, including custom themes. Expenses,
 transfers, refunds, and running balances retain the theme's normal text color.
+The Uncleared figure is the absolute value of the signed net of every uncleared
+transaction in the selected account, including future dates; "Coming in" or
+"Going out" indicates its sign. Scheduled bills without transactions are excluded.
 
 Edit Transaction's Duplicate action opens an unsaved copy in the Add Transaction
 form. Review or change its payee, amount, type, category, account, notes, and date
@@ -178,11 +181,16 @@ pair confident amounts on the same horizontal row, even when OCR reads each colu
 separately. Original purchase and remaining scheduled balance stay distinct;
 ambiguous or unreadable installment amounts stay blank rather than being divided
 from either total.
+Horizontal rows of dates and corresponding amounts are paired when both rows
+have the same number of clearly readable entries. A checkout offer does not
+establish a remaining balance or paid status; enter those only after confirming.
 Recognized rows automatically populate the editable list, including partially
 read rows. Review every suggestion; ambiguous installment dates and unreadable
 amounts are left blank, never guessed. A yearless date such as "Dec 15" in a
 chronological timeline takes its year only from the explicitly dated rows beside
-it (for example, the next row "Jan 15, 2027"); otherwise it stays blank. Matches
+it (for example, the next row "Jan 15, 2027"); otherwise it stays blank and
+the scanned month and day are shown as hints to confirm, even when OCR confidence
+is low. Matches
 with neither a usable date nor an amount are not added as rows. Correct these
 fields or add missing rows.
 

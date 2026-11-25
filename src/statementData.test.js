@@ -5,6 +5,79 @@ import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData,
 import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, hasPaymentPlanContent, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
 import { getInstallmentStatus } from './debtSchedule.js'
 
+test('horizontal checkout timeline retains each amount and asks for missing years', () => {
+  const result = parsePaymentPlanScan([
+    'OnePay Later, powered by Klarna', '6 payments', 'Payment schedule',
+    'Dec 18 Jan 18 Feb 18 Mar 18 Apr 18 May 18',
+    '$106.55 $106.55 $106.55 $106.55 $106.55 $106.56',
+    'Purchase amount: $581.23', 'Interest: $58.08 (APR: 33.49%)', 'Total repayment: $639.31'
+  ])
+  assert.equal(result.values.provider, 'OnePay Later, powered by Klarna')
+  assert.equal(result.values.purchaseAmount, '581.23')
+  assert.equal(result.values.totalInterest, '58.08')
+  assert.equal(result.values.totalRepayment, '639.31')
+  assert.equal(result.values.interestRate, '33.49')
+  assert.equal(result.values.currentBalance, undefined)
+  assert.equal(result.values.amountAlreadyPaid, undefined)
+  assert.deepEqual(result.dateHints, ['dec 18', 'jan 18', 'feb 18', 'mar 18', 'apr 18', 'may 18'])
+  assert.deepEqual(result.installments.map(row => row.amount), ['106.55', '106.55', '106.55', '106.55', '106.55', '106.56'])
+  assert.ok(result.installments.every(row => !row.dueDate && !row.paid))
+  assert.equal(result.installments.reduce((sum, row) => sum + Math.round(Number(row.amount) * 100), 0), 63931)
+  assert.equal(result.planTerms.frequency, 'monthly')
+  assert.match(result.warnings.join(' '), /year.*confirm/i)
+  assert.doesNotMatch(result.warnings.join(' '), /do not match the stated total repayment/)
+  for (const lines of [
+    ['$106.55 $106.55 $106.55 $106.55 $106.55 $106.56', 'Dec 18 Jan 18 Feb 18 Mar 18 Apr 18 May 18'],
+    ['Dec 18 $106.55 Jan 18 $106.55 Feb 18 $106.55 Mar 18 $106.55 Apr 18 $106.55 May 18 $106.56']
+  ]) {
+    const variant = parsePaymentPlanScan(['Payment schedule', ...lines])
+    assert.deepEqual(variant.installments, result.installments)
+    assert.deepEqual(variant.dateHints, result.dateHints)
+  }
+  const mismatch = parsePaymentPlanScan([
+    'Payment schedule', 'Dec 18 Jan 18', '$10.00 $11.00', 'Total repayment $20.00'
+  ])
+  assert.match(mismatch.warnings.join(' '), /do not match the stated total repayment/)
+})
+
+test('horizontal OCR keeps low-confidence dates as confirmation-only hints and preserves a missing date', () => {
+  const word = (text, confidence, x0, x1, y0, y1) => ({ text, confidence, bbox: { x0, x1, y0, y1 } })
+  const months = ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May']
+  const dateWords = months.flatMap((month, index) => [
+    word(month, index === 4 ? 11 : 95, 10 + index * 100, 45 + index * 100, 100, 120),
+    word('18', index === 4 ? 11 : 95, 50 + index * 100, 70 + index * 100, 100, 120)
+  ])
+  const amounts = months.map((_, index) =>
+    word(index === 5 ? '$106.56' : '$106.55', 95, 10 + index * 100, 75 + index * 100, 125, 145))
+  const data = { blocks: [{ paragraphs: [{ lines: [{ words: dateWords }, { words: amounts }] }] }] }
+  const parse = () => parsePaymentPlanScan(getReliableOcrLines(data, { paymentPlan: true }))
+  const result = parse()
+  assert.deepEqual(result.dateHints, ['dec 18', 'jan 18', 'feb 18', 'mar 18', 'apr 18', 'may 18'])
+  assert.ok(result.installments.every(row => row.dueDate === '' && !row.paid))
+  assert.equal(result.installments.at(-1).amount, '106.56')
+  dateWords[4].text = '???'
+  const partial = parse()
+  assert.equal(partial.installments.length, 6)
+  assert.equal(partial.installments[2].amount, '106.55')
+  assert.equal(partial.dateHints[2], '')
+  assert.equal(partial.dateHints[4], 'apr 18')
+})
+
+test('checkout interest and total with interest remain distinct from purchase and balance', () => {
+  const result = parsePaymentPlanScan([
+    'Checkout', 'OnePay Later [?]', '6 payments', 'Purchase amount $581.23',
+    'Interest {33.49% APR) $58.08', 'Total with interest $639.31', '[OCR recheck failed]'
+  ])
+  assert.equal(result.values.name, 'OnePay Later')
+  assert.equal(result.values.provider, 'OnePay Later')
+  assert.equal(result.values.purchaseAmount, '581.23')
+  assert.equal(result.values.totalInterest, '58.08')
+  assert.equal(result.values.totalRepayment, '639.31')
+  assert.equal(result.values.interestRate, '33.49')
+  assert.equal(result.values.currentBalance, undefined)
+  assert.match(result.warnings.join(' '), /could not be rechecked/i)
+})
+
 test('Wayfair separate OCR columns pair by row, retaining the final cents and remaining balance', () => {
   const result = parsePaymentPlanScan(getReliableOcrLines(wayfairColumnOcrData, { paymentPlan: true }))
   assert.deepEqual(result.installments, [

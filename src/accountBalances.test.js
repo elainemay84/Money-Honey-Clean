@@ -130,6 +130,21 @@ test('uncleared net includes all dates and signs without changing anchored accou
   assert.equal(calculateAccountBalances(1000, rows.map(row => row.id === 3 ? { ...row, cleared: true } : row), 'asc', '2026-11-01').unclearedBalance, 45)
 })
 
+test('multiple future December transactions reconcile to the signed saved uncleared net', () => {
+  const rows = [
+    { id: 1, date: '2026-12-01', amount: -106.55, cleared: false },
+    { id: 2, date: '2026-12-18', amount: -106.56, cleared: false, linkedBillOccurrenceId: 'bill:1:2026-12-18' },
+    { id: 3, date: '2026-12-20', amount: 300, cleared: false },
+    { id: 4, date: '2026-12-25', amount: 900, cleared: true },
+    { id: 5, date: '2026-12-28', amount: -100, cleared: true }
+  ]
+  const directNet = rows.filter(row => !row.cleared).reduce((sum, row) => sum + row.amount, 0)
+  const result = calculateAccountBalances(1000, rows, 'desc', '2026-11-25')
+  assert.equal(result.unclearedBalance, directNet)
+  assert.equal(Math.round(result.unclearedBalance * 100), 8689)
+  assert.equal(calculateAccountBalances(1000, rows.map(row => row.id === 3 ? { ...row, cleared: true } : row)).unclearedBalance, directNet - 300)
+})
+
 test('Accounts Overview renders active account cards and separate management actions', async () => {
   const server = await createServer({
     configFile: './vite.config.js',

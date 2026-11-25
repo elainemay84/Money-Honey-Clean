@@ -245,7 +245,7 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
     const image = await abortable(blob.arrayBuffer(), signal)
     ocrReader ??= createLocalStatementReader({ assets, signal, onProgress, paymentPlan: parse === parsePaymentPlanScan })
     onProgress('Starting the on-device reader (up to 35 seconds)...')
-    return ocrReader.recognize(image)
+    return ocrReader.recognize(image, { width: canvas.width, height: canvas.height })
   }
   try {
     let lines = []

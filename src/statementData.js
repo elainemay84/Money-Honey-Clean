@@ -33,10 +33,10 @@ const labels = {
   minimumPayment: /^(?:total )?minimum payment(?: due)?\s*:?\s*/i,
   nextPaymentDue: /^(?:(?:next )?payment(?: due)? date|next payment due|next scheduled payment date|(?:next )?due date)\s*:?\s*/i,
   purchaseAmount: /^(?:(?:original )?purchase (?:amount|total|price)|order total|order amount)(?=\s|:|$)\s*:?\s*/i,
-  totalRepayment: /^(?:original )?(?:total repayment(?: amount)?|total financed(?: amount)?|total amount(?! due))\s*:?\s*/i,
-  totalInterest: /^total interest\s*:?\s*/i,
+  totalRepayment: /^(?:original )?(?:total repayment(?: amount)?|total financed(?: amount)?|total with interest|total amount(?! due))\s*:?\s*/i,
+  totalInterest: /^(?:total )?interest\s*:?\s*/i,
   amountAlreadyPaid: /^(?:amount already paid|already paid|total paid|you(?:'|’)?ve paid|you have paid)\s*:?\s*/i,
-  totalInstallments: /^(?:total installments|number of installments)\s*:?\s*/i,
+  totalInstallments: /^(?:total installments|number of (?:installments|payments))\s*:?\s*/i,
   completedInstallments: /^completed installments\s*:?\s*/i,
   nextPaymentAmount: /^next (?:scheduled )?payment(?: amount)?\s*:?\s*/i
 }
@@ -72,7 +72,7 @@ function parseValue(key, value) {
   }
   if (key === 'name') {
     return value.length >= 2 && value.length <= 100 && value.replace(/\D/g, '').length < 5 && !/[*•●]{2}/.test(value)
-      && !/^(?:in progress|activity|payment activity|payment schedule|overview|summary)$/i.test(value)
+      && !/^(?:checkout|in progress|activity|payment activity|payment schedule|overview|summary)$/i.test(value)
       && !Object.values(labels).some(label => label.test(value)) ? value : null
   }
   if (key === 'type') return debtTypes.find(type => type.toLowerCase() === value.toLowerCase()) ?? null
@@ -152,6 +152,10 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
     : line.trim())
   for (let index = 0; index < textLines.length; index += 1) {
     const line = textLines[index]
+    if (paymentPlan) {
+      const count = /^(\d{1,3})\s+(?:monthly\s+)?payments$/i.exec(line)
+      if (count) add('totalInstallments', count[1])
+    }
     const installments = /^payments completed\s*:?\s*(\d+)\s*(?:of|\/)\s*(\d+)$/i.exec(line)
       ?? /^(?:progress\s*:?\s*)?(\d+)\s*(?:of|\/)\s*(\d+)\s+payments(?: completed)?$/i.exec(line)
       ?? (/\b(?:paid|remaining|payments?)\b/i.test(`${textLines[index - 1] ?? ''} ${line} ${textLines[index + 1] ?? ''}`)
@@ -189,8 +193,12 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
     if (captioned) add('currentBalance', textLines[index - 1])
     // A caption already claimed by the amount above it is never paired again with the amount below.
     if (!captioned) for (const [key, value] of pairColumns(line, textLines[index + 1])) add(key, value)
-    const embeddedApr = /\(\s*APR\s*:?\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*\)?|\(\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*APR\s*\)/i.exec(line)
+    const embeddedApr = /[({]\s*APR\s*:?\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*\)?|[({]\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*APR\s*\)/i.exec(line)
     if (embeddedApr) add('interestRate', `${embeddedApr[1] ?? embeddedApr[2]}%`)
+    if (paymentPlan && embeddedApr && /^(?:total )?interest\b/i.test(line)) {
+      const amounts = line.match(MONEY) ?? []
+      if (amounts.length === 1) add('totalInterest', amounts[0])
+    }
     for (const [key, label] of Object.entries(labels)) {
       const match = label.exec(line)
       if (!match || (key === 'currentBalance' && captioned)) continue
@@ -245,6 +253,9 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
     }
   }
   const warnings = []
+  if (textLines.includes('[OCR recheck failed]')) {
+    warnings.push('Some unclear values could not be rechecked. Review and complete the form manually.')
+  }
   const scheduleWarnings = []
   const planDetails = parsePaymentPlanStatement(textLines, { paymentPlan })
   Object.assign(values, planDetails.values)
@@ -257,6 +268,7 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
     }))
     if (names.size === 1) values.name = [...names][0]
     else if (values.merchant) values.name = values.merchant
+    else if (!values.name && values.provider) values.name = values.provider
     const next = planDetails.installments.filter(row => row.dueDate && !row.paid)
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]
     if (next) {
@@ -270,6 +282,9 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
     if (!values.type) values.type = 'Other'
     if ((!values.name || values.name.toLowerCase() === values.provider?.toLowerCase()) && (values.provider || values.merchant)) {
       values.name = [values.provider, values.merchant].filter(Boolean).join(' - ')
+    }
+    if (paymentPlan && planDetails.unresolvedDates.length) {
+      warnings.push('Some scanned dates have no year. Confirm each scanned month and day and enter its full date.')
     }
     scheduleWarnings.push('Schedule found from statement. Review before saving.')
     if (values.totalInstallments && Number(values.totalInstallments) !== planDetails.installments.length) {
@@ -286,20 +301,28 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
   }
   warnings.push(...scheduleWarnings)
   const rows = planDetails.installments
+  if (paymentPlan && values.totalRepayment != null && rows.length
+    && rows.every(row => row.amount !== '')
+    && Number(values.totalInstallments) === rows.length
+    && rows.reduce((sum, row) => sum + Math.round(Number(row.amount) * 100), 0) !== Math.round(Number(values.totalRepayment) * 100)) {
+    warnings.push('The scanned installment amounts do not match the stated total repayment. Review both before saving.')
+  }
   const planTerms = rows.length ? {
     count: String(rows.length),
     firstDate: rows.every(row => row.dueDate) ? rows.map(row => row.dueDate).sort()[0] : '',
-    frequency: inferPaymentFrequency(rows)
+    frequency: inferPaymentFrequency(rows) || planDetails.partialFrequency
   } : null
   return {
     values, missing: missing.filter(key => !Object.hasOwn(values, key)),
     conflicts: conflicts.filter(key => !Object.hasOwn(values, key)),
-    ...(rows.length ? { installments: rows, planTerms } : {}), ...(warnings.length ? { warnings } : {})
+    ...(rows.length ? { installments: rows, planTerms } : {}),
+    ...(paymentPlan && planDetails.unresolvedDates.length ? { dateHints: planDetails.dateHints } : {}),
+    ...(warnings.length ? { warnings } : {})
   }
 }
 
 export function parsePaymentPlanScan(lines) {
-  return parseDebtStatement(lines, { paymentPlan: true })
+  return parseDebtStatement(pairHorizontalTimeline(lines), { paymentPlan: true })
 }
 
 const ROW_DATE = /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?,?\s+\d{4})\b/i
@@ -307,6 +330,34 @@ const PARTIAL_ROW_DATE = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|
 const INSTALLMENT_LABEL = /^(?:installment|payment)\s*#?\s*\d+\b(?:\s*(?:of|\/)\s*\d+)?\s*[:.)-]?\s*/i
 const INSTALLMENT_STATUS = /^(?:paid|completed|unpaid|not paid|not completed|upcoming|scheduled|due|pending|overdue|autopay)$/i
 const INSTALLMENT_AMOUNT_CELL = /^(?:(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue)\s+)?(?:\$\s*[\d,.]+|(?:USD\s*)?\d[\d,]*\.\d{2}(?:\s*USD)?)(?:\s+(?:paid|completed|due|upcoming|scheduled|unpaid|pending|overdue))?$/i
+
+function pairHorizontalTimeline(lines) {
+  const result = []
+  const datePattern = `${ROW_DATE.source}|${PARTIAL_ROW_DATE.source}`
+  const datesIn = line => [...line.matchAll(new RegExp(datePattern, 'gi'))]
+  const amountsIn = line => [...line.matchAll(MONEY)]
+  const empty = text => !text.replace(/[\s|·•-]/g, '')
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const next = lines[index + 1] ?? ''
+    const pairs = [...line.matchAll(new RegExp(`(${datePattern})\\s+(\\$\\s*[\\d,]+(?:\\.\\d{1,2})?)`, 'gi'))]
+    if (pairs.length > 1 && empty(line.replace(new RegExp(`(${datePattern})\\s+(\\$\\s*[\\d,]+(?:\\.\\d{1,2})?)`, 'gi'), ''))) {
+      result.push(...pairs.map(pair => `${pair[1]} ${pair[2]}`))
+      continue
+    }
+    const datesFirst = datesIn(line).length > 1
+    const dateLine = datesFirst ? line : next
+    const amountLine = datesFirst ? next : line
+    const dates = datesIn(dateLine)
+    const amounts = amountsIn(amountLine)
+    if (dates.length > 1 && dates.length === amounts.length
+      && empty(dateLine.replace(new RegExp(datePattern, 'gi'), '')) && empty(amountLine.replace(MONEY, ''))) {
+      result.push(...dates.map((date, i) => `${date[0]} ${amounts[i][0]}`))
+      index += 1
+    } else result.push(line)
+  }
+  return result
+}
 
 function installmentAmount(text) {
   if (/\bCR\b/i.test(text)) return ''
@@ -355,7 +406,7 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
   for (let index = 0; index < lines.length; index += 1) {
     const timeline = paymentPlan && index > timelineStart
     const line = cleanRowLine(lines[index], timeline)
-    const brand = /^(?:provider\s*:\s*)?(Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)(?:\s*[-:]\s*.*|\s+(?:payment plan|payment schedule|pay in (?:3|4)))?$/i.exec(line)
+    const brand = /^(?:provider\s*:\s*)?(OnePay Later(?:,?\s+powered by Klarna)?|Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)(?:\s*[-:]\s*.*|\s+(?:payment plan|payment schedule|pay in (?:3|4))|\s+\[\?\])?$/i.exec(line)
     if (brand) provider.add(brand[1])
     const namedProvider = paymentPlan && /^provider\s*:\s*(.+)$/i.exec(line)
     if (namedProvider && parseValue('provider', namedProvider[1])) provider.add(namedProvider[1])
@@ -412,14 +463,22 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
     }
   }
   resolveYearlessRows(installments)
+  const relevantRows = installments.filter(row => row.labeled || row.dueDate || row.amount)
+  const dateHints = relevantRows.map(row => !row.dueDate && row.partial
+    ? `${MONTHS[row.partial.month - 1].slice(0, 3)} ${row.partial.day}` : '')
+  const unresolvedDates = dateHints.filter(Boolean)
+  const partialRows = installments.map(row => row.partial)
+  const partialFrequency = partialRows.length > 1 && partialRows.every(Boolean)
+    && partialRows.every((date, index) => !index || (date.month === partialRows[index - 1].month % 12 + 1 && date.day === partialRows[0].day))
+    ? 'monthly' : ''
   // An unlabeled match with neither a usable date nor an amount is OCR noise, not an installment.
-  const rows = installments.filter(row => row.labeled || row.dueDate || row.amount)
+  const rows = relevantRows
     .map(({ dueDate, amount, paid, status }) => ({ dueDate, amount, paid, ...(status ? { status } : {}) }))
   if (provider.size === 1) values.provider = [...provider][0]
   if (merchants.size === 1) values.merchant = [...merchants][0]
   if (categories.size === 1) values.purchaseCategory = [...categories][0]
   const planContext = paymentPlan || provider.size > 0 || lines.some(line => /\b(?:installments?|payments completed|payment plan|pay in \d+|\d+ (?:monthly |biweekly )?payments)\b/i.test(line))
-  return { values, installments: planContext ? rows : [] }
+  return { values, installments: planContext ? rows : [], unresolvedDates, dateHints, partialFrequency }
 }
 
 export const BILL_STATEMENT_FIELDS = [
@@ -521,7 +580,8 @@ const trusted = word => word.confidence >= 80
 // becomes a placeholder that no label or amount accepts instead of discarding confident words on the same line.
 function withoutNoise(line) {
   const words = [...(line?.words ?? [])]
-  const edgeNoise = word => !trusted(word) && (!/\d/.test(word.text) || (word.confidence < 40 && !/\d{2}|[$%]/.test(word.text)))
+  const edgeNoise = word => /^[|│¦]$/.test(word.text)
+    || (!trusted(word) && (!/\d/.test(word.text) || (word.confidence < 40 && !/\d{2}|[$%]/.test(word.text))))
   while (words.length && edgeNoise(words[0])) words.shift()
   while (words.length && edgeNoise(words.at(-1))) words.pop()
   if (!words.some(word => trusted(word) && /[\da-z]/i.test(word.text))) return null
@@ -582,9 +642,42 @@ function pairInstallmentColumns(lines) {
   return result
 }
 
+// Low-confidence yearless dates are hints only: a full date must still be entered by the user.
+function horizontalDateHints(rawLines, lines) {
+  const result = [...lines]
+  for (let index = 0; index + 1 < rawLines.length; index += 1) {
+    const words = rawLines[index]?.words ?? []
+    const amounts = rawLines[index + 1]?.words ?? []
+    if (words.length < 4 || words.length !== amounts.length * 2) continue
+    const pairs = amounts.map((amount, i) => {
+      const month = words[i * 2]
+      const day = words[i * 2 + 1]
+      const monthIndex = MONTHS.findIndex(item => item === month.text.toLowerCase() || item.slice(0, 3) === month.text.toLowerCase())
+      const value = Number(day.text)
+      const dateBox = lineBounds({ words: [month, day] })
+      const amountBox = lineBounds({ words: [amount] })
+      if (!trusted(amount) || !/^\$\s*[\d,]+\.\d{2}$/.test(amount.text)
+        || !dateBox || !amountBox || amountBox.y0 < dateBox.y0
+        || amountBox.y0 - dateBox.y1 > (dateBox.y1 - dateBox.y0) * 2
+        || amountBox.x1 < dateBox.x0 || amountBox.x0 > dateBox.x1) return null
+      const date = monthIndex >= 0 && /^\d{1,2}$/.test(day.text) && isoDate(2000, monthIndex + 1, value)
+        ? `${month.text} ${day.text}` : ''
+      return { ...lines[index], text: `Installment ${i + 1} ${date} ${amount.text}` }
+    })
+    if (pairs.every(Boolean) && lines[index + 1] && pairs.length === amounts.length) {
+      result[index] = pairs
+      result[index + 1] = undefined
+      index += 1
+    }
+  }
+  return result.flat()
+}
+
 export function getReliableOcrLines(data, { paymentPlan = false } = {}) {
-  const source = (data.blocks ?? []).flatMap(block => block.paragraphs ?? [])
-    .flatMap(paragraph => paragraph.lines ?? []).map(withoutNoise)
+  const raw = (data.blocks ?? []).flatMap(block => block.paragraphs ?? [])
+    .flatMap(paragraph => paragraph.lines ?? [])
+  const filtered = raw.map(withoutNoise)
+  const source = paymentPlan ? horizontalDateHints(raw, filtered) : filtered
   const lines = paymentPlan ? pairInstallmentColumns(source) : source
   return lines.flatMap((line, index) => {
     if (line === undefined) return []

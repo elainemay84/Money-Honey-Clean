@@ -81,15 +81,15 @@ export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldSty
               <span className="payment-plan-row-chevron" aria-hidden="true">›</span>
             </summary>
             <div className="payment-plan-row-editor">
-              <label style={labelStyle}>Due Date
+              <label style={labelStyle}>Due Date {row.scannedDate && `(scanned ${row.scannedDate}; confirm date and year)`}
                 <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate} disabled={locked}
-                  onChange={event => change(index, { dueDate: event.target.value })} style={fieldStyle} />
+                  onChange={event => change(index, { dueDate: event.target.value, scannedDate: '' })} style={fieldStyle} />
               </label>
               <label style={labelStyle}>Amount
                 <FinancialInput aria-label={`Installment ${index + 1} amount`} value={row.amount} disabled={locked}
                   onChange={event => change(index, { amount: event.target.value })} style={fieldStyle} />
               </label>
-              <label style={labelStyle}>Status
+              <label style={labelStyle}>Payment Status
                 <select aria-label={`Installment ${index + 1} status`} value={locked ? 'paid' : getInstallmentStatus(row)} disabled={locked}
                   style={fieldStyle}
                   onChange={event => change(index, { status: event.target.value, paid: event.target.value === 'paid' })}>

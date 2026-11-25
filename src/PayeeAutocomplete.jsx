@@ -10,6 +10,7 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
   const inputRef = useRef(null)
   const menuRef = useRef(null)
   const menuPointer = useRef(false)
+  const touchStart = useRef(null)
   const key = payeeMatchKey(value)
   const matches = payees.filter(name => payeeMatchKey(name).includes(key))
   const canSave = Boolean(value.trim()) && !payees.some(name => payeeMatchKey(name) === key)
@@ -52,6 +53,19 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
       wrapperRef.current?.querySelector(`#transaction-payee-option-${activeIndex}`)?.scrollIntoView?.({ block: 'nearest' })
     }
   }, [activeIndex, showMenu])
+
+  useEffect(() => {
+    if (!showMenu) return
+    const closeOutside = event => {
+      if (!wrapperRef.current?.contains(event.target)) {
+        menuPointer.current = false
+        setIsOpen(false)
+        setActiveIndex(-1)
+      }
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [showMenu])
 
   function choose(name) {
     inputRef.current?.focus()
@@ -132,19 +146,23 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
           onPointerDown={event => {
             menuPointer.current = true
             if (event.pointerType === 'mouse') event.preventDefault()
+            if (event.pointerType === 'touch') touchStart.current = { x: event.clientX, y: event.clientY, target: event.target.closest('button') }
           }}
-          onPointerUp={() => {
-            setTimeout(() => {
-              menuPointer.current = false
-              if (!wrapperRef.current?.contains(document.activeElement)) {
-                setIsOpen(false)
-                setActiveIndex(-1)
-              }
-            }, 0)
+          onPointerUp={event => {
+            const start = touchStart.current
+            touchStart.current = null
+            if (event.pointerType === 'touch' && start?.target
+              && start.target === event.target.closest('button')
+              && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 10) {
+              const index = Number(start.target.dataset.payeeIndex)
+              if (start.target.dataset.payeeIndex !== undefined) choose(matches[index])
+              else if (start.target.classList.contains('payee-autocomplete-save')) save()
+            }
+            menuPointer.current = false
           }}
           onPointerCancel={() => {
+            touchStart.current = null
             menuPointer.current = false
-            if (!wrapperRef.current?.contains(document.activeElement)) setIsOpen(false)
           }}>
           {matches.length > 0 && (
             <div id="transaction-payee-options" role="listbox" aria-label="Saved payee suggestions" className="payee-autocomplete-options">
@@ -153,6 +171,7 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
                   type="button"
                   role="option"
                   id={`transaction-payee-option-${index}`}
+                  data-payee-index={index}
                   aria-selected={index === activeIndex}
                   key={name}
                   onClick={() => choose(name)}
