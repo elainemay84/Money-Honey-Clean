@@ -131,6 +131,18 @@ function isoDate(year, month, day) {
   return parseDate(value)
 }
 
+export function resolveScannedMonthlyDates(rows, firstDate) {
+  if (!parseDate(firstDate) || rows.length < 2 || rows.some(row => row.dueDate || !row.scannedDate)) return null
+  const partials = rows.map(row => parseDatePrefix(row.scannedDate))
+  if (partials.some(date => !date || typeof date === 'string')) return null
+  const [year, month, day] = firstDate.split('-').map(Number)
+  if (partials[0].month !== month || partials[0].day !== day
+    || partials.some((date, index) => date.day !== day || date.month !== (month - 1 + index) % 12 + 1)) return null
+  const dates = partials.map((date, index) => isoDate(year + Math.floor((month - 1 + index) / 12), date.month, date.day))
+  if (dates.some(date => !date)) return null
+  return rows.map((row, index) => ({ ...row, dueDate: dates[index] }))
+}
+
 export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
   const candidates = Object.fromEntries(STATEMENT_FIELDS.map(field => [field.key, new Set()]))
   const scheduledPayments = new Set()
@@ -301,6 +313,27 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
   }
   warnings.push(...scheduleWarnings)
   const rows = planDetails.installments
+  if (paymentPlan && planDetails.partialFrequency === 'monthly' && Number(values.totalInstallments) === rows.length
+    && rows.length >= 4 && rows.every(row => row.amount !== '') && values.totalRepayment != null) {
+    const monthlyAmounts = new Set(textLines.flatMap(line => {
+      const match = /^\s*(\$\s*[\d,]+\.\d{2})\s+per month\s*$/i.exec(line)
+      const amount = match && parseValue('nextPaymentAmount', match[1])
+      return amount == null ? [] : [Math.round(Number(amount) * 100)]
+    }))
+    const [regular] = monthlyAmounts
+    const cents = rows.map(row => Math.round(Number(row.amount) * 100))
+    const outliers = cents.slice(0, -1).flatMap((amount, index) => amount !== regular ? [index] : [])
+    if (monthlyAmounts.size === 1 && outliers.length === 1
+      && Math.abs(cents.at(-1) - regular) <= 1
+      && cents.reduce((sum, amount) => sum + amount, 0) - cents[outliers[0]] + regular === Math.round(Number(values.totalRepayment) * 100)) {
+      const original = cents[outliers[0]].toString()
+      const corrected = regular.toString()
+      if (original.length === corrected.length && [...original].filter((digit, index) => digit !== corrected[index]).length === 1) {
+        rows[outliers[0]].amount = (regular / 100).toFixed(2)
+        warnings.push(`Installment ${outliers[0] + 1} was corrected to match the printed monthly payment and total. Review it before saving.`)
+      }
+    }
+  }
   if (paymentPlan && values.totalRepayment != null && rows.length
     && rows.every(row => row.amount !== '')
     && Number(values.totalInstallments) === rows.length
@@ -309,7 +342,7 @@ export function parseDebtStatement(lines, { paymentPlan = false } = {}) {
   }
   const planTerms = rows.length ? {
     count: String(rows.length),
-    firstDate: rows.every(row => row.dueDate) ? rows.map(row => row.dueDate).sort()[0] : '',
+    firstDate: rows.map(row => row.dueDate).filter(Boolean).sort()[0] ?? '',
     frequency: inferPaymentFrequency(rows) || planDetails.partialFrequency
   } : null
   return {

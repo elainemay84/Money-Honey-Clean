@@ -5,7 +5,7 @@ import { createServer } from 'vite'
 import { readFile } from 'node:fs/promises'
 import { createWorker, PSM } from 'tesseract.js'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan } from './statementData.js'
-import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines } from './statementOcrFixture.js'
+import { electricScooterMarkerOcrData, homeDepotOcrData, loveseatActivityLines, onePayCheckoutOcrData } from './statementOcrFixture.js'
 import { createDebtPayment, loadDebts, saveDebts, synchronizeDebtBills } from './debtData.js'
 import { createPayInFourSchedule, createPaymentPlan, createRecurringSchedule, getDebtInstallmentProgress, getInstallmentStatus, scheduleFromForm } from './debtSchedule.js'
 import { createBackupSnapshot, parseBackup, restoreBackup } from './backupData.js'
@@ -2518,18 +2518,13 @@ test('touch pointerup selects before a delayed click after blur', async () => {
 })
 
 test('checkout scan hands exact installments and independent totals to the editable plan form', async () => {
-  const result = parsePaymentPlanScan([
-    'OnePay Later, powered by Klarna', '6 payments', 'Payment schedule',
-    'Dec 18 Jan 18 Feb 18 Mar 18 Apr 18 May 18',
-    '$106.55 $106.55 $106.55 $106.55 $106.55 $106.56',
-    'Purchase amount: $581.23', 'Interest: $58.08 (APR: 33.49%)', 'Total repayment: $639.31'
-  ])
-  const container = await render(() => React.createElement(Debt, { statementExtractor: async () => result }))
+  const container = await render(() => React.createElement(Debt, { statementExtractor: async () =>
+    parsePaymentPlanScan(getReliableOcrLines(onePayCheckoutOcrData, { paymentPlan: true })) }))
   const before = browser.localStorage.getItem('money-honey-debts')
   await openPaymentPlan(container, true)
   await chooseStatementFile(container, 'Statement image')
   const form = container.querySelector('[aria-label="Add payment plan form"]')
-  assert.equal(form.querySelector('[aria-label="Plan provider"]').value, 'OnePay Later, powered by Klarna')
+  assert.equal(form.querySelector('[aria-label="Plan provider"]').value, 'OnePay Later')
   assert.equal(form.querySelector('[aria-label="Purchase amount"]').value, '581.23')
   assert.equal(form.querySelector('[aria-label="Total interest"]').value, '58.08')
   assert.equal(form.querySelector('[aria-label="Total repayment"]').value, '639.31')
@@ -2537,13 +2532,26 @@ test('checkout scan hands exact installments and independent totals to the edita
   assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '')
   assert.equal(form.querySelector('[aria-label="Number of payments"]').value, '6')
   assert.equal(form.querySelector('[aria-label="Generated schedule frequency"]').value, 'monthly')
+  assert.equal(form.querySelector('[aria-label="First payment date"]').value, '')
+  assert.match(form.textContent, /confirm the first payment date and year/i)
   const rows = [...form.querySelectorAll('.payment-plan-row')]
   assert.equal(rows.length, 6)
   assert.match(rows[5].textContent, /\$106\.56/)
+  assert.match(rows[4].textContent, /\$106\.55/)
   await click(rows[5].querySelector('summary'))
   assert.match(rows[5].textContent, /scanned may 18; confirm date and year/i)
   assert.equal(rows[5].querySelector('[aria-label="Installment 6 amount"]').value, '106.56')
   assert.equal(rows[5].querySelector('[aria-label="Installment 6 status"]').value, 'due')
+  await changeValue(form.querySelector('[aria-label="First payment date"]'), '2026-12-19')
+  assert.ok([...form.querySelectorAll('.payment-plan-row-date')].every(row => row.textContent.includes('Missing date')))
+  await changeValue(form.querySelector('[aria-label="First payment date"]'), '2026-12-18')
+  assert.deepEqual([...form.querySelectorAll('.payment-plan-row')].map(row => row.querySelector('.payment-plan-row-date').textContent.trim()),
+    ['2026-12-18', '2027-01-18', '2027-02-18', '2027-03-18', '2027-04-18', '2027-05-18'].map((date, index) => `Installment ${index + 1} · ${date}`))
+  assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '')
+  assert.doesNotMatch(form.textContent, /some scanned dates have no year/i)
+  await changeValue(form.querySelector('[aria-label="Installment 6 date"]'), '2027-05-19')
+  await changeValue(form.querySelector('[aria-label="First payment date"]'), '2027-12-18')
+  assert.equal(form.querySelector('[aria-label="Installment 6 date"]').value, '2027-05-19')
   assert.equal(browser.localStorage.getItem('money-honey-debts'), before)
 })
 

@@ -1,5 +1,27 @@
 // Synthetic Home Depot-style plan screenshot as returned by Tesseract (words, confidence, x-range).
 // Captured from on-device OCR of a generated image; contains no real account data.
+const onePayWord = (text, x0, x1, y0, y1, confidence = 95) => ({
+  text, confidence, bbox: { x0, x1, y0, y1 }
+})
+const onePayLine = (text, y) => ({
+  words: text.split(' ').map((word, index) => onePayWord(word, 20 + index * 90, 90 + index * 90, y, y + 20))
+})
+export const onePayCheckoutOcrData = { blocks: [{ paragraphs: [{ lines: [
+  onePayLine('Checkout', 20),
+  onePayLine('OnePay Later', 50),
+  onePayLine('6 payments', 80),
+  onePayLine('$106.55 per month', 110),
+  { words: ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'].flatMap((month, index) => [
+    onePayWord(month, 20 + index * 120, 55 + index * 120, 160, 180, index === 4 ? 55 : 95),
+    onePayWord('18', 60 + index * 120, 80 + index * 120, 160, 180, index === 4 ? 55 : 95)
+  ]) },
+  { words: ['$106.55', '$106.55', '$106.55', '$106.55', '$108.55', '$106.56']
+    .map((amount, index) => onePayWord(amount, 20 + index * 120, 90 + index * 120, 185, 205)) },
+  onePayLine('Purchase amount $581.23', 230),
+  onePayLine('Interest (33.49% APR) $58.08', 260),
+  onePayLine('Total with interest $639.31', 290)
+] }] }] }
+
 const ocrLines = [
   [['3:03', 96, 97, 191], ['5G', 96, 991, 1043]],
   [['Payment', 96, 426, 634], ['plan', 96, 652, 751]],

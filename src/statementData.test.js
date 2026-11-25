@@ -1,9 +1,44 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, validateStatementSuggestions } from './statementData.js'
-import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData, loveseatActivityLines, wayfairColumnOcrData } from './statementOcrFixture.js'
+import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, resolveScannedMonthlyDates, validateStatementSuggestions } from './statementData.js'
+import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData, loveseatActivityLines, onePayCheckoutOcrData, wayfairColumnOcrData } from './statementOcrFixture.js'
 import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, hasPaymentPlanContent, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
 import { getInstallmentStatus } from './debtSchedule.js'
+
+test('OnePay OCR reconciles one outlier without guessing years or a remaining balance', () => {
+  const lines = getReliableOcrLines(onePayCheckoutOcrData, { paymentPlan: true })
+  const result = parsePaymentPlanScan(lines)
+  assert.deepEqual(result.dateHints, ['dec 18', 'jan 18', 'feb 18', 'mar 18', 'apr 18', 'may 18'])
+  assert.deepEqual(result.installments.map(row => row.amount), ['106.55', '106.55', '106.55', '106.55', '106.55', '106.56'])
+  assert.equal(result.installments.reduce((sum, row) => sum + Math.round(Number(row.amount) * 100), 0), 63931)
+  assert.ok(result.installments.every(row => !row.dueDate))
+  assert.equal(result.values.currentBalance, undefined)
+  assert.equal(result.values.interestRate, '33.49')
+  assert.match(result.warnings.join(' '), /installment 5 was corrected/i)
+  const rows = result.installments.map((row, i) => ({ ...row, scannedDate: result.dateHints[i] }))
+  assert.deepEqual(resolveScannedMonthlyDates(rows, '2026-12-18').map(row => row.dueDate),
+    ['2026-12-18', '2027-01-18', '2027-02-18', '2027-03-18', '2027-04-18', '2027-05-18'])
+  assert.equal(resolveScannedMonthlyDates(rows, '2026-12-19'), null)
+  assert.equal(resolveScannedMonthlyDates(rows.map((row, i) => i === 2 ? { ...row, scannedDate: '' } : row), '2026-12-18'), null)
+  assert.equal(resolveScannedMonthlyDates(rows.map((row, i) => i === 2 ? { ...row, dueDate: '2027-02-20' } : row), '2026-12-18'), null)
+  const invalidMonth = ['jan 31', 'feb 31'].map(scannedDate => ({ dueDate: '', scannedDate }))
+  assert.equal(resolveScannedMonthlyDates(invalidMonth, '2027-01-31'), null)
+  for (const variant of [
+    lines.filter(line => !line.includes('per month')),
+    lines.map(line => line.includes('Total with interest') ? 'Total with interest $640.31' : line),
+    lines.map(line => line.includes('Installment 4') ? line.replace('106.55', '108.55') : line)
+  ]) {
+    const unchanged = parsePaymentPlanScan(variant)
+    assert.equal(unchanged.installments[4].amount, '108.55')
+    assert.match(unchanged.warnings.join(' '), /do not match the stated total repayment/i)
+  }
+})
+
+test('first payment date uses the earliest recognized full installment date', () => {
+  const result = parsePaymentPlanScan(['Payment schedule', 'Payment 1 Dec 18 $10.00', 'Payment 2 Jan 18, 2027 $10.00'])
+  assert.equal(result.planTerms.firstDate, '2027-01-18')
+  assert.equal(result.installments[0].dueDate, '')
+})
 
 test('horizontal checkout timeline retains each amount and asks for missing years', () => {
   const result = parsePaymentPlanScan([
