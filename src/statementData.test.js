@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { getReliableOcrLines, parseBillStatement, parseDebtStatement, parsePaymentPlanScan, validateStatementSuggestions } from './statementData.js'
 import { electricScooterMarkerOcrData, electricScooterOcrData, homeDepotOcrData, loveseatActivityLines, wayfairColumnOcrData } from './statementOcrFixture.js'
-import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
+import { flattenStatementBackground, getPdfTextLines, getStatementFileKind, hasPaymentPlanContent, MAX_STATEMENT_BYTES, statementCanvasScale } from './statementExtraction.js'
 import { getInstallmentStatus } from './debtSchedule.js'
 
 test('Wayfair separate OCR columns pair by row, retaining the final cents and remaining balance', () => {
@@ -72,6 +72,26 @@ test('positioned row matching preserves separate paid and pending status lines a
     assert.deepEqual(rows.map(row => row.amount), ['51.53', '51.53', '51.53', '51.57'])
     assert.deepEqual(rows.map(getInstallmentStatus), ['paid', 'pending', 'due', 'due'])
   }
+})
+
+test('payment plan OCR pairs separate status columns with the correct visible rows', () => {
+  const data = structuredClone(wayfairColumnOcrData)
+  const lines = data.blocks[0].paragraphs[0].lines
+  for (const [index, status] of ['Paid', 'Pending', 'Due', 'Due'].entries()) {
+    const box = lines[6 + index].words[0].bbox
+    lines.push({ text: status, words: [{ text: status, confidence: 96, bbox: { x0: 1100, x1: 1180, y0: box.y0, y1: box.y1 } }] })
+  }
+  const result = parsePaymentPlanScan(getReliableOcrLines(data, { paymentPlan: true }))
+  assert.deepEqual(result.installments.map(getInstallmentStatus), ['paid', 'pending', 'due', 'due'])
+  assert.deepEqual(result.installments.map(row => row.amount), ['51.53', '51.53', '51.53', '51.57'])
+})
+
+test('payment plan partial content includes an explicitly named provider or installment-only result', () => {
+  const result = parsePaymentPlanScan(['Provider: Example Finance'])
+  assert.equal(result.values.provider, 'Example Finance')
+  assert.equal(hasPaymentPlanContent(result), true)
+  assert.equal(hasPaymentPlanContent({ values: {}, installments: [{ dueDate: '', amount: '12.34', paid: false }] }), true)
+  assert.equal(hasPaymentPlanContent({ values: {} }), false)
 })
 
 test('Loveseat Activity retains paid, pending and due rows with exact dates and provider balance', () => {

@@ -90,9 +90,9 @@ test('accounts and transaction changes persist across simulated reloads without 
   assert.deepEqual(reloadedWithDifferentDemos.transactions, transactionDeleted)
 })
 
-test('opening reference date excludes already-included earlier transactions from the summary', () => {
+test('opening reference date excludes earlier transactions from balances, not uncleared net', () => {
   const referenceTransactions = [
-    { id: 1, date: '2026-11-04', amount: 100, cleared: true },
+    { id: 1, date: '2026-11-04', amount: 100, cleared: false },
     { id: 2, date: '2026-11-06', amount: -50, cleared: true },
     { id: 3, date: '2026-11-07', amount: 20, cleared: false },
   ]
@@ -109,7 +109,25 @@ test('opening reference date excludes already-included earlier transactions from
   )
   assert.equal(result.balance, 950)
   assert.equal(result.available, 970)
-  assert.equal(result.unclearedBalance, 20)
+  assert.equal(result.unclearedBalance, 120)
+})
+
+test('uncleared net includes all dates and signs without changing anchored account balances', () => {
+  const rows = [
+    { id: 1, date: '2026-10-30', amount: -40, cleared: false },
+    { id: 2, date: '2026-11-15', amount: 100, cleared: false },
+    { id: 3, date: '2026-12-15', amount: -25.50, cleared: false, linkedBillOccurrenceId: 'bill:1:2026-12-15', linkedDebtId: 7 },
+    { id: 4, date: '2027-01-15', amount: -15, cleared: false, transferId: 't1' },
+    { id: 5, date: '2026-12-16', amount: 50, cleared: true },
+    { id: 6, date: '2026-12-17', amount: -10, cleared: true }
+  ]
+  const original = structuredClone(rows)
+  const result = calculateAccountBalances(1000, rows, 'desc', '2026-11-01')
+  assert.equal(result.unclearedBalance, 19.5)
+  assert.equal(result.balance, 1040)
+  assert.equal(result.available, 1099.5)
+  assert.deepEqual(rows, original)
+  assert.equal(calculateAccountBalances(1000, rows.map(row => row.id === 3 ? { ...row, cleared: true } : row), 'asc', '2026-11-01').unclearedBalance, 45)
 })
 
 test('Accounts Overview renders active account cards and separate management actions', async () => {

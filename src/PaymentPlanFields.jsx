@@ -2,15 +2,16 @@ import { useMemo, useState } from 'react'
 import FinancialInput from './FinancialInput'
 import { createPaymentPlan, generatePaymentPlan, getInstallmentStatus, PAYMENT_FREQUENCY_OPTIONS, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 
-export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldStyle, labelStyle, paymentHistory = [], balance, hasBillHistory = false }) {
+export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldStyle, labelStyle, paymentHistory = [], balance, hasBillHistory = false, allowGenerate = true }) {
   const rows = useMemo(() => sortPaymentPlanInstallments(sourceRows), [sourceRows])
+  const [expanded, setExpanded] = useState(null)
   const [count, setCount] = useState('4')
   const [firstDate, setFirstDate] = useState('')
   const [frequency, setFrequency] = useState('biweekly')
   const [preview, setPreview] = useState(null)
   const [error, setError] = useState('')
   const recorded = new Set(paymentHistory.filter(payment => !payment.reversedAt).map(payment => payment.installmentNumber))
-  const canGenerate = !paymentHistory.length && !hasBillHistory
+  const canGenerate = allowGenerate && !paymentHistory.length && !hasBillHistory
   const visiblePreview = preview?.source === rows && preview.balance === balance ? preview.rows : null
   function change(index, changes) {
     onChange(sortPaymentPlanInstallments(rows.map((row, i) => i === index ? { ...row, ...changes } : row)))
@@ -33,8 +34,7 @@ export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldSty
   return (
     <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'grid', gap: 8 }}>
       <legend>Installments</legend>
-      <p style={{ margin: 0, fontSize: 11 }}>Review scanned dates, amounts and statuses. Paid and pending on statement are tracking only: no bank transactions or balance deductions. Confirm pending payments here when the provider marks them paid.</p>
-      {!rows.length && <p role="status" style={{ margin: 0, fontSize: 11 }}>No installment rows found. Generate a schedule or add the missing installments.</p>}
+      {!rows.length && <p role="status" style={{ margin: 0, fontSize: 11 }}>Add installments or complete the schedule settings.</p>}
       {canGenerate && <details>
         <summary>Generate Schedule</summary>
         <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
@@ -68,35 +68,45 @@ export default function PaymentPlanFields({ rows: sourceRows, onChange, fieldSty
       {rows.map((row, index) => {
         const locked = recorded.has(row.installmentNumber)
         return (
-          <div key={row.installmentNumber} style={{ display: 'grid', gap: 4, paddingBottom: 8, borderBottom: '1px solid #E9D6B7' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-              <label style={labelStyle}>Due date {index + 1}
+          <details key={row.installmentNumber} className="payment-plan-row" open={expanded === row.installmentNumber}>
+            <summary onClick={event => {
+              event.preventDefault()
+              setExpanded(current => current === row.installmentNumber ? null : row.installmentNumber)
+            }}>
+              <span className="payment-plan-row-date"><span className="payment-plan-row-number">Installment {index + 1} · </span>{row.dueDate || 'Missing date'}</span>
+              <strong>{String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'}</strong>
+              <span className={`payment-plan-row-status status-${locked ? 'paid' : getInstallmentStatus(row)}`}>
+                {locked || getInstallmentStatus(row) === 'paid' ? 'Paid' : getInstallmentStatus(row) === 'pending' ? 'Pending' : 'Due'}
+              </span>
+              <span className="payment-plan-row-chevron" aria-hidden="true">›</span>
+            </summary>
+            <div className="payment-plan-row-editor">
+              <label style={labelStyle}>Due Date
                 <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate} disabled={locked}
-                  onChange={event => change(index, { dueDate: event.target.value })} style={fieldStyle} required />
+                  onChange={event => change(index, { dueDate: event.target.value })} style={fieldStyle} />
               </label>
-              <label style={labelStyle}>Amount {index + 1}
+              <label style={labelStyle}>Amount
                 <FinancialInput aria-label={`Installment ${index + 1} amount`} value={row.amount} disabled={locked}
-                  onChange={event => change(index, { amount: event.target.value })} style={fieldStyle} required />
+                  onChange={event => change(index, { amount: event.target.value })} style={fieldStyle} />
               </label>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-              <label style={{ fontSize: 12 }}>Status
+              <label style={labelStyle}>Status
                 <select aria-label={`Installment ${index + 1} status`} value={locked ? 'paid' : getInstallmentStatus(row)} disabled={locked}
+                  style={fieldStyle}
                   onChange={event => change(index, { status: event.target.value, paid: event.target.value === 'paid' })}>
                   <option value="due">Due</option>
                   <option value="pending">Pending</option>
                   <option value="paid">{locked ? 'Paid in Accounts / Bills' : 'Paid on statement'}</option>
                 </select>
               </label>
-              <button type="button" disabled={locked} onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remove installment {index + 1}</button>
+              <button type="button" className="payment-plan-remove" disabled={locked} onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remove installment {index + 1}</button>
             </div>
-          </div>
+          </details>
         )
       })}
-      <button type="button" onClick={() => onChange([...rows, {
+      <button type="button" onClick={() => onChange(sortPaymentPlanInstallments([...rows, {
         dueDate: '', amount: '', paid: false,
         installmentNumber: Math.max(0, ...rows.map((row, index) => row.installmentNumber ?? index + 1)) + 1
-      }])}>Add installment</button>
+      }]))}>Add installment</button>
     </fieldset>
   )
 }

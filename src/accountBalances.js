@@ -67,7 +67,7 @@ export function calculateAccountBalances(
   const projectedBalance = includedTransactions
     .reduce((balance, transaction) => balance + transaction.amount, openingBalance)
 
-  const unclearedBalance = includedTransactions
+  const unclearedBalance = transactions
     .filter(transaction => !transaction.cleared)
     .reduce((balance, transaction) => balance + transaction.amount, 0)
 

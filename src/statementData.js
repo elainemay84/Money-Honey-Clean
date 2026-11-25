@@ -357,6 +357,8 @@ export function parsePaymentPlanStatement(lines, { paymentPlan = false } = {}) {
     const line = cleanRowLine(lines[index], timeline)
     const brand = /^(?:provider\s*:\s*)?(Afterpay|Klarna|Affirm|PayPal(?: Pay Later| Pay in (?:3|4))?)(?:\s*[-:]\s*.*|\s+(?:payment plan|payment schedule|pay in (?:3|4)))?$/i.exec(line)
     if (brand) provider.add(brand[1])
+    const namedProvider = paymentPlan && /^provider\s*:\s*(.+)$/i.exec(line)
+    if (namedProvider && parseValue('provider', namedProvider[1])) provider.add(namedProvider[1])
     const merchant = /^(?:merchant|purchased? (?:at|from)|store)\s*:\s*(.+)$/i.exec(line)
     if (merchant && parseValue('merchant', merchant[1])) merchants.add(merchant[1])
     const category = /^(?:purchase )?category\s*:\s*(.+)$/i.exec(line)
@@ -545,7 +547,8 @@ function pairInstallmentColumns(lines) {
     && !installmentAmount(line.text) && !line.text.includes('$'))
   const amounts = entries.filter(({ line }) => installmentAmount(line.text)
     && INSTALLMENT_AMOUNT_CELL.test(line.text))
-  if (!dates.length || !amounts.length) return lines
+  const statuses = entries.filter(({ line }) => INSTALLMENT_STATUS.test(line.text))
+  if (!dates.length || (!amounts.length && !statuses.length)) return lines
   const sameRow = (a, b) => Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0)
     >= Math.min(a.y1 - a.y0, b.y1 - b.y0) * 0.5
   const matches = dates.map(date => ({
@@ -566,6 +569,15 @@ function pairInstallmentColumns(lines) {
     if (matches.filter(other => other.amounts.includes(amount)).length !== 1) continue
     result[date.index] = { ...date.line, text: `${date.line.text} ${amount.line.text}` }
     result[amount.index] = undefined
+  }
+  for (const date of matches) {
+    const matchesStatus = statuses.filter(status => status.box.x0 > date.box.x1 && sameRow(date.box, status.box))
+    if (matchesStatus.length !== 1) continue
+    const [status] = matchesStatus
+    if (matches.filter(other => other.box.x1 < status.box.x0 && sameRow(other.box, status.box)).length !== 1) continue
+    if (/\b(?:paid|completed|unpaid|pending|due|upcoming|scheduled|overdue)\b/i.test(result[date.index].text)) continue
+    result[date.index] = { ...result[date.index], text: `${result[date.index].text} ${status.line.text}` }
+    result[status.index] = undefined
   }
   return result
 }

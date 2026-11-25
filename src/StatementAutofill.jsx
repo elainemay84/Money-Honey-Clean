@@ -150,7 +150,7 @@ export default function StatementAutofill({
             ? `We found ${installments.length} installment rows. Review and complete the rest.`
             : suggestedFields.length
             ? `We found ${suggestedFields.length} ${suggestedFields.length === 1 ? 'field' : 'fields'}. Review and complete the rest.`
-            : 'We read text, but could not match any debt fields. You can enter them manually.'}</p>}
+            : `We read text, but could not match any ${mode === 'payment plan' ? 'payment plan details' : 'debt fields'}. You can enter them manually.`}</p>}
           {(suggestedFields.length > 0 || installments?.length > 0) && (
             <div aria-label="Review statement suggestions" style={{ display: 'grid', gap: 8, marginTop: 10 }}>
               <strong>Review extracted values</strong>
