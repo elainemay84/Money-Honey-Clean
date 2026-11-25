@@ -298,6 +298,7 @@ test('Future Payments hides ordinary debts, reads saved legacy installment sched
   assert.match(future.querySelector('summary').textContent, /4 upcoming/)
   assert.deepEqual([...future.querySelectorAll('li strong')].map(item => item.textContent), ['$25.00', '$25.00', '$25.00', '$25.03'])
   await click(button(container, 'Close debt details'))
+  await click(button(container, 'Paid Off 1'))
   await click(container.querySelector('[aria-label="Debt row: Completed plan"]'))
   assert.match(container.querySelector('.debt-future-payments').textContent, /0 upcoming.*No upcoming installments\./s)
 })
@@ -580,6 +581,38 @@ test('partial scanned cards populate recognized fields and preserve missing valu
   assert.equal(container.querySelector('form'), null)
   assert.equal(loadDebts()[0].paymentSchedule.installments[2].amount, 29.99)
   assert.deepEqual(readAccountData(), before)
+})
+
+test('partial payment plan scans never generate unseen installments and rows expand one at a time', async () => {
+  const before = readAccountData()
+  const container = await render(() => React.createElement(Debt, {
+    statementExtractor: async () => parsePaymentPlanScan(['Provider: Example Finance', 'Remaining balance: $40'])
+  }))
+  await openPaymentPlan(container, true)
+  await chooseStatementFile(container, 'Statement image')
+  const form = container.querySelector('[aria-label="Add payment plan form"] form')
+  await changeValue(form.querySelector('[aria-label="Number of payments"]'), '2')
+  await changeValue(form.querySelector('[aria-label="First payment date"]'), '2027-01-01')
+  await changeValue(form.querySelector('[aria-label="Generated schedule frequency"]'), 'monthly')
+  assert.equal(form.querySelectorAll('.payment-plan-row').length, 0)
+  await click(button(form, 'Add installment'))
+  await click(button(form, 'Add installment'))
+  let rows = form.querySelectorAll('.payment-plan-row')
+  assert.ok([...rows].every(row => !row.open))
+  await click(rows[0].querySelector('summary'))
+  assert.equal(rows[0].open, true)
+  await click(rows[1].querySelector('summary'))
+  assert.equal(rows[0].open, false)
+  assert.equal(rows[1].open, true)
+  await changeValue(form.querySelector('[aria-label="Installment 2 amount"]'), '12.34')
+  await changeValue(form.querySelector('[aria-label="Installment 2 status"]'), 'pending')
+  await changeValue(form.querySelector('[aria-label="Installment 2 date"]'), '2027-01-02')
+  rows = form.querySelectorAll('.payment-plan-row')
+  assert.equal(rows[0].open, true)
+  assert.equal(form.querySelector('[aria-label="Installment 1 amount"]').value, '12.34')
+  assert.equal(form.querySelector('[aria-label="Installment 1 status"]').value, 'pending')
+  assert.deepEqual(readAccountData(), before)
+  assert.equal(loadDebts().length, 0)
 })
 
 test('scanned and manually inserted installments reorder automatically, keeping expansion and payment details attached', async () => {
@@ -2434,6 +2467,38 @@ test('payee autocomplete filters on focus and typing, selects without changing t
   assert.equal(readAccountData().transactions.find(item => item.id === 2).name, 'Beta Market')
 })
 
+test('touch selection survives blur and rerenders in Home Quick Add and regular Add Transaction', async () => {
+  savePayees(['Alpha Shop'], browser.localStorage)
+  const data = readAccountData()
+  data.accounts[0].isMain = true
+  saveAccountData(data.accounts, data.transactions)
+  const before = readAccountData()
+  const container = await render(App)
+  for (const quick of [true, false]) {
+    await click(button(container, 'Open quick add menu'))
+    await click(button(container, quick ? 'Quick Add Transaction' : 'Main Account'))
+    if (!quick) await click(button(container, 'Add transaction'))
+    const dialog = container.querySelector('[role="dialog"]')
+    const input = dialog.querySelector('[aria-label="Payee or description"]')
+    await act(async () => input.focus())
+    await changeValue(input, 'alpha')
+    const option = dialog.querySelector('[role="option"]')
+    await act(async () => {
+      option.dispatchEvent(new browser.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }))
+      option.dispatchEvent(new browser.PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' }))
+      input.blur()
+      option.dispatchEvent(new browser.MouseEvent('click', { bubbles: true }))
+    })
+    assert.equal(input.value, 'Alpha Shop')
+    assert.equal(input.getAttribute('aria-expanded'), 'false')
+    await changeValue(dialog.querySelector('[aria-label="Amount"]'), '42')
+    await act(async () => input.blur())
+    assert.equal(input.value, 'Alpha Shop')
+    await click(button(dialog, 'Close add transaction'))
+    assert.deepEqual(readAccountData(), before)
+  }
+})
+
 test('quick-saving a payee persists without saving a transaction, prevents formatting duplicates, and round-trips backup', async () => {
   savePayees(["Joe's Market"], browser.localStorage)
   const data = readAccountData()
@@ -2655,6 +2720,61 @@ test('ordinary transaction deletion requires confirmation, persists, and recalcu
   const billData = JSON.parse(browser.localStorage.getItem('money-honey-bills'))
   assert.equal(billData.bills[0].name, 'Electric')
   assert.equal(billData.incomes[0].name, 'Paycheck')
+})
+
+test('account uncleared net reconciles future and pre-opening register entries immediately per account', async () => {
+  const accounts = [
+    { id: 1, name: 'Checking', type: 'Checking', openingBalance: 1000, openingDate: '2026-11-06', defaultCleared: false, archived: false },
+    { id: 2, name: 'Savings', type: 'Savings', openingBalance: 200, openingDate: '2026-11-06', defaultCleared: false, archived: false }
+  ]
+  const transactions = [
+    { id: 1, sequence: 1, accountId: 1, name: 'Earlier', amount: -30, date: '2026-11-01', cleared: false },
+    { id: 2, sequence: 2, accountId: 1, name: 'Linked bill', amount: -100, date: '2026-12-10', cleared: false, linkedBillOccurrenceId: 'bill:99:2026-12-10', linkedDebtId: 99 },
+    { id: 3, sequence: 3, accountId: 1, name: 'Future deposit', amount: 40, date: '2027-01-10', cleared: false },
+    { id: 4, sequence: 4, accountId: 1, name: 'Cleared deposit', amount: 10, date: '2026-12-11', cleared: true },
+    { id: 5, sequence: 5, accountId: 1, name: 'Cleared expense', amount: -5, date: '2026-12-12', cleared: true },
+    { id: 6, sequence: 6, accountId: 2, name: 'Transfer out', amount: -70, date: '2026-12-13', cleared: false, transferId: 'transfer-1' },
+    { id: 7, sequence: 7, accountId: 2, name: 'Other deposit', amount: 25, date: '2027-01-10', cleared: false },
+    { id: 8, sequence: 8, accountId: 1, name: 'Transfer in', amount: 70, date: '2026-12-13', cleared: false, transferId: 'transfer-1' }
+  ]
+  saveAccountData(accounts, transactions)
+  const before = readAccountData()
+  const billsBefore = browser.localStorage.getItem('money-honey-bills')
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  const values = () => [...container.querySelectorAll('.account-summary-value')].map(item => item.textContent)
+  assert.deepEqual(values(), ['$1,005.00', '$1,015.00', '$20.00'])
+  assert.match(container.querySelector('[aria-label="Account balances"]').textContent, /Going out/)
+  assert.deepEqual(readAccountData(), before)
+  assert.equal(browser.localStorage.getItem('money-honey-bills'), billsBefore)
+  await click(button(container.querySelector('[data-transaction-id="1"]'), 'Mark cleared'))
+  assert.deepEqual(values(), ['$1,005.00', '$1,015.00', '$10.00'])
+  assert.match(container.querySelector('[aria-label="Account balances"]').textContent, /Coming in/)
+  await click(container.querySelector('[data-transaction-id="3"]'))
+  let dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '80')
+  await submit(dialog.querySelector('form'))
+  assert.deepEqual(values(), ['$1,005.00', '$1,055.00', '$50.00'])
+  await click(button(container, 'Add transaction'))
+  dialog = container.querySelector('[role="dialog"]')
+  await changeValue(dialog.querySelector('[aria-label="Payee or description"]'), 'Added expense')
+  await changeValue(dialog.querySelector('[aria-label="Amount"]'), '10')
+  await submit(dialog.querySelector('form'))
+  assert.equal(values()[2], '$40.00')
+  const added = readAccountData().transactions.find(item => item.name === 'Added expense')
+  await click(container.querySelector(`[data-transaction-id="${added.id}"]`))
+  await click(button(container.querySelector('[role="dialog"]'), 'Delete Transaction'))
+  await click(button(container.querySelector('[aria-labelledby="delete-transaction-title"]'), 'Delete'))
+  assert.equal(values()[2], '$50.00')
+  const linked = container.querySelector('[data-transaction-id="2"]')
+  await click(button(linked, 'Mark cleared'))
+  assert.equal(values()[2], '$150.00')
+  await click(button(linked, 'Mark pending'))
+  assert.equal(values()[2], '$50.00')
+  assert.equal(browser.localStorage.getItem('money-honey-bills'), billsBefore)
+  await click(button(container, '‹ Accounts'))
+  await click(container.querySelector('[data-account-id="2"]'))
+  assert.deepEqual(values(), ['$200.00', '$155.00', '$45.00'])
 })
 
 test('deleting a linked recurring debt transaction reverses only its bill occurrence and debt payment', async () => {
@@ -3575,11 +3695,58 @@ test('Credit-card debt card opens the edit form directly with no payment managem
   storedDebts.debts[0].currentBalance = 0
   browser.localStorage.setItem('money-honey-debts', JSON.stringify(storedDebts))
   await act(async () => browser.dispatchEvent(new browser.Event('money-honey-debts-updated')))
+  await click(button(container, 'Paid Off 1'))
   await click(button(await openEdit(), 'Archive Debt'))
   assert.equal(container.querySelector('[aria-label="Debt row: Store card debt"]'), null)
   await click(container.querySelector('[aria-label="Show Archived Debts"]'))
   await click(button(await openEdit(), 'Restore Debt'))
   assert.ok(container.querySelector('[aria-label="Debt row: Store card debt"]'))
+})
+
+test('paid-off debts move into a collapsed group and return when edited without changing history', async () => {
+  saveDebts([{
+    id: 7, name: 'Finished loan', type: 'Other', startingBalance: 100, currentBalance: 20,
+    minimumPayment: null, interestRate: 0, accountId: 1, assignedTo: 'E', purchaseCategory: 'Shopping',
+    paymentHistory: []
+  }, {
+    id: 8, name: 'Pending plan', type: 'Other', startingBalance: 50, currentBalance: 0,
+    minimumPayment: null, interestRate: 0, accountId: 1, paymentHistory: [],
+    paymentSchedule: createPaymentPlan([
+      { dueDate: '2027-01-01', amount: 25, paid: true },
+      { dueDate: '2027-02-01', amount: 25, status: 'pending', paid: false }
+    ])
+  }])
+  const container = await render(Debt)
+  const pendingBefore = structuredClone(loadDebts().find(debt => debt.id === 8))
+  assert.equal(button(container, 'Paid Off 1').getAttribute('aria-expanded'), 'false')
+  assert.equal(container.querySelector('[aria-label="Debt row: Pending plan"]'), null)
+  assert.ok(container.querySelector('[aria-label="Debt row: Finished loan"]'))
+  await act(async () => createDebtPayment(7, 'final', { total: 20, principal: 20, date: localDate(), accountId: 1 }))
+  const afterPayment = structuredClone(loadDebts())
+  const accountsAfterPayment = readAccountData()
+  assert.equal(container.querySelector('[aria-label="Debt row: Finished loan"]'), null)
+  assert.equal(button(container, 'Paid Off 2').getAttribute('aria-expanded'), 'false')
+  const summary = container.querySelector('[aria-label="Overall debt progress"]')
+  assert.match(summary.textContent, /TOTAL DEBT REMAINING\s*\$0\.00/)
+  assert.match(summary.textContent, /TOTAL PAID OFF\s*\$150\.00/)
+  await click(button(container, 'Paid Off 2'))
+  assert.ok(container.querySelector('[aria-label="Debt row: Pending plan"]'))
+  assert.deepEqual(loadDebts().find(debt => debt.id === 8), pendingBefore)
+  await click(container.querySelector('[aria-label="Debt row: Finished loan"]'))
+  assert.match(container.querySelector('[aria-label="Payment History"]').textContent, /\$20\.00/)
+  await click(button(container, 'Edit Debt'))
+  const form = container.querySelector('[aria-label="Edit debt form"] form')
+  await changeValue(form.querySelector('[aria-label="Current balance · amount still owed"]'), '15')
+  await submit(form)
+  assert.ok(container.querySelector('[aria-label="Debt row: Finished loan"]'))
+  assert.equal(button(container, 'Paid Off 1').getAttribute('aria-expanded'), 'true')
+  const restored = loadDebts().find(debt => debt.id === 7)
+  assert.equal(restored.currentBalance, 15)
+  assert.deepEqual(restored.paymentHistory, afterPayment.find(debt => debt.id === 7).paymentHistory)
+  assert.equal(restored.assignedTo, 'E')
+  assert.equal(restored.purchaseCategory, 'Shopping')
+  assert.deepEqual(readAccountData(), accountsAfterPayment)
+  assert.deepEqual(loadDebts().find(debt => debt.id === 8), pendingBefore)
 })
 
 test('Delete Debt removes an unpaid duplicate after confirmation and keeps linked transactions', async () => {

@@ -121,6 +121,7 @@ export default function Debt({ statementExtractor } = {}) {
   const [accountData, setAccountData] = useState(() => loadSavedAccountData())
   const [bills, setBills] = useState(() => loadBillData([]).bills)
   const [showArchived, setShowArchived] = useState(false)
+  const [showPaidOff, setShowPaidOff] = useState(false)
   const [selectedDebtId, setSelectedDebtId] = useState(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [addMode, setAddMode] = useState(null)
@@ -141,6 +142,8 @@ export default function Debt({ statementExtractor } = {}) {
   const [assigneeName, setAssigneeName] = useState('')
   const [assigneeError, setAssigneeError] = useState('')
   const visibleDebts = debts.filter(debt => showArchived || !debt.archived)
+  const activeDebts = visibleDebts.filter(debt => debt.currentBalance !== 0)
+  const paidOffDebts = visibleDebts.filter(debt => debt.currentBalance === 0)
   const debtSummary = calculateOverallDebtSummary(visibleDebts)
   const editingDebt = debts.find(debt => debt.id === editingDebtId) ?? null
   const editingDebtBill = editingDebt
@@ -517,6 +520,65 @@ export default function Debt({ statementExtractor } = {}) {
     cursor: 'pointer'
   }
 
+  function renderDebtCard(debt) {
+    const scheduleStatus = scheduleStatusByDebt.get(debt.id)
+    const dueLabel = scheduleStatus.isDueToday ? 'Due Today' : `Due ${displayDate(scheduleStatus.nextDueDate)}`
+    return (
+      <button
+        type="button"
+        key={debt.id}
+        aria-label={`Debt row: ${debt.name}`}
+        onClick={() => setSelectedDebtId(debt.id)}
+        style={{
+          display: 'block', width: '100%', minWidth: 0, margin: 0, padding: '8px 10px 7px',
+          border: '1px solid #E9D6B7', borderRadius: 13,
+          background: debt.archived ? '#F7F1E9' : '#FFFFFF',
+          color: '#493320', textAlign: 'left', cursor: 'pointer', boxShadow: '0 1px 5px #7655220C'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', minWidth: 0 }}>
+          <span style={{ display: 'block', minWidth: 0 }}>
+            <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: 1.25 }}>
+              {debt.name}{debt.archived ? ' · Archived' : ''}
+            </strong>
+            <span style={{ display: 'block', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#9B7955', fontSize: 10, lineHeight: 1.3 }}>
+              {debt.type} · {dueLabel}
+              {debt.accountLast4 ? ` · ••${debt.accountLast4}` : ''}
+              {getDebtAssignee(debt) ? ` · ${getDebtAssignee(debt)}` : ''}
+              {getDebtInstallmentProgress(debt) ? ` · ${getDebtInstallmentProgress(debt).completed}/${getDebtInstallmentProgress(debt).total} installments` : ''}
+            </span>
+            {scheduleStatus.isPastDue && (
+              <span style={{ display: 'block', marginTop: 2, color: '#B5473C', fontSize: 10, fontWeight: 700, lineHeight: 1.2 }}>
+                Past Due since {displayDate(scheduleStatus.oldestOverdueDate)} · {money(scheduleStatus.overdueAmount)} overdue
+              </span>
+            )}
+          </span>
+          <span style={{ flexShrink: 0, textAlign: 'right' }}>
+            <span style={{ display: 'block', color: '#9B7955', fontSize: 9, lineHeight: 1.15 }}>Balance owing</span>
+            <strong style={{ color: '#79502A', fontSize: 14, lineHeight: 1.25, fontVariantNumeric: 'tabular-nums' }}>{money(debt.currentBalance)}</strong>
+          </span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6, color: '#79502A', fontSize: 10, lineHeight: 1.2 }}>
+          <span>{debt.paymentSchedule?.kind === 'pay-in-4'
+            ? `Next payment ${scheduleStatus.nextPaymentAmount == null ? '—' : money(scheduleStatus.nextPaymentAmount)}`
+            : `Min. payment ${debt.minimumPayment == null ? '—' : money(debt.minimumPayment)}`}</span>
+          <strong>{getDebtRemainingPercent(debt).toFixed(0)}% left to pay</strong>
+        </div>
+        <div
+          role="progressbar"
+          aria-label={`${debt.name} paid off`}
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={Math.round(getDebtProgress(debt))}
+          title={`${getDebtProgress(debt).toFixed(0)}% paid off`}
+          style={{ height: 4, marginTop: 5, overflow: 'hidden', borderRadius: 99, background: '#F1E6D7' }}
+        >
+          <div style={{ width: `${getDebtProgress(debt)}%`, height: '100%', borderRadius: 99, background: '#6E9A72' }} />
+        </div>
+      </button>
+    )
+  }
+
   return (
     <main style={{ maxWidth: 460, margin: 'auto', paddingBottom: ['menu', 'plan-choice'].includes(addMode) ? 196 : 84 }}>
       <ResponsiveText style={{
@@ -569,83 +631,9 @@ export default function Debt({ statementExtractor } = {}) {
         </div>
       </section>
 
-      <section style={{
-        display: 'grid',
-        gap: 7
-      }}>
-        {visibleDebts.length ? visibleDebts.map(debt => {
-            const scheduleStatus = scheduleStatusByDebt.get(debt.id)
-            const dueLabel = scheduleStatus.isDueToday
-              ? 'Due Today'
-              : `Due ${displayDate(scheduleStatus.nextDueDate)}`
-            return (
-          <button
-            type="button"
-            key={debt.id}
-            aria-label={`Debt row: ${debt.name}`}
-            onClick={() => setSelectedDebtId(debt.id)}
-            style={{
-              display: 'block',
-              width: '100%',
-              minWidth: 0,
-              margin: 0,
-              padding: '8px 10px 7px',
-              border: '1px solid #E9D6B7',
-              borderRadius: 13,
-              background: debt.archived ? '#F7F1E9' : '#FFFFFF',
-              color: '#493320',
-              textAlign: 'left',
-              cursor: 'pointer',
-              boxShadow: '0 1px 5px #7655220C'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', minWidth: 0 }}>
-              <span style={{ display: 'block', minWidth: 0 }}>
-                <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: 1.25 }}>
-                  {debt.name}{debt.archived ? ' · Archived' : ''}
-                </strong>
-                <span style={{ display: 'block', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#9B7955', fontSize: 10, lineHeight: 1.3 }}>
-                  {debt.type} · {dueLabel}
-                  {debt.accountLast4 ? ` · ••${debt.accountLast4}` : ''}
-                  {getDebtAssignee(debt) ? ` · ${getDebtAssignee(debt)}` : ''}
-                  {getDebtInstallmentProgress(debt) ? ` · ${getDebtInstallmentProgress(debt).completed}/${getDebtInstallmentProgress(debt).total} installments` : ''}
-                </span>
-                {scheduleStatus.isPastDue && (
-                  <span style={{ display: 'block', marginTop: 2, color: '#B5473C', fontSize: 10, fontWeight: 700, lineHeight: 1.2 }}>
-                    Past Due since {displayDate(scheduleStatus.oldestOverdueDate)} · {money(scheduleStatus.overdueAmount)} overdue
-                  </span>
-                )}
-              </span>
-              <span style={{ flexShrink: 0, textAlign: 'right' }}>
-                <span style={{ display: 'block', color: '#9B7955', fontSize: 9, lineHeight: 1.15 }}>Balance owing</span>
-                <strong style={{ color: '#79502A', fontSize: 14, lineHeight: 1.25, fontVariantNumeric: 'tabular-nums' }}>{money(debt.currentBalance)}</strong>
-              </span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6, color: '#79502A', fontSize: 10, lineHeight: 1.2 }}>
-              <span>{debt.paymentSchedule?.kind === 'pay-in-4'
-                ? `Next payment ${scheduleStatus.nextPaymentAmount == null ? '—' : money(scheduleStatus.nextPaymentAmount)}`
-                : `Min. payment ${debt.minimumPayment == null ? '—' : money(debt.minimumPayment)}`}</span>
-              <strong>{getDebtRemainingPercent(debt).toFixed(0)}% left to pay</strong>
-            </div>
-            <div
-              role="progressbar"
-              aria-label={`${debt.name} paid off`}
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-valuenow={Math.round(getDebtProgress(debt))}
-              title={`${getDebtProgress(debt).toFixed(0)}% paid off`}
-              style={{ height: 4, marginTop: 5, overflow: 'hidden', borderRadius: 99, background: '#F1E6D7' }}
-            >
-              <div style={{
-                width: `${getDebtProgress(debt)}%`,
-                height: '100%',
-                borderRadius: 99,
-                background: '#6E9A72'
-              }} />
-            </div>
-          </button>
-            )
-        }) : (
+      <section style={{ display: 'grid', gap: 7 }}>
+        {activeDebts.map(renderDebtCard)}
+        {!visibleDebts.length && (
           <p style={{ margin: 4, color: '#79502A', fontSize: 13 }}>
             {showArchived ? 'No debts to show.' : 'Add a debt to track its balance.'}
           </p>
@@ -659,6 +647,19 @@ export default function Debt({ statementExtractor } = {}) {
           onClick={() => setShowArchived(value => !value)}
           style={{ ...control, marginTop: 10, fontSize: 11 }}
         >{showArchived ? 'Hide Archived' : 'Show Archived'}</button>
+      )}
+
+      {paidOffDebts.length > 0 && (
+        <section className="debt-paid-off" aria-label="Paid Off debts">
+          <button type="button" className="debt-paid-off-toggle" aria-label={`Paid Off ${paidOffDebts.length}`} aria-expanded={showPaidOff}
+            aria-controls="debt-paid-off-list" onClick={() => setShowPaidOff(value => !value)}>
+            <span>Paid Off <span className="debt-paid-off-count">{paidOffDebts.length}</span></span>
+            <span aria-hidden="true" className={showPaidOff ? 'debt-paid-off-chevron is-open' : 'debt-paid-off-chevron'}>›</span>
+          </button>
+          <div id="debt-paid-off-list" className="debt-paid-off-list">
+            {showPaidOff && paidOffDebts.map(renderDebtCard)}
+          </div>
+        </section>
       )}
 
       <div ref={addMenuRef} className="debt-fab">
@@ -895,7 +896,7 @@ export default function Debt({ statementExtractor } = {}) {
                 const draft = applyStatement(result.values, { ...blankDebt(), type: '' }, result)
                 const paymentPlan = addMode === 'plan-scan' || draft.paymentSchedule?.kind === 'payment-plan'
                 setIsNewPaymentPlan(paymentPlan)
-                setPreservePlanRows(Boolean(result.installments?.length))
+                setPreservePlanRows(paymentPlan)
                 const total = Number(result.values.totalInstallments)
                 const completed = Number(result.values.completedInstallments || 0)
                 setPlanTerms(result.planTerms ?? { count: total > completed ? String(total - completed) : '', firstDate: result.values.nextPaymentDue || '', frequency: '' })
@@ -1140,38 +1141,8 @@ export default function Debt({ statementExtractor } = {}) {
                     {PAYMENT_FREQUENCY_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </label>
-                {preservePlanRows && <p role="status" style={{ margin: 0, fontSize: 11, color: '#79502A' }}>Individual rows kept; adjust them below.</p>}
-                <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'grid', gap: 8 }}>
-                  <legend>Installments</legend>
-                  {!formSchedule?.installments?.length && <p style={{ margin: 0, fontSize: 11 }}>No installment rows found. Complete the schedule settings or add installments manually.</p>}
-                  {sortPaymentPlanInstallments(formSchedule?.installments ?? []).map((row, index, rows) => <details key={row.installmentNumber}>
-                    <summary>Installment {index + 1} · {row.dueDate || 'Missing date'} · {String(row.amount ?? '').trim() ? `$${row.amount}` : 'Missing amount'} · {getInstallmentStatus(row) === 'paid' ? 'Paid' : getInstallmentStatus(row) === 'pending' ? 'Pending' : 'Due'}</summary>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
-                      <label style={formLabel}>Due date {index + 1}
-                        <input aria-label={`Installment ${index + 1} date`} type="date" value={row.dueDate ?? ''} style={inputStyle}
-                          onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, dueDate: event.target.value } : item))} />
-                      </label>
-                      <label style={formLabel}>Amount {index + 1}
-                        <FinancialInput aria-label={`Installment ${index + 1} amount`} value={row.amount ?? ''} style={inputStyle}
-                          onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, amount: event.target.value } : item))} />
-                      </label>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 12 }}>
-                      <label>Status <select aria-label={`Installment ${index + 1} status`} value={getInstallmentStatus(row)}
-                        onChange={event => changeNewPlanRows(rows.map((item, i) => i === index ? { ...item, status: event.target.value, paid: event.target.value === 'paid' } : item))}>
-                        <option value="due">Due</option>
-                        <option value="pending">Pending</option>
-                        <option value="paid">Paid on statement</option>
-                      </select></label>
-                      <button type="button" onClick={() => changeNewPlanRows(rows.filter((_, i) => i !== index))}>Remove installment {index + 1}</button>
-                    </div>
-                  </details>)}
-                  <button type="button" style={control} onClick={() => {
-                    const rows = formSchedule?.installments ?? []
-                    changeNewPlanRows([...rows, { dueDate: '', amount: '', paid: false, installmentNumber: Math.max(0, ...rows.map((row, index) => row.installmentNumber ?? index + 1)) + 1 }])
-                  }}>Add installment</button>
-                  {statementReview && <p style={{ margin: 0, fontSize: 11 }}>Paid and pending do not change balances or create transactions. Confirm pending in Edit Debt when the provider marks it paid.</p>}
-                </fieldset>
+                <PaymentPlanFields rows={formSchedule?.installments ?? []} onChange={changeNewPlanRows}
+                  fieldStyle={inputStyle} labelStyle={formLabel} balance={formValues.currentBalance} allowGenerate={false} />
               </>}
               {!isNewPaymentPlan && (formSchedule?.kind === 'payment-plan' ? <PaymentPlanFields rows={formSchedule.installments}
                 paymentHistory={formValues.paymentHistory} fieldStyle={inputStyle} labelStyle={formLabel}

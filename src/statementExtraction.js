@@ -211,6 +211,10 @@ export function extractBillStatement(file, options = {}) {
   return extractDebtStatement(file, { ...options, parse: parseBillStatement })
 }
 
+export function hasPaymentPlanContent(result) {
+  return Object.keys(result.values).length > 0 || Boolean(result.installments?.length)
+}
+
 export async function extractDebtStatement(file, { signal: externalSignal, onProgress = () => {}, parse = parseDebtStatement } = {}) {
   const signature = file?.size > 0 && file.size <= MAX_STATEMENT_BYTES ? await sniffStatementFile(file) : null
   const kind = await resolveStatementFileKind(file, signature)
@@ -291,7 +295,9 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
         try {
           const text = await abortable(page.getTextContent(), signal)
           let pageLines = getPdfTextLines(text.items)
-          if (!Object.keys(parse(pageLines).values).some(key => key !== 'name' && key !== 'type')) {
+          const pageResult = parse(pageLines)
+          if (!(parse === parsePaymentPlanScan ? hasPaymentPlanContent(pageResult)
+            : Object.keys(pageResult.values).some(key => key !== 'name' && key !== 'type'))) {
             const viewport = page.getViewport({ scale: 2 })
             const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (viewport.width * viewport.height)))
             const bounded = page.getViewport({ scale: 2 * scale })
@@ -319,10 +325,14 @@ export async function extractDebtStatement(file, { signal: externalSignal, onPro
     const result = parse(lines)
     const hasText = lines.some(line => line.trim())
     lines = []
-    if (!Object.keys(result.values).length) {
+    if (!(parse === parsePaymentPlanScan ? hasPaymentPlanContent(result) : Object.keys(result.values).length)) {
       throw new StatementScanError(hasText
-        ? 'We read text, but could not identify debt fields. Try the summary page or enter them manually.'
-        : 'We could not read clear text. Try a sharper image or enter the debt manually.')
+        ? parse === parsePaymentPlanScan
+          ? 'We read text, but could not identify payment plan details. Try a clearer image or enter them manually.'
+          : 'We read text, but could not identify debt fields. Try the summary page or enter them manually.'
+        : parse === parsePaymentPlanScan
+          ? 'We could not read clear text. Try a sharper image or enter the payment plan manually.'
+          : 'We could not read clear text. Try a sharper image or enter the debt manually.')
     }
     return result
   } catch (error) {

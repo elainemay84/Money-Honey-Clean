@@ -684,9 +684,92 @@ body {
   --responsive-base-size: 14px;
 }
 
+.debt-paid-off {
+  margin-top: 12px;
+  border: 1px solid var(--theme-border, #E9D6B7);
+  border-radius: 13px;
+  background: var(--theme-card, #FFFFFF);
+}
+
+.debt-paid-off-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--theme-text, #79502A);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.debt-paid-off-count {
+  margin-left: 4px;
+  color: var(--theme-accent, #B87522);
+}
+
+.debt-paid-off-chevron { font-size: 20px; line-height: 1; }
+.debt-paid-off-chevron.is-open { transform: rotate(90deg); }
+.debt-paid-off-list { display: grid; gap: 7px; }
+.debt-paid-off-list:not(:empty) { padding: 0 8px 8px; }
+
 .payee-autocomplete {
   position: relative;
   min-width: 0;
+}
+
+.payee-autocomplete.is-open {
+  z-index: 10;
+}
+
+.payment-plan-row {
+  min-width: 0;
+  border: 1px solid var(--theme-border, #E9D6B7);
+  border-radius: 10px;
+  background: var(--theme-card, #FFFFFF);
+}
+
+.payment-plan-row summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 9px;
+  color: var(--theme-text, #79502A);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.payment-plan-row summary::-webkit-details-marker { display: none; }
+.payment-plan-row-date { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payment-plan-row-number { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.payment-plan-row summary strong, .payment-plan-row-status { white-space: nowrap; }
+.payment-plan-row-status { color: var(--theme-accent, #B87522); }
+.payment-plan-row-status.status-paid { color: #478358; }
+.payment-plan-row-chevron { font-size: 20px; line-height: 1; }
+.payment-plan-row[open] .payment-plan-row-chevron { transform: rotate(90deg); }
+.payment-plan-row-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+  padding: 0 9px 10px;
+}
+.payment-plan-remove {
+  justify-self: end;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--theme-text, #79502A);
+  font-size: 11px;
+  cursor: pointer;
+}
+@media (max-width: 380px) {
+  .payment-plan-row-editor { grid-template-columns: minmax(0, 1fr); }
 }
 
 .payee-autocomplete-menu {

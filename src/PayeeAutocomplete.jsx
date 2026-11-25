@@ -9,6 +9,7 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
   const wrapperRef = useRef(null)
   const inputRef = useRef(null)
   const menuRef = useRef(null)
+  const menuPointer = useRef(false)
   const key = payeeMatchKey(value)
   const matches = payees.filter(name => payeeMatchKey(name).includes(key))
   const canSave = Boolean(value.trim()) && !payees.some(name => payeeMatchKey(name) === key)
@@ -20,10 +21,17 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
       const input = inputRef.current
       const menu = menuRef.current
       if (!input || !menu) return
-      const dialogBottom = input.closest('[role="dialog"]')?.getBoundingClientRect().bottom ?? window.innerHeight
+      const dialog = input.closest('[role="dialog"]')?.getBoundingClientRect()
       const viewport = window.visualViewport
+      const viewportTop = viewport?.offsetTop ?? 0
       const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight
-      const available = Math.max(0, Math.min(dialogBottom, viewportBottom) - input.getBoundingClientRect().bottom - 6)
+      const bounds = input.getBoundingClientRect()
+      const below = Math.max(0, Math.min(dialog?.bottom ?? viewportBottom, viewportBottom) - bounds.bottom - 6)
+      const above = Math.max(0, bounds.top - Math.max(dialog?.top ?? viewportTop, viewportTop) - 6)
+      const useAbove = below < 88 && above > below
+      const available = useAbove ? above : below
+      menu.style.top = useAbove ? 'auto' : 'calc(100% + 4px)'
+      menu.style.bottom = useAbove ? 'calc(100% + 4px)' : 'auto'
       menu.style.setProperty('--payee-menu-max-height', `${available}px`)
     }
     updateHeight()
@@ -71,10 +79,10 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
 
   return (
     <div
-      className="payee-autocomplete"
+      className={`payee-autocomplete${showMenu ? ' is-open' : ''}`}
       ref={wrapperRef}
       onBlur={event => {
-        if (!wrapperRef.current?.contains(event.relatedTarget)) {
+        if (!menuPointer.current && !wrapperRef.current?.contains(event.relatedTarget)) {
           setIsOpen(false)
           setActiveIndex(-1)
         }
@@ -120,7 +128,24 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
         style={{ ...style, width: '100%' }}
       />
       {showMenu && (
-        <div ref={menuRef} className="payee-autocomplete-menu">
+        <div ref={menuRef} className="payee-autocomplete-menu"
+          onPointerDown={event => {
+            menuPointer.current = true
+            if (event.pointerType === 'mouse') event.preventDefault()
+          }}
+          onPointerUp={() => {
+            setTimeout(() => {
+              menuPointer.current = false
+              if (!wrapperRef.current?.contains(document.activeElement)) {
+                setIsOpen(false)
+                setActiveIndex(-1)
+              }
+            }, 0)
+          }}
+          onPointerCancel={() => {
+            menuPointer.current = false
+            if (!wrapperRef.current?.contains(document.activeElement)) setIsOpen(false)
+          }}>
           {matches.length > 0 && (
             <div id="transaction-payee-options" role="listbox" aria-label="Saved payee suggestions" className="payee-autocomplete-options">
               {matches.map((name, index) => (
@@ -130,14 +155,13 @@ export default function PayeeAutocomplete({ value, onChange, onSelect, style }) 
                   id={`transaction-payee-option-${index}`}
                   aria-selected={index === activeIndex}
                   key={name}
-                  onPointerDown={event => event.preventDefault()}
                   onClick={() => choose(name)}
                 >{name}</button>
               ))}
             </div>
           )}
           {canSave && (
-            <button type="button" className="payee-autocomplete-save" onPointerDown={event => event.preventDefault()} onClick={save}>
+            <button type="button" className="payee-autocomplete-save" onClick={save}>
               Save as New Payee
             </button>
           )}
