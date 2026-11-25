@@ -7,6 +7,7 @@ import PaymentPlanFields from './PaymentPlanFields'
 import { getCategories, loadCategoryConfig } from './categoryData.js'
 import { defaultSchedule, generatePaymentPlan, getDebtInstallmentProgress, getDebtScheduledPayments, getInstallmentStatus, getPaidInstallmentNumbers, PAYMENT_FREQUENCY_OPTIONS, scheduleFromForm, sortPaymentPlanInstallments, validatePaymentSchedule } from './debtSchedule.js'
 import { parseFinancialAmount } from './financialAmounts.js'
+import { resolveScannedMonthlyDates } from './statementData.js'
 import { loadSavedAccountData } from './accountStorage.js'
 import { getTodayDate, loadBillData } from './billData.js'
 import {
@@ -981,6 +982,8 @@ export default function Debt({ statementExtractor } = {}) {
               </p>}
               {(statementReview?.warnings ?? []).filter(warning =>
                 !(isNewPaymentPlan && statementReview.installments?.length && warning === 'Schedule found from statement. Review before saving.')
+                && !(isNewPaymentPlan && warning === 'Some scanned dates have no year. Confirm each scanned month and day and enter its full date.'
+                  && formValues.paymentSchedule?.installments?.every(row => row.dueDate || !row.scannedDate))
               ).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
               {isNewPaymentPlan && <>
                 <label style={formLabel}>Plan Name
@@ -1157,9 +1160,18 @@ export default function Debt({ statementExtractor } = {}) {
                   </label>
                   <label style={formLabel}>First payment date
                     <input aria-label="First payment date" type="date" value={planTerms.firstDate} style={inputStyle}
-                      onChange={event => setPlanTerms({ ...planTerms, firstDate: event.target.value })} />
+                      onChange={event => {
+                        const firstDate = event.target.value
+                        setPlanTerms({ ...planTerms, firstDate })
+                        if (isNewPaymentPlan && preservePlanRows && planTerms.frequency === 'monthly') {
+                          const rows = resolveScannedMonthlyDates(formValues.paymentSchedule?.installments ?? [], firstDate)
+                          if (rows) changeNewPlanRows(rows)
+                        }
+                      }} />
                   </label>
                 </div>
+                {preservePlanRows && formValues.paymentSchedule?.installments?.some(row => !row.dueDate && row.scannedDate)
+                  && <p style={{ margin: 0, fontSize: 11 }}>Confirm the first payment date and year to fill a matching monthly timeline. Review all scanned dates.</p>}
                 <label style={formLabel}>Frequency
                   <select aria-label="Generated schedule frequency" value={planTerms.frequency} style={inputStyle}
                     onChange={event => setPlanTerms({ ...planTerms, frequency: event.target.value })}>
