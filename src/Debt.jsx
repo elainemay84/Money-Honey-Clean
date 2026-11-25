@@ -355,6 +355,11 @@ export default function Debt({ statementExtractor } = {}) {
     try {
       const values = { ...formValues }
       delete values.customAssignee
+      if (isNewPaymentPlan && values.statementDetails) {
+        values.statementDetails = Object.fromEntries(Object.entries(values.statementDetails)
+          .filter(([, value]) => String(value ?? '').trim() !== '')
+          .map(([key, value]) => [key, parseFinancialAmount(value, key)]))
+      }
       if (isNewPaymentPlan && !preservePlanRows) {
         generatePaymentPlan(formValues.currentBalance, planTerms.count, planTerms.firstDate, planTerms.frequency)
       }
@@ -371,7 +376,9 @@ export default function Debt({ statementExtractor } = {}) {
         interestRate: numeric(formValues.interestRate, 'APR'),
         minimumPayment: numeric(formValues.minimumPayment, 'Minimum payment'),
         ...(formSchedule ? { paymentSchedule: formSchedule === editingDebt?.paymentSchedule
-          ? formSchedule : scheduleFromForm(formSchedule, formValues.nextPaymentDue) } : {}),
+          ? formSchedule : scheduleFromForm(formSchedule.kind === 'payment-plan'
+            ? { ...formSchedule, installments: formSchedule.installments.map(({ scannedDate: _scannedDate, ...row }) => row) }
+            : formSchedule, formValues.nextPaymentDue) } : {}),
         nextPaymentDue: formValues.nextPaymentDue || null
       })
       persistDebt(debt)
@@ -406,7 +413,9 @@ export default function Debt({ statementExtractor } = {}) {
     if (result.installments?.length || addMode === 'plan-scan') {
       if (!current.paymentHistory.length && !(current.id != null && bills.some(bill => bill.debtId === current.id && bill.paymentHistory?.length))) {
         updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit',
-          installments: sortPaymentPlanInstallments((result.installments ?? []).map((row, index) => ({ ...row, installmentNumber: index + 1 }))) }
+          installments: sortPaymentPlanInstallments((result.installments ?? []).map((row, index) => ({
+            ...row, installmentNumber: index + 1, ...(result.dateHints?.[index] ? { scannedDate: result.dateHints[index] } : {})
+          }))) }
       }
     } else if (values.provider && !editingDebt && current.paymentSchedule?.kind !== 'payment-plan' && !current.paymentHistory.length) {
       updated.paymentSchedule = { kind: 'payment-plan', frequency: 'explicit', installments: [] }
@@ -970,10 +979,27 @@ export default function Debt({ statementExtractor } = {}) {
                   ? 'Schedule found from statement. Review before saving.'
                   : 'Statement scanned. Review your information before saving.'}
               </p>}
-              {(!isNewPaymentPlan ? statementReview?.warnings ?? [] : []).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
+              {(statementReview?.warnings ?? []).filter(warning =>
+                !(isNewPaymentPlan && statementReview.installments?.length && warning === 'Schedule found from statement. Review before saving.')
+              ).map(warning => <p key={warning} role="status" style={{ margin: 0, fontSize: 11 }}>{warning}</p>)}
               {isNewPaymentPlan && <>
                 <label style={formLabel}>Plan Name
                   <input aria-label="Debt name" value={formValues.name} onChange={event => setFormValues({ ...formValues, name: event.target.value })} style={inputStyle} required />
+                </label>
+                <label style={formLabel}>Provider (optional)
+                  <input aria-label="Plan provider" value={formValues.provider ?? ''} onChange={event => setFormValues({ ...formValues, provider: event.target.value })} style={inputStyle} />
+                </label>
+                {[
+                  ['purchaseAmount', 'Purchase amount'],
+                  ['totalInterest', 'Total interest'],
+                  ['totalRepayment', 'Total repayment']
+                ].map(([key, label]) => <label key={key} style={formLabel}>{label} (optional)
+                  <FinancialInput aria-label={label} value={formValues.statementDetails?.[key] ?? ''} style={inputStyle}
+                    onChange={event => setFormValues({ ...formValues, statementDetails: { ...formValues.statementDetails, [key]: event.target.value } })} />
+                </label>)}
+                <label style={formLabel}>APR (optional)
+                  <FinancialInput aria-label="Plan APR" value={formValues.interestRate} style={inputStyle}
+                    onChange={event => setFormValues({ ...formValues, interestRate: event.target.value })} />
                 </label>
                 <label style={formLabel}>Purchase Category (optional)
                   <select aria-label="Purchase Category" value={formValues.purchaseCategory ?? ''} style={inputStyle}

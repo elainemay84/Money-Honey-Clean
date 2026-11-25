@@ -754,13 +754,14 @@ body {
 .payment-plan-row[open] .payment-plan-row-chevron { transform: rotate(90deg); }
 .payment-plan-row-editor {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: end;
-  gap: 8px;
-  padding: 0 9px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 12px 12px;
 }
+.payment-plan-row-editor label { min-width: 0; }
+.payment-plan-row-editor input, .payment-plan-row-editor select { min-width: 0; max-width: 100%; }
 .payment-plan-remove {
-  justify-self: end;
+  justify-self: start;
   padding: 8px 0;
   border: 0;
   background: transparent;
@@ -768,10 +769,6 @@ body {
   font-size: 11px;
   cursor: pointer;
 }
-@media (max-width: 380px) {
-  .payment-plan-row-editor { grid-template-columns: minmax(0, 1fr); }
-}
-
 .payee-autocomplete-menu {
   position: absolute;
   top: calc(100% + 4px);

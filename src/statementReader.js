@@ -30,7 +30,7 @@ export function createLocalStatementReader({
   const abort = () => fail(signal.reason ?? new DOMException('Reading cancelled.', 'AbortError'))
   signal.addEventListener('abort', abort, { once: true })
   return {
-    recognize(image) {
+    recognize(image, dimensions) {
       if (signal.aborted) {
         terminate()
         return Promise.reject(signal.reason)
@@ -63,7 +63,7 @@ export function createLocalStatementReader({
           if (!initialized) timer = setTimeout(() => fail(new StatementScanError(
             'The on-device reader did not initialize within 35 seconds. Its engine or language files may be blocked or slow to load. Retry, choose a text-based PDF, or enter manually.'
           )), initializationTimeoutMs)
-          worker.postMessage({ image, assets, paymentPlan }, [image])
+          worker.postMessage({ image, assets, paymentPlan, dimensions }, [image])
         } catch {
           fail(new StatementScanError('This browser could not start the local reader. Try an updated Safari, a text-based PDF, or manual entry.'))
         }

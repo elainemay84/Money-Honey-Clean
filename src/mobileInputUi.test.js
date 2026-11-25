@@ -36,6 +36,7 @@ const { default: App } = await vite.ssrLoadModule('/src/App.jsx')
 const { default: Accounts } = await vite.ssrLoadModule('/src/Accounts.jsx')
 const { default: ResponsiveText } = await vite.ssrLoadModule('/src/ResponsiveText.jsx')
 const { default: StatementAutofill } = await vite.ssrLoadModule('/src/StatementAutofill.jsx')
+const { default: PaymentPlanFields } = await vite.ssrLoadModule('/src/PaymentPlanFields.jsx')
 let root
 
 async function click(element) {
@@ -82,6 +83,28 @@ afterEach(async () => {
 after(async () => {
   await vite.close()
   browser.happyDOM.abort()
+})
+
+test('expanded installment editor stacks controls and keeps only one row expanded', async () => {
+  browser.happyDOM.setWindowSize({ width: 320, height: 700 })
+  const container = browser.document.createElement('div')
+  browser.document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root.render(React.createElement(PaymentPlanFields, {
+    rows: [
+      { installmentNumber: 1, dueDate: '2026-12-18', amount: '106.55', paid: false },
+      { installmentNumber: 2, dueDate: '2027-01-18', amount: '106.56', paid: false }
+    ],
+    onChange: () => {}, fieldStyle: {}, labelStyle: {}, allowGenerate: false
+  })))
+  const rows = container.querySelectorAll('.payment-plan-row')
+  await click(rows[0].querySelector('summary'))
+  const editor = rows[0].querySelector('.payment-plan-row-editor')
+  assert.equal(browser.getComputedStyle(editor).gridTemplateColumns, 'minmax(0, 1fr)')
+  assert.match(editor.textContent, /Due Date.*Amount.*Payment Status.*Remove installment/s)
+  await click(rows[1].querySelector('summary'))
+  assert.equal(rows[0].open, false)
+  assert.equal(rows[1].open, true)
 })
 
 for (const [size, width] of [['small', 320], ['medium', 390], ['large', 932]]) {

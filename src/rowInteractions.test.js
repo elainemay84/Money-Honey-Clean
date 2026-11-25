@@ -2489,6 +2489,7 @@ test('touch selection survives blur and rerenders in Home Quick Add and regular 
       input.blur()
       option.dispatchEvent(new browser.MouseEvent('click', { bubbles: true }))
     })
+
     assert.equal(input.value, 'Alpha Shop')
     assert.equal(input.getAttribute('aria-expanded'), 'false')
     await changeValue(dialog.querySelector('[aria-label="Amount"]'), '42')
@@ -2497,6 +2498,53 @@ test('touch selection survives blur and rerenders in Home Quick Add and regular 
     await click(button(dialog, 'Close add transaction'))
     assert.deepEqual(readAccountData(), before)
   }
+})
+
+test('touch pointerup selects before a delayed click after blur', async () => {
+  savePayees(['Alpha Shop'], browser.localStorage)
+  const container = await render(Accounts)
+  await click(container.querySelector('[data-account-id="1"]'))
+  await click(button(container, 'Add transaction'))
+  const dialog = container.querySelector('[role="dialog"]')
+  const input = dialog.querySelector('[aria-label="Payee or description"]')
+  await act(async () => input.focus())
+  await changeValue(input, 'Alpha')
+  const option = dialog.querySelector('[role="option"]')
+  await act(async () => option.dispatchEvent(new browser.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', clientX: 10, clientY: 10 })))
+  await act(async () => input.blur())
+  await act(async () => option.dispatchEvent(new browser.PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', clientX: 10, clientY: 10 })))
+  assert.equal(input.value, 'Alpha Shop')
+  assert.equal(input.getAttribute('aria-expanded'), 'false')
+})
+
+test('checkout scan hands exact installments and independent totals to the editable plan form', async () => {
+  const result = parsePaymentPlanScan([
+    'OnePay Later, powered by Klarna', '6 payments', 'Payment schedule',
+    'Dec 18 Jan 18 Feb 18 Mar 18 Apr 18 May 18',
+    '$106.55 $106.55 $106.55 $106.55 $106.55 $106.56',
+    'Purchase amount: $581.23', 'Interest: $58.08 (APR: 33.49%)', 'Total repayment: $639.31'
+  ])
+  const container = await render(() => React.createElement(Debt, { statementExtractor: async () => result }))
+  const before = browser.localStorage.getItem('money-honey-debts')
+  await openPaymentPlan(container, true)
+  await chooseStatementFile(container, 'Statement image')
+  const form = container.querySelector('[aria-label="Add payment plan form"]')
+  assert.equal(form.querySelector('[aria-label="Plan provider"]').value, 'OnePay Later, powered by Klarna')
+  assert.equal(form.querySelector('[aria-label="Purchase amount"]').value, '581.23')
+  assert.equal(form.querySelector('[aria-label="Total interest"]').value, '58.08')
+  assert.equal(form.querySelector('[aria-label="Total repayment"]').value, '639.31')
+  assert.equal(form.querySelector('[aria-label="Plan APR"]').value, '33.49')
+  assert.equal(form.querySelector('[aria-label="Current balance · amount still owed"]').value, '')
+  assert.equal(form.querySelector('[aria-label="Number of payments"]').value, '6')
+  assert.equal(form.querySelector('[aria-label="Generated schedule frequency"]').value, 'monthly')
+  const rows = [...form.querySelectorAll('.payment-plan-row')]
+  assert.equal(rows.length, 6)
+  assert.match(rows[5].textContent, /\$106\.56/)
+  await click(rows[5].querySelector('summary'))
+  assert.match(rows[5].textContent, /scanned may 18; confirm date and year/i)
+  assert.equal(rows[5].querySelector('[aria-label="Installment 6 amount"]').value, '106.56')
+  assert.equal(rows[5].querySelector('[aria-label="Installment 6 status"]').value, 'due')
+  assert.equal(browser.localStorage.getItem('money-honey-debts'), before)
 })
 
 test('quick-saving a payee persists without saving a transaction, prevents formatting duplicates, and round-trips backup', async () => {
